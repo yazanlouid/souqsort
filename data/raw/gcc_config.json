@@ -1,0 +1,25 @@
+{
+  "config_version": "2026-10-01",
+  "fx": {
+    "as_of": "2026-10-01",
+    "source": "manual snapshot (illustrative)",
+    "per_usd": { "USD": "1", "SAR": "3.7500", "AED": "3.6725", "KWD": "0.3070", "GBP": "0.7450" }
+  },
+  "markets": {
+    "KSA": {
+      "name": "Saudi Arabia",
+      "currency": { "code": "SAR", "minor_units": 2, "charm_ending": "0.95" },
+      "tax": { "vat_rate": "0.15", "source": "illustrative - verify before quoting", "effective_from": "2020-07-01" },
+      "customs": { "default_duty_rate": "0.05", "category_overrides": { "fashion": "0.12", "digital": "0.00" } },
+      "calendar": {
+        "timezone": "Asia/Riyadh",
+        "weekend": ["FRI", "SAT"],
+        "order_cutoff_local": "14:00",
+        "holidays": [
+          { "date": "2027-02-22", "name": "Founding Day", "provisional": false }
+        ]
+      },
+      "logistics": { "freight_per_kg_usd": "4.50", "linehaul_business_days": 3, "last_mile_business_days": 2 }
+    }
+  }
+}

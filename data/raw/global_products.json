@@ -1,0 +1,137 @@
+{
+  "catalogue_version": "2026-10-01",
+  "products": [
+    {
+      "sku": "ELEC-HP-001",
+      "name": { "en": "Wireless Noise-Cancelling Headphones", "ar": "سماعات لاسلكية عازلة للضوضاء" },
+      "category": "electronics",
+      "hs_code": "851830",
+      "base_price": "149.99",
+      "currency": "USD",
+      "unit_cost": "62.00",
+      "weight_kg": "0.35",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": true }
+    },
+    {
+      "sku": "ELEC-CHG-002",
+      "name": { "en": "65W USB-C Charger", "ar": "شاحن USB-C بقدرة 65 واط" },
+      "category": "electronics",
+      "hs_code": "850440",
+      "base_price": "39.99",
+      "currency": "USD",
+      "unit_cost": "14.20",
+      "weight_kg": "0.18",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "FASH-BAG-014",
+      "name": { "en": "Leather Crossbody Bag", "ar": null },
+      "category": "fashion",
+      "hs_code": "420221",
+      "base_price": "89.00",
+      "currency": "GBP",
+      "unit_cost": "31.50",
+      "weight_kg": "0.80",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "FASH-SCF-015",
+      "name": { "en": "Silk Scarf", "ar": "وشاح حريري" },
+      "category": "fashion",
+      "hs_code": "621410",
+      "base_price": "45.00",
+      "currency": "GBP",
+      "unit_cost": "12.00",
+      "weight_kg": "0.10",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "SPRT-KTB-020",
+      "name": { "en": "Cast Iron Kettlebell 16 kg", "ar": "كيتل بيل من الحديد الزهر 16 كغ" },
+      "category": "sports",
+      "hs_code": "950691",
+      "base_price": "59.00",
+      "currency": "USD",
+      "unit_cost": "21.00",
+      "weight_kg": "16.00",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "HOME-KTL-030",
+      "name": { "en": "Electric Kettle 1.7 L", "ar": "غلاية كهربائية 1.7 لتر" },
+      "category": "home",
+      "hs_code": "851671",
+      "base_price": "34.99",
+      "currency": "GBP",
+      "unit_cost": "13.40",
+      "weight_kg": "1.20",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "BEAU-LIP-040",
+      "name": { "en": "Lip Balm", "ar": "مرطب شفاه" },
+      "category": "beauty",
+      "hs_code": "330499",
+      "base_price": "3.49",
+      "currency": "USD",
+      "unit_cost": "0.95",
+      "weight_kg": "0.02",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "BEAU-SRM-041",
+      "name": { "en": "Vitamin C Serum 30 ml", "ar": "سيروم فيتامين سي 30 مل" },
+      "category": "beauty",
+      "hs_code": "330499",
+      "base_price": "24.00",
+      "currency": "USD",
+      "unit_cost": "6.80",
+      "weight_kg": "0.12",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "DIGI-LIC-050",
+      "name": { "en": "Photo Editor Pro Licence (digital download)", "ar": "ترخيص برنامج محرر الصور برو (تنزيل رقمي)" },
+      "category": "digital",
+      "hs_code": "852349",
+      "base_price": "79.00",
+      "currency": "USD",
+      "unit_cost": "23.70",
+      "weight_kg": "0",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "GROC-TEA-060",
+      "name": { "en": "English Breakfast Tea, 80 bags", "ar": null },
+      "category": "grocery",
+      "hs_code": "090230",
+      "base_price": "4.75",
+      "currency": "GBP",
+      "unit_cost": "1.60",
+      "weight_kg": "0.25",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "GROC-VAN-061",
+      "name": { "en": "Pure Vanilla Extract", "ar": "خلاصة الفانيليا النقية" },
+      "category": "grocery",
+      "hs_code": "130219",
+      "base_price": "12.99",
+      "currency": "USD",
+      "unit_cost": "4.10",
+      "weight_kg": "0.15",
+      "attributes": { "contains_alcohol": true, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "GROC-GUM-062",
+      "name": { "en": "Gummy Bears (pork gelatine)", "ar": "حلوى الدببة الجيلاتينية (جيلاتين الخنزير)" },
+      "category": "grocery",
+      "hs_code": "170490",
+      "base_price": "2.99",
+      "currency": "GBP",
+      "unit_cost": "0.85",
+      "weight_kg": "0.20",
+      "attributes": { "contains_alcohol": false, "contains_pork": true, "contains_lithium_battery": false }
+    }
+  ]
+}
