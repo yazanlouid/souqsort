@@ -118,7 +118,7 @@ The v0.1 catalogue has **12 hand-written products** that together include:
 2. the GBP bag from §7.3, exactly (worked example B);
 3. a heavy item (≥ 10 kg) where freight is a large share of the price;
 4. a cheap item (< 10 USD) where the charm ending moves the price noticeably;
-5. a zero-weight item (e.g. a digital gift card);
+5. a zero-weight item: `DIGI-LIC-050`, "Photo Editor Pro Licence (digital download)", USD, `weight_kg: "0"`, category `digital` (0% duty override);
 6. at least two items with `name.ar: null`;
 7. one item with `contains_alcohol: true` and one with `contains_pork: true` (used by compliance in v0.2);
 8. at least four categories, at least one with a duty override and at least one without.
@@ -138,7 +138,7 @@ The v0.1 catalogue has **12 hand-written products** that together include:
       "name": "Saudi Arabia",
       "currency": { "code": "SAR", "minor_units": 2, "charm_ending": "0.95" },
       "tax": { "vat_rate": "0.15", "source": "illustrative - verify before quoting", "effective_from": "2020-07-01" },
-      "customs": { "default_duty_rate": "0.05", "category_overrides": { "fashion": "0.12" } },
+      "customs": { "default_duty_rate": "0.05", "category_overrides": { "fashion": "0.12", "digital": "0.00" } },
       "calendar": {
         "timezone": "Asia/Riyadh",
         "weekend": ["FRI", "SAT"],
