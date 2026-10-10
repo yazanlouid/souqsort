@@ -231,6 +231,7 @@ Product: `FASH-BAG-014`, "Leather Crossbody Bag", category `fashion` (12% overri
 - Convert `ordered_at` to the market timezone.
 - A business day is not a weekend day and not a listed holiday (provisional holidays count as holidays).
 - **Dispatch day** = the local order date if it is a business day and the local time is before the cutoff; otherwise the next business day. An order at exactly the cutoff time misses it.
+- The cutoff is compared as a moment in time, not as a clock reading: an order makes it only if it comes before the moment the cutoff time is reached on the local order date. On a clock-change day, a cutoff in a repeated hour is its first occurrence, and a cutoff in a skipped hour falls an hour later on the clock (01:30 in `Europe/London` on a spring-forward day behaves as 02:30 BST). A later order therefore never gets an earlier dispatch day. The GCC timezones have no clock changes, so §8.1 is unaffected.
 - **Delivery date** = the Nth business day after the dispatch day, where N = `linehaul_business_days + last_mile_business_days` (5 for KSA).
 - Keep `add_business_days(start, n, weekend, holidays)` generic. A later two-leg version (UK origin calendar, then destination calendar) should only need to chain two calls.
 

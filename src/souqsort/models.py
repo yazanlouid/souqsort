@@ -8,7 +8,7 @@ import datetime as dt
 import re
 from collections import Counter
 from decimal import Decimal
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal, Self, get_args
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
@@ -162,6 +162,13 @@ class CalendarConfig(_Model):
         duplicates = sorted(day for day, n in Counter(value).items() if n > 1)
         if duplicates:
             raise ValueError(f"duplicate weekend day: {', '.join(duplicates)}")
+        return value
+
+    @field_validator("weekend")
+    @classmethod
+    def _leaves_a_business_day(cls, value: tuple[Weekday, ...]) -> tuple[Weekday, ...]:
+        if set(value) == set(get_args(Weekday)):
+            raise ValueError("weekend covers all seven days, leaving no business day")
         return value
 
 

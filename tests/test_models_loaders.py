@@ -455,6 +455,23 @@ def test_bad_weekend_rejected(write_json: WriteJson, raw_config: Raw, weekend: l
     _reject_config(write_json, raw_config, "weekend")
 
 
+def test_weekend_covering_every_day_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    # No day could ever be a business day, so no order could ever be dispatched.
+    _ksa(raw_config)["calendar"]["weekend"] = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+    _reject_config(write_json, raw_config, "weekend", "no business day")
+
+
+@pytest.mark.parametrize(
+    "weekend", [[], ["MON", "TUE", "WED", "THU", "FRI", "SAT"]], ids=["no-weekend", "six-days"]
+)
+def test_weekend_leaving_a_business_day_accepted(
+    write_json: WriteJson, raw_config: Raw, weekend: list[str]
+) -> None:
+    _ksa(raw_config)["calendar"]["weekend"] = weekend
+    calendar = _load_config(write_json, raw_config).markets["KSA"].calendar
+    assert list(calendar.weekend) == weekend
+
+
 @pytest.mark.parametrize("value", ["2pm", "24:00", "14:0", "14:00:00", "9:00", "14:60", 1400])
 def test_malformed_cutoff_rejected(write_json: WriteJson, raw_config: Raw, value: Any) -> None:
     _ksa(raw_config)["calendar"]["order_cutoff_local"] = value
