@@ -1,0 +1,23 @@
+{
+  "config_version": "test-zero-vat",
+  "fx": {
+    "as_of": "2026-10-01",
+    "source": "test fixture - same illustrative rates as data/raw/gcc_config.json",
+    "per_usd": { "USD": "1", "SAR": "3.7500", "AED": "3.6725", "KWD": "0.3070", "GBP": "0.7450" }
+  },
+  "markets": {
+    "TEST-KWD": {
+      "name": "Test market (KWD, 0% VAT)",
+      "currency": { "code": "KWD", "minor_units": 3, "charm_ending": "0.950" },
+      "tax": { "vat_rate": "0", "source": "test fixture - not real market data", "effective_from": "2020-01-01" },
+      "customs": { "default_duty_rate": "0.05", "category_overrides": { "digital": "0.00" } },
+      "calendar": {
+        "timezone": "Asia/Kuwait",
+        "weekend": ["FRI", "SAT"],
+        "order_cutoff_local": "14:00",
+        "holidays": []
+      },
+      "logistics": { "freight_per_kg_usd": "4.50", "linehaul_business_days": 3, "last_mile_business_days": 2 }
+    }
+  }
+}

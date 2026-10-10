@@ -6,7 +6,7 @@ Every amount is a ``Decimal``; a float, int or string is rejected rather than co
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
 
-def _require_decimal(name: str, value: object) -> None:
+def require_decimal(name: str, value: object) -> None:
     if not isinstance(value, Decimal):
         raise TypeError(f"{name} must be a Decimal, not {type(value).__name__} {value!r}")
 
@@ -22,7 +22,7 @@ def round_minor(amount: Decimal, minor_units: int) -> Decimal:
 
     Negative amounts round away from zero. A zero result is never signed.
     """
-    _require_decimal("amount", amount)
+    require_decimal("amount", amount)
     if not amount.is_finite():
         raise ValueError(f"amount must be finite, got {amount}")
     rounded = amount.quantize(_quantum(minor_units), rounding=ROUND_HALF_UP)
@@ -46,7 +46,7 @@ def charm_up(amount: Decimal, charm_ending: Decimal | None, minor_units: int) ->
     if charm_ending is None:
         return rounded
 
-    _require_decimal("charm_ending", charm_ending)
+    require_decimal("charm_ending", charm_ending)
     if not charm_ending.is_finite() or not 0 <= charm_ending < 1:
         raise ValueError(f"charm_ending must be at least 0 and less than 1, got {charm_ending}")
     quantum = _quantum(minor_units)

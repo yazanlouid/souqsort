@@ -9,6 +9,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from helpers import decimal_places
 from souqsort.pricing.money import charm_up, format_money, round_minor
 
 AmountCall = Callable[[Any, int], object]
@@ -19,16 +20,6 @@ ALL_FUNCTIONS = [
     pytest.param(format_money, id="format_money"),
     pytest.param(lambda amount, mu: charm_up(amount, Decimal("0.95"), mu), id="charm_up"),
 ]
-
-
-# --- helpers ------------------------------------------------------------------------------
-
-
-def _decimals(value: Decimal) -> int:
-    """Decimal places the value carries; ``Decimal("9.9") == Decimal("9.90")`` hides them."""
-    exponent = value.as_tuple().exponent
-    assert isinstance(exponent, int)
-    return -exponent
 
 
 # --- round_minor: ROUND_HALF_UP to the currency's minor units -----------------------------
@@ -122,7 +113,7 @@ def test_charm_up(amount: str, ending: str, minor_units: int, expected: str) -> 
 def test_charm_ending_coarser_than_minor_units_keeps_exact_decimals() -> None:
     charmed = charm_up(Decimal("4.200"), Decimal("0.95"), 3)
     assert charmed == Decimal("4.950")
-    assert _decimals(charmed) == 3
+    assert decimal_places(charmed) == 3
     assert str(charmed) == "4.950"
 
 
@@ -224,7 +215,7 @@ def charm_cases(draw: st.DrawFn) -> tuple[Decimal, Decimal, int]:
 @given(amount=AMOUNTS, minor_units=MINOR_UNITS)
 def test_rounded_value_has_exactly_minor_units_decimals(amount: Decimal, minor_units: int) -> None:
     rounded = round_minor(amount, minor_units)
-    assert _decimals(rounded) == minor_units
+    assert decimal_places(rounded) == minor_units
     assert abs(rounded - amount) * 2 <= Decimal(1).scaleb(-minor_units)
 
 
@@ -244,7 +235,7 @@ def test_charm_never_lowers_a_price(case: tuple[Decimal, Decimal, int]) -> None:
     amount, ending, minor_units = case
     charmed = charm_up(amount, ending, minor_units)
     assert charmed >= amount
-    assert _decimals(charmed) == minor_units
+    assert decimal_places(charmed) == minor_units
 
 
 @given(case=charm_cases())
@@ -253,7 +244,7 @@ def test_charm_is_idempotent(case: tuple[Decimal, Decimal, int]) -> None:
     once = charm_up(amount, ending, minor_units)
     twice = charm_up(once, ending, minor_units)
     assert twice == once
-    assert _decimals(twice) == minor_units
+    assert decimal_places(twice) == minor_units
 
 
 @given(case=charm_cases())
@@ -264,4 +255,4 @@ def test_charm_lands_on_the_next_price_with_the_ending(
     charmed = charm_up(amount, ending, minor_units)
     assert charmed % 1 == ending
     assert charmed - amount < 1
-    assert _decimals(charmed) == minor_units
+    assert decimal_places(charmed) == minor_units

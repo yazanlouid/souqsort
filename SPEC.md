@@ -154,7 +154,7 @@ The v0.1 catalogue has **12 hand-written products** that together include:
 ```
 
 Rules:
-- `per_usd[X]` is units of X per 1 USD. Convert A → B as `amount / per_usd[A] * per_usd[B]`.
+- `per_usd[X]` is units of X per 1 USD. Convert A → B as `amount * per_usd[B] / per_usd[A]`. Multiply first: the product is exact, so only the division can round, and a result with a finite decimal expansion stays exact.
 - `minor_units` is 2 for SAR and AED, 3 for KWD.
 - Rates are fractions given as strings (`"0.15"` = 15%).
 - `charm_ending` may be `null`, meaning no charm pricing.
