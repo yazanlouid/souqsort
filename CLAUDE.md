@@ -20,7 +20,7 @@ Always run Python through `uv run`. Never use `pip install` or a conda environme
 - Keep full precision; round once, at the shelf price, with `ROUND_HALF_UP` to the currency's minor units.
 - `app/` holds no business logic. Streamlit only calls `souqsort` functions and displays results.
 - Markets are data in `data/raw/gcc_config.json`. Never branch on a market code (no `if market == "KSA"`).
-- Code in `src/` never reads the clock (`datetime.now()`, `date.today()`). Pass a timezone-aware `ordered_at` in.
+- No code in `src/` reads the clock (`datetime.now()`, `date.today()`) except the CLI entry point in `src/souqsort/cli.py`, which defaults `--ordered-at` to now through an injectable `now` callable. Everything else is passed a timezone-aware `ordered_at`.
 - Engine functions return result objects (e.g. `PriceQuote`), not bare numbers.
 
 ## Workflow

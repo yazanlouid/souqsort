@@ -1,0 +1,865 @@
+"""M5: the `price` command-line interface (SPEC §10)."""
+
+import ast
+import csv
+import io
+import json
+import re
+import shutil
+import subprocess
+import sys
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import souqsort
+from souqsort.cli import main
+from souqsort.models import Catalogue, GccConfig
+from souqsort.pipeline import localise_catalogue
+from souqsort.pricing.money import format_money
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = Path(souqsort.__file__).resolve().parent
+CATALOGUE_PATH = REPO_ROOT / "data" / "raw" / "global_products.json"
+CONFIG_PATH = REPO_ROOT / "data" / "raw" / "gcc_config.json"
+ZERO_VAT_CONFIG_PATH = Path(__file__).resolve().parent / "fixtures" / "zero_vat_config.json"
+
+HEADPHONES = "ELEC-HP-001"
+BAG = "FASH-BAG-014"
+KETTLEBELL = "SPRT-KTB-020"
+TEA = "GROC-TEA-060"
+
+
+def _price(
+    market: str = "KSA", catalogue: Path = CATALOGUE_PATH, config: Path = CONFIG_PATH
+) -> tuple[str, ...]:
+    """Arguments for `price` with explicit data files, so tests do not depend on the cwd."""
+    return ("price", "--market", market, "--catalogue", str(catalogue), "--config", str(config))
+
+
+PRICE_KSA = _price()
+THU_EVENING = ("--ordered-at", "2026-10-15T20:59Z")  # Thu 23:59 in Riyadh: after the cutoff
+
+TABLE_HEADER = ["SKU", "Name", "Shelf price (SAR)", "Margin %", "Delivery", "Flags"]
+CSV_HEADER = [
+    "sku",
+    "name_en",
+    "currency",
+    "shelf_price",
+    "margin_percent",
+    "delivery_date",
+    "flags",
+]
+
+# Table columns, by position.
+SKU, NAME, PRICE, MARGIN, DELIVERY, FLAGS = range(6)
+
+
+# --- helpers and fixtures -----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Result:
+    code: int
+    out: str
+    err: str
+
+
+def _clock_must_not_be_read() -> datetime:
+    raise AssertionError("the clock was read, but this run should not need it")
+
+
+def _cells(line: str) -> list[str]:
+    """Split a table line into cells; columns are at least two spaces apart."""
+    return re.split(r"\s{2,}", line.strip())
+
+
+def _table_lines(out: str) -> tuple[str, str, list[str]]:
+    """The header line, the rule under it and the data lines of the printed table."""
+    lines = out.splitlines()
+    rule_at = next(i for i, line in enumerate(lines) if line.startswith("---"))
+    rows: list[str] = []
+    for line in lines[rule_at + 1 :]:
+        if not line.strip():
+            break
+        rows.append(line)
+    return lines[rule_at - 1], lines[rule_at], rows
+
+
+def _table(out: str) -> tuple[list[str], dict[str, list[str]]]:
+    """The header cells, and the data rows keyed by SKU in printed order."""
+    header, _, rows = _table_lines(out)
+    return _cells(header), {cells[SKU]: cells for cells in map(_cells, rows)}
+
+
+def _write_json(path: Path, obj: Any) -> Path:
+    path.write_text(json.dumps(obj), encoding="utf-8")
+    return path
+
+
+def _read_csv(path: Path) -> list[list[str]]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.reader(handle))
+
+
+@pytest.fixture
+def run(capsys: pytest.CaptureFixture[str]) -> Callable[..., Result]:
+    """Run the CLI in-process. The clock is off limits unless a test passes its own ``now``."""
+
+    def run(*argv: str, now: Callable[[], datetime] = _clock_must_not_be_read) -> Result:
+        try:
+            code = main(list(argv), now=now)
+        except SystemExit as exc:  # argparse reports usage errors and --help by exiting
+            if not isinstance(exc.code, int):
+                raise
+            code = exc.code
+        captured = capsys.readouterr()
+        return Result(code, captured.out, captured.err)
+
+    return run
+
+
+# --- the table ----------------------------------------------------------------------------
+
+
+def test_price_exits_zero_and_prints_the_expected_columns(run: Callable[..., Result]) -> None:
+    result = run(*PRICE_KSA, *THU_EVENING)
+
+    assert result.code == 0
+    assert result.err == ""
+    header, rows = _table(result.out)
+    assert header == TABLE_HEADER
+    assert len(rows) == 12
+    assert all(len(cells) == 6 for cells in rows.values())
+
+
+def test_rows_are_in_catalogue_order(run: Callable[..., Result], catalogue: Catalogue) -> None:
+    _, rows = _table(run(*PRICE_KSA, *THU_EVENING).out)
+    assert list(rows) == [p.sku for p in catalogue.products]
+
+
+def test_worked_example_rows(run: Callable[..., Result]) -> None:
+    _, rows = _table(run(*PRICE_KSA, *THU_EVENING).out)
+
+    assert rows[HEADPHONES] == [
+        "ELEC-HP-001",
+        "Wireless Noise-Cancelling Headphones",
+        "686.95",
+        "58.7%",
+        "2026-10-25",
+        "-",
+    ]
+    assert rows[BAG] == [
+        "FASH-BAG-014",
+        "Leather Crossbody Bag",
+        "594.95",
+        "64.6%",
+        "2026-10-25",
+        "missing_arabic_name",
+    ]
+
+
+def test_table_shows_the_same_result_as_the_pipeline(
+    run: Callable[..., Result], catalogue: Catalogue, config: GccConfig
+) -> None:
+    ordered_at = datetime(2026, 10, 15, 20, 59, tzinfo=UTC)
+    expected = localise_catalogue(catalogue.products, config, "KSA", ordered_at)
+
+    _, rows = _table(run(*PRICE_KSA, *THU_EVENING).out)
+
+    for item in expected:
+        cells = rows[item.sku]
+        assert cells[NAME] == item.name_en
+        assert cells[PRICE] == format_money(item.quote.shelf_price, 2)
+        assert cells[DELIVERY] == item.delivery.delivery_date.isoformat()
+        assert cells[FLAGS] == (",".join(item.flags) or "-")
+
+
+def test_margin_is_a_percentage_with_one_decimal(run: Callable[..., Result]) -> None:
+    _, rows = _table(run(*PRICE_KSA, *THU_EVENING).out)
+    for cells in rows.values():
+        assert re.fullmatch(r"-?\d+\.\d%", cells[MARGIN]), cells
+
+
+def test_flags_column(run: Callable[..., Result]) -> None:
+    _, rows = _table(run(*PRICE_KSA, *THU_EVENING).out)
+    flagged = {sku for sku, cells in rows.items() if cells[FLAGS] != "-"}
+    assert flagged == {BAG, TEA}
+
+
+def test_summary_line_names_the_market_order_time_and_adjustment(
+    run: Callable[..., Result],
+) -> None:
+    summary = run(*PRICE_KSA, *THU_EVENING).out.splitlines()[0]
+
+    assert "KSA (Saudi Arabia)" in summary
+    assert "2026-10-15 23:59 Asia/Riyadh" in summary  # shown in market local time
+    assert "+0 pp" in summary
+
+
+def test_numeric_columns_are_right_aligned_and_lines_have_no_trailing_space(
+    run: Callable[..., Result],
+) -> None:
+    header, rule, rows = _table_lines(run(*PRICE_KSA, *THU_EVENING).out)
+
+    price = re.compile(r"\d+\.\d{2}(?=\s+-?\d+\.\d%)")
+    price_ends = [match.end() for line in rows for match in price.finditer(line)]
+    margin_ends = [line.index("%") for line in rows]
+    assert len(price_ends) == len(margin_ends) == 12
+    assert len(set(price_ends)) == 1
+    assert len(set(margin_ends)) == 1
+    for line in (header, rule, *rows):
+        assert line == line.rstrip()
+        assert len(line) <= len(rule)
+
+
+def test_output_is_ascii(run: Callable[..., Result]) -> None:
+    # Arabic names are not printed, so the output is safe on a Windows console code page.
+    assert run(*PRICE_KSA, *THU_EVENING).out.isascii()
+
+
+# --- --duty-adjust (SPEC §7.4) ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("points", "expected"),
+    [("0", "686.95"), ("3", "705.95"), ("20", "817.95")],  # duty 5%, 8% and 25% on 568.36875
+)
+def test_duty_adjust_takes_whole_percentage_points(
+    run: Callable[..., Result], points: str, expected: str
+) -> None:
+    result = run(*PRICE_KSA, *THU_EVENING, "--duty-adjust", points)
+
+    assert result.code == 0
+    _, rows = _table(result.out)
+    assert rows[HEADPHONES][PRICE] == expected
+    assert f"+{points} pp" in result.out.splitlines()[0]
+
+
+def test_duty_adjust_defaults_to_zero(run: Callable[..., Result]) -> None:
+    default = run(*PRICE_KSA, *THU_EVENING)
+    explicit = run(*PRICE_KSA, *THU_EVENING, "--duty-adjust", "0")
+    assert default.out == explicit.out
+
+
+@pytest.mark.parametrize("value", ["-1", "21", "100", "2.5", "0.03", "abc", ""])
+def test_duty_adjust_outside_whole_points_0_to_20_is_a_usage_error(
+    run: Callable[..., Result], value: str
+) -> None:
+    result = run(*PRICE_KSA, *THU_EVENING, "--duty-adjust", value)
+
+    assert result.code == 2
+    assert "--duty-adjust" in result.err
+    assert result.out == ""
+
+
+# --- --ordered-at -------------------------------------------------------------------------
+
+
+def test_ordered_at_with_an_offset_is_the_same_instant_as_utc(run: Callable[..., Result]) -> None:
+    utc = run(*PRICE_KSA, "--ordered-at", "2026-10-15T20:59Z")
+    riyadh = run(*PRICE_KSA, "--ordered-at", "2026-10-15T23:59+03:00")
+
+    assert utc.code == riyadh.code == 0
+    assert utc.out == riyadh.out
+
+
+@pytest.mark.parametrize(
+    ("ordered_at", "local", "delivery"),
+    [
+        ("2026-10-11T07:00Z", "2026-10-11 10:00", "2026-10-18"),  # SPEC §8.1 row 1
+        ("2026-10-11T11:00Z", "2026-10-11 14:00", "2026-10-19"),  # row 2: exactly at the cutoff
+        ("2026-10-15T20:59Z", "2026-10-15 23:59", "2026-10-25"),  # row 4
+        ("2026-10-15T22:30Z", "2026-10-16 01:30", "2026-10-25"),  # row 5: Friday in Riyadh
+    ],
+)
+def test_ordered_at_drives_the_delivery_date(
+    run: Callable[..., Result], ordered_at: str, local: str, delivery: str
+) -> None:
+    result = run(*PRICE_KSA, "--ordered-at", ordered_at)
+
+    _, rows = _table(result.out)
+    assert {cells[DELIVERY] for cells in rows.values()} == {delivery}
+    assert f"{local} Asia/Riyadh" in result.out.splitlines()[0]
+
+
+def test_ordered_at_without_an_offset_is_market_local_time(run: Callable[..., Result]) -> None:
+    # 13:59 on the Riyadh clock is before the 14:00 cutoff; 13:59Z is 16:59 there, after it.
+    local = run(*PRICE_KSA, "--ordered-at", "2026-10-15T13:59")
+    utc = run(*PRICE_KSA, "--ordered-at", "2026-10-15T13:59Z")
+
+    assert local.code == utc.code == 0
+    assert "2026-10-15 13:59 Asia/Riyadh" in local.out.splitlines()[0]
+    assert "2026-10-15 16:59 Asia/Riyadh" in utc.out.splitlines()[0]
+    assert {cells[DELIVERY] for cells in _table(local.out)[1].values()} == {"2026-10-22"}
+    assert {cells[DELIVERY] for cells in _table(utc.out)[1].values()} == {"2026-10-25"}
+
+
+@pytest.mark.parametrize(
+    ("ordered_at", "delivery"),
+    [
+        # London is UTC+1 on this date. Read as UTC, 13:30 would be 14:30 there and miss the
+        # cutoff; read as Riyadh time, 15:00 would be 13:00 there and make it.
+        ("2026-10-15T13:30", "2026-10-22"),
+        ("2026-10-15T15:00", "2026-10-25"),
+    ],
+)
+def test_ordered_at_without_an_offset_uses_the_timezone_from_the_config(
+    run: Callable[..., Result],
+    raw_config: dict[str, Any],
+    tmp_path: Path,
+    ordered_at: str,
+    delivery: str,
+) -> None:
+    raw_config["markets"]["KSA"]["calendar"]["timezone"] = "Europe/London"
+    london = _write_json(tmp_path / "config.json", raw_config)
+
+    result = run(*_price(config=london), "--ordered-at", ordered_at)
+
+    assert result.code == 0
+    assert "Europe/London" in result.out.splitlines()[0]
+    assert {cells[DELIVERY] for cells in _table(result.out)[1].values()} == {delivery}
+
+
+@pytest.mark.parametrize("value", ["yesterday", "2026-13-45T00:00Z", "20:59", ""])
+def test_unparseable_ordered_at_is_a_usage_error(run: Callable[..., Result], value: str) -> None:
+    result = run(*PRICE_KSA, "--ordered-at", value)
+
+    assert result.code == 2
+    assert "--ordered-at" in result.err
+    assert result.out == ""
+
+
+@pytest.mark.parametrize(
+    "value", ["2026-10-15", "20261015", "2026-W42-4"], ids=["date", "basic-date", "week-date"]
+)
+def test_ordered_at_without_a_time_is_a_usage_error(run: Callable[..., Result], value: str) -> None:
+    # Read as midnight it would always beat the cutoff, whenever the order was really placed.
+    result = run(*PRICE_KSA, "--ordered-at", value)
+
+    assert result.code == 2
+    assert "--ordered-at" in result.err
+    assert "time" in result.err
+    assert result.out == ""
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-10-15+03:00",  # a date and an offset: the offset must not be read as 03:00
+        "2026-10-15-03:00",
+        "2026-10-15x20:59",  # only T or a space may separate the date and the time
+        "2026-10-15T20",  # an hour with no minutes
+        "20261015T2059Z",  # basic format: accepted by the parser, but not by this CLI
+    ],
+)
+def test_ordered_at_must_be_a_date_then_a_time(run: Callable[..., Result], value: str) -> None:
+    result = run(*PRICE_KSA, "--ordered-at", value)
+
+    assert result.code == 2
+    assert "--ordered-at" in result.err
+    assert result.out == ""
+
+
+@pytest.mark.parametrize(
+    ("value", "local"),
+    [
+        ("2026-10-15 20:59Z", "2026-10-15 23:59"),  # a space instead of T
+        ("2026-10-15T20:59:30Z", "2026-10-15 23:59"),  # seconds
+        ("2026-10-15T23:59:30.250+03:00", "2026-10-15 23:59"),  # fraction and offset
+        ("2026-10-15T15:59-05:00", "2026-10-15 23:59"),  # a negative offset
+        ("2026-10-15T23:59:30", "2026-10-15 23:59"),  # seconds, market local time
+    ],
+)
+def test_ordered_at_accepted_forms(run: Callable[..., Result], value: str, local: str) -> None:
+    result = run(*PRICE_KSA, "--ordered-at", value)
+
+    assert result.code == 0
+    assert f"{local} Asia/Riyadh" in result.out.splitlines()[0]
+
+
+def test_ordered_at_midnight_is_accepted_when_written_out(run: Callable[..., Result]) -> None:
+    result = run(*PRICE_KSA, "--ordered-at", "2026-10-15T00:00")
+
+    assert result.code == 0
+    assert "2026-10-15 00:00 Asia/Riyadh" in result.out.splitlines()[0]
+
+
+# --- the clock: read only for the default, and only through `now` -------------------------
+
+
+def test_ordered_at_defaults_to_now(run: Callable[..., Result]) -> None:
+    calls: list[datetime] = []
+
+    def sunday_morning() -> datetime:
+        calls.append(datetime(2026, 10, 11, 7, 0, tzinfo=UTC))  # Sun 10:00 in Riyadh
+        return calls[-1]
+
+    result = run(*PRICE_KSA, now=sunday_morning)
+
+    assert result.code == 0
+    assert len(calls) == 1
+    assert "2026-10-11 10:00 Asia/Riyadh" in result.out.splitlines()[0]
+    assert {cells[DELIVERY] for cells in _table(result.out)[1].values()} == {"2026-10-18"}
+
+
+def test_clock_is_not_read_when_ordered_at_is_given(run: Callable[..., Result]) -> None:
+    result = run(*PRICE_KSA, *THU_EVENING, now=_clock_must_not_be_read)
+    assert result.code == 0
+
+
+def _clock_reads(source: str) -> list[str]:
+    """References to the clock in Python source, called or not, and imports of ``time``."""
+    reads: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Attribute) and node.attr in {"now", "today", "utcnow"}:
+            reads.append(ast.unparse(node))
+        elif isinstance(node, ast.Import):
+            reads += [f"import {a.name}" for a in node.names if a.name.split(".")[0] == "time"]
+        elif isinstance(node, ast.ImportFrom) and node.module == "time":
+            reads.append("from time import")
+    return reads
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("stamp = datetime.now()", ["datetime.now"]),
+        ("day = date.today()", ["date.today"]),
+        ("stamp = dt.datetime.utcnow()", ["dt.datetime.utcnow"]),
+        # Not called here, so a search for "now(" would miss it.
+        ("make = dict(default_factory=datetime.now)", ["datetime.now"]),
+        ("import time", ["import time"]),
+        ("from time import time_ns", ["from time import"]),
+        ("cutoff = dt.time(14, 0)", []),  # a time of day, not the clock
+        ("stamp = now()", []),  # an injected callable
+    ],
+    ids=[
+        "now",
+        "today",
+        "utcnow",
+        "uncalled",
+        "time-module",
+        "from-time",
+        "time-of-day",
+        "injected",
+    ],
+)
+def test_clock_guard_recognises_clock_reads(source: str, expected: list[str]) -> None:
+    assert _clock_reads(source) == expected
+
+
+def test_only_the_cli_reads_the_clock() -> None:
+    reads = {
+        path.relative_to(SRC_DIR).as_posix(): _clock_reads(path.read_text("utf-8"))
+        for path in SRC_DIR.rglob("*.py")
+    }
+
+    assert {name: found for name, found in reads.items() if found} == {"cli.py": ["datetime.now"]}
+
+
+def test_src_does_not_import_pandas() -> None:
+    pandas_import = re.compile(r"^\s*(?:import|from)\s+pandas\b", re.MULTILINE)
+    offenders = [
+        path.relative_to(SRC_DIR).as_posix()
+        for path in SRC_DIR.rglob("*.py")
+        if pandas_import.search(path.read_text("utf-8"))
+    ]
+
+    assert offenders == []
+
+
+# --- --csv --------------------------------------------------------------------------------
+
+
+def test_csv_has_the_table_columns_plus_currency(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    out_path = tmp_path / "ksa.csv"
+
+    result = run(*PRICE_KSA, *THU_EVENING, "--csv", str(out_path))
+
+    assert result.code == 0
+    header, *rows = _read_csv(out_path)
+    assert header == CSV_HEADER
+    assert len(rows) == 12
+    assert rows[0] == [
+        "ELEC-HP-001",
+        "Wireless Noise-Cancelling Headphones",
+        "SAR",
+        "686.95",
+        "58.7",
+        "2026-10-25",
+        "",
+    ]
+    assert rows[2] == [
+        "FASH-BAG-014",
+        "Leather Crossbody Bag",
+        "SAR",
+        "594.95",
+        "64.6",
+        "2026-10-25",
+        "missing_arabic_name",
+    ]
+
+
+def test_csv_matches_the_printed_table(run: Callable[..., Result], tmp_path: Path) -> None:
+    out_path = tmp_path / "ksa.csv"
+
+    result = run(*PRICE_KSA, *THU_EVENING, "--duty-adjust", "3", "--csv", str(out_path))
+
+    _, table_rows = _table(result.out)  # the table is still printed
+    _, *csv_rows = _read_csv(out_path)
+    assert [row[0] for row in csv_rows] == list(table_rows)
+    for sku, name, currency, price, margin, delivery, flags in csv_rows:
+        cells = table_rows[sku]
+        assert currency == "SAR"
+        assert [name, price, f"{margin}%", delivery] == cells[NAME:FLAGS]
+        assert flags == ("" if cells[FLAGS] == "-" else cells[FLAGS])
+
+
+def test_csv_creates_missing_parent_folders(run: Callable[..., Result], tmp_path: Path) -> None:
+    out_path = tmp_path / "outputs" / "2026-10" / "ksa.csv"
+    assert not out_path.parent.parent.exists()
+
+    result = run(*PRICE_KSA, *THU_EVENING, "--csv", str(out_path))
+
+    assert result.code == 0
+    assert result.err == ""
+    assert len(_read_csv(out_path)) == 13  # header + 12 products
+
+
+def test_csv_reports_where_it_was_written(run: Callable[..., Result], tmp_path: Path) -> None:
+    out_path = tmp_path / "ksa.csv"
+
+    result = run(*PRICE_KSA, *THU_EVENING, "--csv", str(out_path))
+
+    assert "12 rows" in result.out
+    assert out_path.name in result.out
+
+
+def test_csv_overwrites_an_existing_file(run: Callable[..., Result], tmp_path: Path) -> None:
+    out_path = tmp_path / "ksa.csv"
+
+    run(*PRICE_KSA, *THU_EVENING, "--csv", str(out_path))
+    run(*PRICE_KSA, *THU_EVENING, "--duty-adjust", "3", "--csv", str(out_path))
+
+    rows = _read_csv(out_path)
+    assert len(rows) == 13
+    assert rows[1][3] == "705.95"
+
+
+def test_csv_has_no_blank_lines_between_rows(run: Callable[..., Result], tmp_path: Path) -> None:
+    # Without newline="" the csv module's \r\n becomes \r\r\n on Windows.
+    out_path = tmp_path / "ksa.csv"
+
+    run(*PRICE_KSA, *THU_EVENING, "--csv", str(out_path))
+
+    raw = out_path.read_bytes()
+    assert b"\r\r\n" not in raw
+    assert len(raw.splitlines()) == 13
+
+
+def test_csv_path_that_cannot_be_written_exits_one(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    result = run(*PRICE_KSA, *THU_EVENING, "--csv", str(tmp_path))  # a folder, not a file
+
+    assert result.code == 1
+    assert tmp_path.name in result.err
+    assert "Traceback" not in result.err
+
+
+def test_no_csv_is_written_unless_asked(
+    run: Callable[..., Result], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = run(*PRICE_KSA, *THU_EVENING)
+
+    assert result.code == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("option", ["--catalogue", "--config"])
+def test_csv_refuses_to_overwrite_an_input_file(
+    run: Callable[..., Result], tmp_path: Path, option: str
+) -> None:
+    catalogue = Path(shutil.copyfile(CATALOGUE_PATH, tmp_path / "catalogue.json"))
+    config = Path(shutil.copyfile(CONFIG_PATH, tmp_path / "config.json"))
+    target = catalogue if option == "--catalogue" else config
+    original = target.read_bytes()
+
+    result = run(*_price(catalogue=catalogue, config=config), *THU_EVENING, "--csv", str(target))
+
+    assert result.code == 2
+    assert "--csv" in result.err
+    assert option in result.err
+    assert target.read_bytes() == original
+    assert result.out == ""
+
+
+def test_csv_refuses_an_input_file_spelled_differently(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    catalogue = Path(shutil.copyfile(CATALOGUE_PATH, tmp_path / "catalogue.json"))
+    (tmp_path / "sub").mkdir()
+    same_file = tmp_path / "sub" / ".." / "catalogue.json"
+    original = catalogue.read_bytes()
+
+    result = run(*_price(catalogue=catalogue), *THU_EVENING, "--csv", str(same_file))
+
+    assert result.code == 2
+    assert catalogue.read_bytes() == original
+
+
+# --- markets and data files ---------------------------------------------------------------
+
+
+def test_another_market_from_another_config(run: Callable[..., Result]) -> None:
+    result = run(*_price(market="TEST-KWD", config=ZERO_VAT_CONFIG_PATH), *THU_EVENING)
+
+    assert result.code == 0
+    header, rows = _table(result.out)
+    assert header[PRICE] == "Shelf price (KWD)"
+    assert rows[HEADPHONES][PRICE] == "48.950"
+    assert all(re.fullmatch(r"\d+\.\d{3}", cells[PRICE]) for cells in rows.values())
+    assert "Asia/Kuwait" in result.out.splitlines()[0]
+
+
+def test_unknown_market_is_a_usage_error_listing_the_configured_markets(
+    run: Callable[..., Result],
+) -> None:
+    result = run(*_price(market="UAE"), *THU_EVENING)
+
+    assert result.code == 2
+    assert "UAE" in result.err
+    assert "KSA" in result.err
+    assert "usage: python -m souqsort price" in result.err  # the price command's own usage
+    assert "--market" in result.err
+    assert result.out == ""
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [(), ("price",), ("price", *THU_EVENING), ("refund", "--market", "KSA")],
+    ids=["no-command", "no-market", "no-market-with-time", "unknown-command"],
+)
+def test_missing_command_or_market_is_a_usage_error(
+    run: Callable[..., Result], argv: tuple[str, ...]
+) -> None:
+    assert run(*argv).code == 2
+
+
+def test_data_files_default_to_data_raw_under_the_current_folder(
+    run: Callable[..., Result], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(REPO_ROOT)
+
+    result = run("price", "--market", "KSA", *THU_EVENING)
+
+    assert result.code == 0
+    assert len(_table(result.out)[1]) == 12
+
+
+def test_missing_data_file_exits_one_naming_the_file(
+    run: Callable[..., Result], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)  # no data/raw here
+
+    result = run("price", "--market", "KSA", *THU_EVENING)
+
+    assert result.code == 1
+    assert "gcc_config.json" in result.err or "global_products.json" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+
+
+def test_missing_catalogue_file_exits_one(run: Callable[..., Result], tmp_path: Path) -> None:
+    missing = tmp_path / "no_such_catalogue.json"
+
+    result = run(*_price(catalogue=missing), *THU_EVENING)
+
+    assert result.code == 1
+    assert "no_such_catalogue.json" in result.err
+    assert result.out == ""
+
+
+def test_invalid_catalogue_exits_one_with_the_validation_message(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path
+) -> None:
+    raw_catalogue["products"][0]["base_price"] = 149.99  # a JSON number, not a string
+    bad = _write_json(tmp_path / "float_price.json", raw_catalogue)
+
+    result = run(*_price(catalogue=bad), *THU_EVENING)
+
+    assert result.code == 1
+    assert "float_price.json" in result.err
+    assert "base_price" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+
+
+def test_config_that_is_not_json_exits_one(run: Callable[..., Result], tmp_path: Path) -> None:
+    bad = tmp_path / "broken_config.json"
+    bad.write_text("{ not json", encoding="utf-8")
+
+    result = run(*_price(config=bad), *THU_EVENING)
+
+    assert result.code == 1
+    assert "broken_config.json" in result.err
+    assert result.out == ""
+
+
+def test_product_that_cannot_be_priced_exits_one_naming_the_sku(
+    run: Callable[..., Result],
+    raw_catalogue: dict[str, Any],
+    raw_config: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    # Same case as test_pipeline: no charm pricing, and rounding swallows the goods value.
+    raw_config["markets"]["KSA"]["currency"]["charm_ending"] = None
+    kettlebell = next(p for p in raw_catalogue["products"] if p["sku"] == KETTLEBELL)
+    kettlebell.update(base_price="0.0002", weight_kg="32.00")
+    catalogue = _write_json(tmp_path / "catalogue.json", raw_catalogue)
+    config = _write_json(tmp_path / "config.json", raw_config)
+
+    result = run(*_price(catalogue=catalogue, config=config), *THU_EVENING)
+
+    assert result.code == 1
+    assert KETTLEBELL in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+
+
+def test_product_without_an_fx_rate_exits_one_naming_the_sku(
+    run: Callable[..., Result], raw_config: dict[str, Any], tmp_path: Path
+) -> None:
+    del raw_config["fx"]["per_usd"]["GBP"]  # still a valid config: no market uses GBP
+    config = _write_json(tmp_path / "config.json", raw_config)
+
+    result = run(*_price(config=config), *THU_EVENING)
+
+    assert result.code == 1
+    assert BAG in result.err  # the first GBP product
+    assert "GBP" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+
+
+def test_amount_too_large_to_price_exits_one_naming_the_sku(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path
+) -> None:
+    raw_catalogue["products"][0]["base_price"] = "1E+30"  # valid, but beyond 28 digits in SAR
+    catalogue = _write_json(tmp_path / "catalogue.json", raw_catalogue)
+
+    result = run(*_price(catalogue=catalogue), *THU_EVENING)
+
+    assert result.code == 1
+    assert HEADPHONES in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+
+
+def test_order_time_beyond_the_calendar_exits_one_naming_the_market(
+    run: Callable[..., Result],
+) -> None:
+    result = run(*PRICE_KSA, "--ordered-at", "9999-12-31T23:00Z")
+
+    assert result.code == 1
+    assert "KSA" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+
+
+@pytest.mark.parametrize(
+    "bug",
+    [ValueError("boom"), ArithmeticError("boom"), RuntimeError("boom")],
+    ids=["ValueError", "ArithmeticError", "RuntimeError"],
+)
+def test_unexpected_errors_are_not_turned_into_an_exit_code(
+    run: Callable[..., Result], monkeypatch: pytest.MonkeyPatch, bug: Exception
+) -> None:
+    # Only LocalisationError, DataFileError and OSError are reported as messages. Anything
+    # else is a bug, and a bug should show its traceback.
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise bug
+
+    monkeypatch.setattr("souqsort.cli.localise_catalogue", broken)
+
+    with pytest.raises(type(bug), match="boom"):
+        run(*PRICE_KSA, *THU_EVENING)
+
+
+# --- output encoding ----------------------------------------------------------------------
+
+
+def test_names_the_output_encoding_cannot_represent_are_replaced_not_fatal(
+    raw_catalogue: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Piped or redirected output on Windows is in the ANSI code page, which has no U+02BF or
+    # U+0101. The table must still print, and the CSV, which is UTF-8, keeps the real name.
+    name = "Oud ʿAttar Halāl"
+    raw_catalogue["products"][0]["name"]["en"] = name
+    catalogue = _write_json(tmp_path / "catalogue.json", raw_catalogue)
+    csv_path = tmp_path / "ksa.csv"
+    piped = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(piped, encoding="cp1252"))
+
+    code = main([*_price(catalogue=catalogue), *THU_EVENING, "--csv", str(csv_path)])
+
+    sys.stdout.flush()
+    printed = piped.getvalue().decode("cp1252")
+    assert code == 0
+    _, rows = _table(printed)
+    assert len(rows) == 12
+    assert rows[HEADPHONES][NAME] == "Oud ?Attar Hal?l"
+    assert rows[HEADPHONES][PRICE] == "686.95"
+    assert _read_csv(csv_path)[1][1] == name
+
+
+def test_empty_catalogue_prints_the_header_and_no_rows(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path
+) -> None:
+    raw_catalogue["products"] = []
+    catalogue = _write_json(tmp_path / "catalogue.json", raw_catalogue)
+    csv_path = tmp_path / "empty.csv"
+
+    result = run(*_price(catalogue=catalogue), *THU_EVENING, "--csv", str(csv_path))
+
+    assert result.code == 0
+    header, rows = _table(result.out)
+    assert header == TABLE_HEADER
+    assert rows == {}
+    assert _read_csv(csv_path) == [CSV_HEADER]
+
+
+# --- help and `python -m souqsort` --------------------------------------------------------
+
+
+def test_price_help_lists_every_option(run: Callable[..., Result]) -> None:
+    result = run("price", "--help")
+
+    assert result.code == 0
+    for option in ("--market", "--duty-adjust", "--ordered-at", "--csv", "--catalogue", "--config"):
+        assert option in result.out
+
+
+def test_python_dash_m_souqsort_runs_the_cli() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "souqsort", "price", "--market", "KSA", *THU_EVENING],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    header, rows = _table(completed.stdout)
+    assert header == TABLE_HEADER
+    assert rows[HEADPHONES][PRICE] == "686.95"
+    assert len(rows) == 12

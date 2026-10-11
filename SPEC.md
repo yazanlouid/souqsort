@@ -18,7 +18,7 @@ SouqSort is a localisation and pricing engine for a UK-based retailer launching 
 - Show the result in a Streamlit grid with a duty slider and search, and print the same result from a CLI.
 
 ### Later (do NOT build in v0.1)
-- **v0.2:** UAE and Kuwait added through config only; compliance rules (banned attributes, missing-Arabic-name flag); de minimis thresholds.
+- **v0.2:** UAE and Kuwait added through config only; compliance rules (banned attributes); de minimis thresholds.
 - **v0.3:** a simple `GCC_EXPANSION_REPORT.md` from a template, with a download button.
 - **Mid-project upgrades:** calculation traces and a price waterfall; data pipeline (catalogue generator, DuckDB bronze/silver/gold tables, quarantine, run manifest, reconciliation check); decision-led report (tariff pass-through slider, breakeven, sensitivity, market scorecard); CI.
 - **Late:** FastAPI adapter, deployment, README polish, ADRs.
@@ -29,7 +29,7 @@ SouqSort is a localisation and pricing engine for a UK-based retailer launching 
 2. Keep full precision through every step; round once, at the shelf price.
 3. `app/` contains no business logic. It calls `souqsort` and displays results.
 4. Markets are data. No code branches on a market code.
-5. Code in `src/` never reads the clock. Callers pass a timezone-aware `ordered_at`.
+5. No code in `src/` reads the clock except the CLI entry point in `cli.py`, which defaults `--ordered-at` to now through an injectable `now` callable. Everything else is passed a timezone-aware `ordered_at`.
 6. Engine functions return result objects (e.g. `PriceQuote`), not bare numbers.
 
 ## 4. Tech stack
@@ -69,6 +69,7 @@ souqsort/
 │       │   ├── __init__.py
 │       │   └── calendar.py   # business days, delivery estimate
 │       ├── pipeline.py       # localise_catalogue()
+│       ├── display.py        # display rows shared by the CLI and the dashboard
 │       └── cli.py
 ├── app/
 │   └── streamlit_app.py
@@ -80,6 +81,7 @@ souqsort/
     ├── test_landed_cost.py
     ├── test_calendar.py
     ├── test_pipeline.py
+    ├── test_display.py
     └── test_cli.py
 ```
 
