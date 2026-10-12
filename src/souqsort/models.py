@@ -208,6 +208,13 @@ class GccConfig(_Model):
             markets[code] = market
         return {**data, "markets": markets}
 
+    @field_validator("markets")
+    @classmethod
+    def _at_least_one_market(cls, value: dict[str, MarketConfig]) -> dict[str, MarketConfig]:
+        if not value:
+            raise ValueError("markets must contain at least one market")
+        return value
+
     @model_validator(mode="after")
     def _market_currencies_have_fx(self) -> Self:
         for code, market in self.markets.items():

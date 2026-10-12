@@ -531,6 +531,21 @@ def test_unknown_market_currency_rejected(write_json: WriteJson, raw_config: Raw
     _reject_config(write_json, raw_config, "XYZ", "per_usd")
 
 
+# --- GccConfig: at least one market -------------------------------------------------------
+
+
+def test_config_with_no_markets_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    # A config with nothing to price is a broken file, not something each front end handles.
+    raw_config["markets"] = {}
+    _reject_config(write_json, raw_config, "markets", "at least one market")
+
+
+def test_config_with_no_markets_rejected_without_a_file(raw_config: Raw) -> None:
+    raw_config["markets"] = {}
+    with pytest.raises(ValidationError, match="at least one market"):
+        GccConfig.model_validate(raw_config)
+
+
 # --- loaders: DataFileError ---------------------------------------------------------------
 
 

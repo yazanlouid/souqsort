@@ -12,7 +12,9 @@ from souqsort.logistics.calendar import (
     DeliveryEstimate,
     add_business_days,
     estimate_delivery,
+    in_market_time,
     is_business_day,
+    to_market_time,
 )
 from souqsort.models import GccConfig, Holiday, MarketConfig
 
@@ -31,6 +33,11 @@ MON_19 = date(2026, 10, 19)
 def _utc(text: str) -> datetime:
     """An aware UTC datetime from text such as ``"2026-10-11 07:00"``."""
     return datetime.fromisoformat(text).replace(tzinfo=UTC)
+
+
+def _naive(text: str) -> datetime:
+    """A datetime with no offset, as a CLI option or a date and time picker gives it."""
+    return datetime.fromisoformat(text)
 
 
 def _holiday(day: date, provisional: bool = False) -> Holiday:
@@ -447,6 +454,76 @@ def test_cutoff_in_a_skipped_hour_falls_an_hour_later_on_the_clock(
     assert estimate.ordered_at_local.isoformat() == local
     assert estimate.dispatch_date == date.fromisoformat(dispatch)
     assert estimate.delivery_date == date.fromisoformat(delivery)
+
+
+# --- order times on the market's clock (shared by the CLI and the dashboard) ---------------
+
+
+def test_order_time_without_an_offset_is_on_the_market_clock(ksa: MarketConfig) -> None:
+    ordered_at = in_market_time(_naive("2026-10-15 13:59"), ksa)
+
+    assert ordered_at.isoformat() == "2026-10-15T13:59:00+03:00"
+
+
+def test_order_time_without_an_offset_is_not_read_as_utc(ksa: MarketConfig) -> None:
+    # 13:59 on the Riyadh clock is before the 14:00 cutoff; 13:59 UTC is 16:59 there, after it.
+    local = estimate_delivery(in_market_time(_naive("2026-10-15 13:59"), ksa), ksa)
+    utc = estimate_delivery(_utc("2026-10-15 13:59"), ksa)
+
+    assert local.dispatch_date == date(2026, 10, 15)
+    assert utc.dispatch_date == date(2026, 10, 18)
+
+
+def test_order_time_with_an_offset_is_left_as_it_is(ksa: MarketConfig) -> None:
+    india = timezone(timedelta(hours=5, minutes=30))
+    for ordered_at in (_utc("2026-10-15 20:59"), datetime(2026, 10, 16, 2, 29, tzinfo=india)):
+        result = in_market_time(ordered_at, ksa)
+
+        assert result == ordered_at
+        assert result.utcoffset() == ordered_at.utcoffset()  # not moved onto the market clock
+
+
+def test_order_time_without_an_offset_uses_the_timezone_from_the_config(ksa: MarketConfig) -> None:
+    london = _with_calendar(ksa, timezone="Europe/London")  # UTC+1 on this date
+
+    ordered_at = in_market_time(_naive("2026-10-15 13:30"), london)
+
+    assert ordered_at.isoformat() == "2026-10-15T13:30:00+01:00"
+    assert ordered_at == _utc("2026-10-15 12:30")
+
+
+def test_order_time_keeps_its_seconds(ksa: MarketConfig) -> None:
+    ordered_at = in_market_time(_naive("2026-10-15 23:59:30.250"), ksa)
+    assert ordered_at.isoformat() == "2026-10-15T23:59:30.250000+03:00"
+
+
+@pytest.mark.parametrize(
+    ("moment", "local"),
+    [
+        ("2026-10-11 07:00", "2026-10-11T10:00:00+03:00"),
+        ("2026-10-15 22:30", "2026-10-16T01:30:00+03:00"),  # already Friday in Riyadh
+    ],
+)
+def test_to_market_time_is_the_same_instant_on_the_market_clock(
+    ksa: MarketConfig, moment: str, local: str
+) -> None:
+    result = to_market_time(_utc(moment), ksa)
+
+    assert result.isoformat() == local
+    assert result == _utc(moment)
+    assert result == estimate_delivery(_utc(moment), ksa).ordered_at_local
+
+
+def test_to_market_time_uses_the_timezone_from_the_config(ksa: MarketConfig) -> None:
+    dubai = _with_calendar(ksa, timezone="Asia/Dubai")
+    local = to_market_time(_utc("2026-10-15 20:59"), dubai)
+    assert local.isoformat() == "2026-10-16T00:59:00+04:00"
+
+
+def test_to_market_time_rejects_a_naive_datetime(ksa: MarketConfig) -> None:
+    # A moment has to say which instant it is; only in_market_time() reads a bare clock time.
+    with pytest.raises(ValueError, match="timezone-aware"):
+        to_market_time(_naive("2026-10-11 07:00"), ksa)
 
 
 # --- Hypothesis properties ----------------------------------------------------------------

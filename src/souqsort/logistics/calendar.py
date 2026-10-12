@@ -92,6 +92,28 @@ def add_business_days(
     raise AssertionError(f"no {n}-th business day within the search bound after {start}")
 
 
+def in_market_time(ordered_at: datetime, market: MarketConfig) -> datetime:
+    """An order time given without an offset is on the market's own clock.
+
+    A naive ``ordered_at``, as a command-line option or a date and time picker gives it, gets
+    the market's timezone. One that already has an offset is returned as it is.
+    """
+    if ordered_at.utcoffset() is None:
+        return ordered_at.replace(tzinfo=ZoneInfo(market.calendar.timezone))
+    return ordered_at
+
+
+def to_market_time(moment: datetime, market: MarketConfig) -> datetime:
+    """The same instant on the market's clock.
+
+    Raises ``ValueError`` if ``moment`` is naive: unlike an order time typed by a person, an
+    instant has to say which one it is.
+    """
+    if moment.utcoffset() is None:
+        raise ValueError("moment must be timezone-aware, got a naive datetime")
+    return moment.astimezone(ZoneInfo(market.calendar.timezone))
+
+
 def estimate_delivery(ordered_at: datetime, market: MarketConfig) -> DeliveryEstimate:
     """Estimate the dispatch and delivery dates of an order, on the market's calendar.
 

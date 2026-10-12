@@ -11,16 +11,20 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from souqsort.display import DisplayRow, display_rows
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
+from souqsort.logistics.calendar import in_market_time, to_market_time
 from souqsort.models import MarketConfig
-from souqsort.pipeline import LocalisationError, find_market, localise_catalogue
+from souqsort.pipeline import (
+    MAX_DUTY_ADJUST_POINTS,
+    LocalisationError,
+    duty_adjustment_from_points,
+    find_market,
+    localise_catalogue,
+)
 
-MAX_DUTY_ADJUST_POINTS = 20
 DEFAULT_CATALOGUE = Path("data/raw/global_products.json")
 DEFAULT_CONFIG = Path("data/raw/gcc_config.json")
 
@@ -139,13 +143,6 @@ def _same_file(path: Path, other: Path) -> bool:
         return False
 
 
-def _in_market_time(ordered_at: datetime, market: MarketConfig) -> datetime:
-    """An order time given without an offset is on the market's own clock."""
-    if ordered_at.utcoffset() is None:
-        return ordered_at.replace(tzinfo=ZoneInfo(market.calendar.timezone))
-    return ordered_at
-
-
 # --- output -------------------------------------------------------------------------------
 
 
@@ -253,7 +250,7 @@ def main(argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = _ut
     except LocalisationError as exc:
         price_parser.error(f"argument --market: {exc}")
 
-    ordered_at = now() if args.ordered_at is None else _in_market_time(args.ordered_at, market)
+    ordered_at = now() if args.ordered_at is None else in_market_time(args.ordered_at, market)
 
     try:
         items = localise_catalogue(
@@ -261,14 +258,14 @@ def main(argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = _ut
             config,
             market.code,
             ordered_at,
-            Decimal(duty_points) / 100,  # whole points to a fraction, at the boundary
+            duty_adjustment_from_points(duty_points),  # to a fraction, at the boundary
         )
         rows = display_rows(items)
     except LocalisationError as exc:
         return _fail(str(exc))
 
     # The delivery estimate has already made this conversion, so it cannot be out of range.
-    ordered_at_local = ordered_at.astimezone(ZoneInfo(market.calendar.timezone))
+    ordered_at_local = to_market_time(ordered_at, market)
 
     _print(_summary_line(market, ordered_at_local, duty_points))
     _print()

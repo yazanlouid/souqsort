@@ -1,7 +1,7 @@
 """M5: localise_catalogue() over the sample data (SPEC §9 and §10)."""
 
 import decimal
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
@@ -12,17 +12,24 @@ from helpers import decimal_places
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
 from souqsort.models import Catalogue, GccConfig, MarketConfig, Product, ProductName
 from souqsort.pipeline import (
+    MAX_DUTY_ADJUST_POINTS,
     MISSING_ARABIC_NAME,
+    CatalogueSummary,
     LocalisationError,
+    LocalisedCatalogue,
     LocalisedProduct,
+    duty_adjustment_from_points,
     find_market,
+    localise_and_summarise,
     localise_catalogue,
+    summarise_catalogue,
 )
 from souqsort.pricing.landed_cost import PriceQuote, price_product
 
 HEADPHONES = "ELEC-HP-001"
 BAG = "FASH-BAG-014"
 KETTLEBELL = "SPRT-KTB-020"
+LIP_BALM = "BEAU-LIP-040"
 LICENCE = "DIGI-LIC-050"
 TEA = "GROC-TEA-060"
 
@@ -81,6 +88,12 @@ def products(catalogue: Catalogue) -> dict[str, Product]:
 def localised(catalogue: Catalogue, config: GccConfig) -> list[LocalisedProduct]:
     """The whole sample catalogue for KSA, ordered on Thursday evening."""
     return localise_catalogue(catalogue.products, config, "KSA", THU_EVENING)
+
+
+@pytest.fixture
+def plus_three_points(catalogue: Catalogue, config: GccConfig) -> list[LocalisedProduct]:
+    """The same catalogue and order time with 3 percentage points added to every duty rate."""
+    return localise_catalogue(catalogue.products, config, "KSA", THU_EVENING, Decimal("0.03"))
 
 
 # --- integration over the sample data -----------------------------------------------------
@@ -403,6 +416,291 @@ def test_config_is_not_modified(catalogue: Catalogue, config: GccConfig) -> None
     before = config.model_dump()
 
     localise_catalogue(catalogue.products, config, "KSA", THU_EVENING, Decimal("0.20"))
+
+    assert config.model_dump() == before
+
+
+# --- duty adjustment in whole percentage points (SPEC §7.4) -------------------------------
+
+
+def test_the_duty_adjustment_goes_up_to_twenty_points() -> None:
+    assert MAX_DUTY_ADJUST_POINTS == 20
+
+
+@pytest.mark.parametrize(("points", "fraction"), [(0, "0"), (1, "0.01"), (3, "0.03"), (20, "0.2")])
+def test_whole_points_become_a_decimal_fraction(points: int, fraction: str) -> None:
+    result = duty_adjustment_from_points(points)
+
+    assert isinstance(result, Decimal)
+    assert result == Decimal(fraction)
+
+
+def test_points_price_the_same_as_the_fraction(
+    catalogue: Catalogue, config: GccConfig, plus_three_points: list[LocalisedProduct]
+) -> None:
+    from_points = localise_catalogue(
+        catalogue.products, config, "KSA", THU_EVENING, duty_adjustment_from_points(3)
+    )
+    assert from_points == plus_three_points
+
+
+@pytest.mark.parametrize("points", [-1, 21, 100])
+def test_points_outside_0_to_20_rejected(points: int) -> None:
+    with pytest.raises(ValueError, match="0 to 20"):
+        duty_adjustment_from_points(points)
+
+
+@pytest.mark.parametrize(
+    "points", [2.5, 3.0, "3", Decimal("3"), True, None], ids=lambda v: type(v).__name__ + str(v)
+)
+def test_points_that_are_not_a_whole_number_rejected(points: Any) -> None:
+    # A float could only come from a front end that let fractions of a point through.
+    with pytest.raises(TypeError, match="whole number"):
+        duty_adjustment_from_points(points)
+
+
+# --- summary: the dashboard's headline figures --------------------------------------------
+
+
+def test_summary_counts_products_and_flagged_products(localised: list[LocalisedProduct]) -> None:
+    summary = summarise_catalogue(localised, localised)
+
+    assert isinstance(summary, CatalogueSummary)
+    assert summary.product_count == 12
+    assert summary.flagged_count == 2  # the bag and the tea have no Arabic name
+
+
+def test_average_margin_is_the_unweighted_mean(localised: list[LocalisedProduct]) -> None:
+    summary = summarise_catalogue(localised, localised)
+
+    assert summary.average_margin_pct == sum(item.quote.margin_pct for item in localised) / 12
+    assert summary.average_margin_pct is not None
+    assert _dp(summary.average_margin_pct, 3) == Decimal("0.677")
+
+
+def test_average_margin_of_the_worked_examples(localised: list[LocalisedProduct]) -> None:
+    items = _by_sku(localised)
+    pair = [items[HEADPHONES], items[BAG]]
+
+    summary = summarise_catalogue(pair, pair)
+
+    # (0.58705... + 0.64644...) / 2, from SPEC §7.2 and §7.3.
+    assert summary.average_margin_pct is not None
+    assert _dp(summary.average_margin_pct, 3) == Decimal("0.617")
+
+
+def test_price_change_against_itself_is_exactly_zero(localised: list[LocalisedProduct]) -> None:
+    assert summarise_catalogue(localised, localised).average_price_change_pct == 0
+
+
+def test_price_change_is_the_mean_of_each_products_change(
+    localised: list[LocalisedProduct], plus_three_points: list[LocalisedProduct]
+) -> None:
+    # Headphones 686.95 -> 705.95 is +2.7658...%; the licence 340.95 -> 350.95 is +2.9330...%.
+    skus = (HEADPHONES, LICENCE)
+    before = [_by_sku(localised)[sku] for sku in skus]
+    after = [_by_sku(plus_three_points)[sku] for sku in skus]
+
+    summary = summarise_catalogue(after, before)
+
+    assert summary.average_price_change_pct is not None
+    assert _dp(summary.average_price_change_pct, 6) == Decimal("0.028494")
+
+
+def test_price_change_is_not_weighted_by_price(
+    localised: list[LocalisedProduct], plus_three_points: list[LocalisedProduct]
+) -> None:
+    # The lip balm stays at 16.95, so the mean is half the headphones' +2.766%. Weighted by
+    # price (19.00 on a basket of 703.90) it would be +2.70%.
+    skus = (HEADPHONES, LIP_BALM)
+    before = [_by_sku(localised)[sku] for sku in skus]
+    after = [_by_sku(plus_three_points)[sku] for sku in skus]
+    assert after[1].quote.shelf_price == before[1].quote.shelf_price
+
+    summary = summarise_catalogue(after, before)
+
+    assert summary.average_price_change_pct is not None
+    assert _dp(summary.average_price_change_pct, 4) == Decimal("0.0138")
+
+
+def test_summary_of_the_sample_catalogue_at_three_points(
+    localised: list[LocalisedProduct], plus_three_points: list[LocalisedProduct]
+) -> None:
+    summary = summarise_catalogue(plus_three_points, localised)
+
+    assert summary.product_count == 12
+    assert summary.flagged_count == 2
+    assert summary.average_margin_pct is not None
+    assert summary.average_price_change_pct is not None
+    assert _dp(summary.average_price_change_pct, 4) == Decimal("0.0214")
+    # The margin is the adjusted catalogue's own, not the baseline's: 67.4%, down from 67.7%.
+    assert summary.average_margin_pct == (
+        sum(item.quote.margin_pct for item in plus_three_points) / 12
+    )
+    assert _dp(summary.average_margin_pct, 3) == Decimal("0.674")
+
+
+def test_price_change_never_falls_as_the_duty_adjustment_rises(
+    catalogue: Catalogue, config: GccConfig, localised: list[LocalisedProduct]
+) -> None:
+    changes = []
+    for points in range(MAX_DUTY_ADJUST_POINTS + 1):
+        adjusted = localise_catalogue(
+            catalogue.products, config, "KSA", THU_EVENING, duty_adjustment_from_points(points)
+        )
+        change = summarise_catalogue(adjusted, localised).average_price_change_pct
+        assert change is not None
+        changes.append(change)
+
+    assert changes[0] == 0
+    assert changes == sorted(changes)
+    assert changes[-1] > changes[1] > 0  # it reacts from the first point on
+
+
+def test_averages_keep_full_precision(
+    localised: list[LocalisedProduct], plus_three_points: list[LocalisedProduct]
+) -> None:
+    summary = summarise_catalogue(plus_three_points, localised)
+
+    assert isinstance(summary.average_margin_pct, Decimal)
+    assert isinstance(summary.average_price_change_pct, Decimal)
+    assert decimal_places(summary.average_margin_pct) > 10  # rounded only where it is shown
+    assert decimal_places(summary.average_price_change_pct) > 10
+
+
+def test_summary_of_an_empty_catalogue_has_no_averages() -> None:
+    assert summarise_catalogue([], []) == CatalogueSummary(
+        product_count=0,
+        flagged_count=0,
+        average_margin_pct=None,
+        average_price_change_pct=None,
+    )
+
+
+def test_baseline_for_other_products_rejected(localised: list[LocalisedProduct]) -> None:
+    with pytest.raises(ValueError, match="baseline"):
+        summarise_catalogue(localised, localised[:-1])
+    with pytest.raises(ValueError, match="baseline"):
+        summarise_catalogue(localised[:1], localised[1:2])
+
+
+def test_baseline_in_another_order_rejected(localised: list[LocalisedProduct]) -> None:
+    # Paired by position: a reordered baseline would compare each product with another one.
+    with pytest.raises(ValueError, match="baseline") as excinfo:
+        summarise_catalogue(localised, localised[::-1])
+
+    assert HEADPHONES in str(excinfo.value)  # the first pair that does not match
+
+
+def test_baseline_with_a_zero_shelf_price_rejected(localised: list[LocalisedProduct]) -> None:
+    # price_product() never returns a zero price, but a hand-built baseline could hold one.
+    headphones = localised[0]
+    free = replace(headphones, quote=replace(headphones.quote, shelf_price=Decimal("0.00")))
+
+    with pytest.raises(ValueError, match="baseline") as excinfo:
+        summarise_catalogue([headphones], [free])
+
+    assert type(excinfo.value) is ValueError  # not decimal.DivisionByZero
+    assert HEADPHONES in str(excinfo.value)
+
+
+def test_summary_is_frozen(localised: list[LocalisedProduct]) -> None:
+    summary = summarise_catalogue(localised, localised)
+    with pytest.raises(FrozenInstanceError):
+        summary.flagged_count = 0  # type: ignore[misc]
+
+
+# --- localise and summarise in one call ---------------------------------------------------
+
+
+def test_localise_and_summarise_returns_the_items_and_their_summary(
+    catalogue: Catalogue,
+    config: GccConfig,
+    localised: list[LocalisedProduct],
+    plus_three_points: list[LocalisedProduct],
+) -> None:
+    result = localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING, Decimal("0.03"))
+
+    assert isinstance(result, LocalisedCatalogue)
+    assert list(result.items) == plus_three_points
+    # The baseline is the same catalogue, market and order time with no duty adjustment.
+    assert result.summary == summarise_catalogue(plus_three_points, localised)
+    assert result.summary.average_price_change_pct is not None
+    assert _dp(result.summary.average_price_change_pct, 4) == Decimal("0.0214")
+
+
+def test_localise_and_summarise_without_an_adjustment(
+    catalogue: Catalogue, config: GccConfig, localised: list[LocalisedProduct]
+) -> None:
+    result = localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING)
+
+    assert list(result.items) == localised
+    assert result.summary == summarise_catalogue(localised, localised)
+    assert result.summary.average_price_change_pct == 0
+
+
+def test_localise_and_summarise_builds_the_baseline_for_the_same_market_and_order_time(
+    catalogue: Catalogue, zero_vat_config: GccConfig
+) -> None:
+    arguments = (catalogue.products, zero_vat_config, ZERO_VAT_MARKET, SUN_MORNING)
+    adjusted = localise_catalogue(*arguments, Decimal("0.20"))
+    baseline = localise_catalogue(*arguments)
+
+    result = localise_and_summarise(*arguments, Decimal("0.20"))
+
+    assert list(result.items) == adjusted
+    assert result.summary == summarise_catalogue(adjusted, baseline)
+    assert {item.quote.currency for item in result.items} == {"KWD"}
+    assert {item.delivery.delivery_date for item in result.items} == {date(2026, 10, 18)}
+
+
+def test_localise_and_summarise_of_an_empty_catalogue(config: GccConfig) -> None:
+    result = localise_and_summarise([], config, "KSA", THU_EVENING, Decimal("0.03"))
+
+    assert result.items == ()
+    assert result.summary == CatalogueSummary(0, 0, None, None)
+
+
+def test_localise_and_summarise_fails_as_localise_catalogue_does(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    with pytest.raises(LocalisationError, match=r"^UAE: "):
+        localise_and_summarise(catalogue.products, config, "UAE", THU_EVENING)
+    with pytest.raises(LocalisationError, match="timezone-aware"):
+        localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING.replace(tzinfo=None))
+    with pytest.raises(ValueError, match="duty_adjustment") as excinfo:
+        localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING, Decimal("-0.01"))
+    assert type(excinfo.value) is ValueError
+    a_float: Any = 0.03
+    with pytest.raises(TypeError, match="Decimal"):
+        localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING, a_float)
+
+
+def test_localise_and_summarise_names_a_product_that_cannot_be_priced(
+    products: dict[str, Product], config: GccConfig
+) -> None:
+    enormous = products[HEADPHONES].model_copy(update={"base_price": Decimal("1E+30")})
+
+    with pytest.raises(LocalisationError, match=f"^{HEADPHONES}: "):
+        localise_and_summarise([products[BAG], enormous], config, "KSA", THU_EVENING)
+
+
+def test_localised_catalogue_is_frozen_and_its_items_are_a_tuple(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    result = localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING)
+
+    assert isinstance(result.items, tuple)
+    with pytest.raises(FrozenInstanceError):
+        result.items = ()  # type: ignore[misc]
+
+
+def test_localise_and_summarise_does_not_modify_the_config(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    before = config.model_dump()
+
+    localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING, Decimal("0.20"))
 
     assert config.model_dump() == before
 

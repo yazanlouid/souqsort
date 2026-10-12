@@ -82,7 +82,8 @@ souqsort/
     ├── test_calendar.py
     ├── test_pipeline.py
     ├── test_display.py
-    └── test_cli.py
+    ├── test_cli.py
+    └── test_app.py           # the dashboard, run headlessly with Streamlit's AppTest
 ```
 
 ## 6. Data inputs
@@ -161,7 +162,7 @@ Rules:
 - Rates are fractions given as strings (`"0.15"` = 15%).
 - `charm_ending` may be `null`, meaning no charm pricing.
 - Weekend days use `MON` … `SUN`.
-- Validation must reject unknown currency codes, negative rates, an invalid timezone and a malformed cutoff time.
+- Validation must reject unknown currency codes, negative rates, an invalid timezone, a malformed cutoff time and a config with no markets.
 
 ## 7. Pricing rules (v0.1: all costs are passed through to the customer)
 
@@ -362,14 +363,23 @@ For every milestone: tests first, then code. Done means `uv run pytest`, `uv run
 
 ### M6: Streamlit dashboard
 - `app/streamlit_app.py`:
-  - **Sidebar:** market selector filled from the config (KSA only for now), duty slider (0–20 percentage points), order date and time pickers (default now, in market local time), search box (SKU or English name).
-  - **Main area:** the data grid and two headline metrics: average margin, and the number of flagged products.
-  - Prices display with exactly the currency's minor units.
-- No business logic in the app.
-- **Accept:** `uv run streamlit run app/streamlit_app.py` starts, and a manual check confirms:
-  - moving the slider changes prices;
-  - search filters rows;
+  - **Sidebar:** market selector filled from the config (KSA only for now), duty slider (0–20 percentage points), order date and time pickers (default now, in market local time; the time picker steps by one minute, so both sides of the cutoff can be picked), search box (SKU or English name: a case-insensitive match on any part of either).
+  - **Main area:** the data grid and three headline metrics: average margin, the number of flagged products, and the average price change against a 0 pp duty adjustment.
+    - Both averages are unweighted means over the products. The price change of a product is `(shelf_price − shelf_price at 0 pp) / shelf_price at 0 pp`. It is there because v0.1 passes duty through to the customer, so average margin barely moves with the slider.
+    - The metrics always cover the whole market; search filters the grid only. A caption under the metrics says so, with the real product count and market code.
+  - Prices display with exactly the currency's minor units. Price and margin reach the grid as `Decimal`, not text, so the grid sorts them by value.
+  - The grid shows each flag as a label a person can read (`missing_arabic_name` → "No Arabic name"), in a column wide enough not to cut it short. The CLI table and CSV keep the codes.
+  - An empty catalogue and a search with no match each get their own message under the grid.
+- No business logic in the app. What it needs lives in `src/` and is shared with the CLI where both use it:
+  - `logistics/calendar.py`: `in_market_time()` (an order time without an offset is market-local, for `--ordered-at` and for the pickers) and `to_market_time()`;
+  - `pipeline.py`: `MAX_DUTY_ADJUST_POINTS`, `duty_adjustment_from_points()`, and `localise_and_summarise()` → `LocalisedCatalogue` (the items plus a `CatalogueSummary`). It builds the 0 pp baseline itself, so no caller has to pair one up; the v0.3 report takes its numbers from the same call;
+  - `display.py`: `grid_rows()` (built on `display_rows()`), `search_products()`, `display_summary()`.
+- The app reads the clock once per session, for the picker defaults. `src/` still does not, apart from the CLI entry point.
+- **Accept:** `uv run streamlit run app/streamlit_app.py` starts, and `tests/test_app.py` confirms headlessly:
+  - moving the slider changes prices, and the price-change metric with them;
+  - search filters rows and leaves the metrics alone;
   - a Thursday-evening order time gives Sunday-based delivery dates.
+- AppTest does not render a browser. One manual look confirms that clicking the price header sorts by value and that prices show the currency's minor units.
 - Then tag `v0.1.0`.
 
 ## 11. Decisions log (turn into ADRs later)

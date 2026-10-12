@@ -715,6 +715,22 @@ def test_config_that_is_not_json_exits_one(run: Callable[..., Result], tmp_path:
     assert result.out == ""
 
 
+def test_config_with_no_markets_exits_one_as_a_bad_data_file(
+    run: Callable[..., Result], raw_config: dict[str, Any], tmp_path: Path
+) -> None:
+    # Not a usage error about --market: no market code could be right for this file.
+    raw_config["markets"] = {}
+    config = _write_json(tmp_path / "no_markets.json", raw_config)
+
+    result = run(*_price(config=config), *THU_EVENING)
+
+    assert result.code == 1
+    assert "no_markets.json" in result.err
+    assert "at least one market" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+
+
 def test_product_that_cannot_be_priced_exits_one_naming_the_sku(
     run: Callable[..., Result],
     raw_catalogue: dict[str, Any],
