@@ -34,7 +34,7 @@ Always run Python through `uv run`. Never use `pip install` or a conda environme
 - Don't push, open a pull request or merge unless asked. A milestone reaches `main` through a pull request, and only when both CI jobs (Ubuntu and Windows) are green.
 
 ## Project tools
-- `/verify` runs the four checks as CI does and ends with `verify: PASS` or `verify: FAIL (...)`.
+- `/verify` runs the same four checks as CI, each through `uv run --locked`, and ends with `verify: PASS` or `verify: FAIL (...)`.
 
 ## Environment
 - Windows laptop. Claude Code runs commands through Git Bash; the commands above work in Git Bash and PowerShell.
