@@ -101,7 +101,7 @@ souqsort/
 ├── app/
 │   └── streamlit_app.py
 └── tests/
-    ├── conftest.py           # shared fixtures; Hypothesis profiles (M7)
+    ├── conftest.py           # shared fixtures
     ├── helpers.py
     ├── fixtures/             # small JSON configs used only by tests
     │   ├── zero_vat_config.json
@@ -786,7 +786,7 @@ Every step uses the same flow: `git switch -c <branch>` → plan mode → commit
 Branch `chore/m7-ci`.
 - This SPEC.md and the v0.2 CLAUDE.md, committed first as `docs: add the v0.2 spec`.
 - `.github/workflows/ci.yml` and `.github/dependabot.yml` from Appendix A. setup-uv's `version` is what `uv --version` prints on the laptop.
-- Hypothesis profiles in `tests/conftest.py`: `ci` = `deadline=None, print_blob=True`, loaded when `HYPOTHESIS_PROFILE=ci`; the default profile otherwise.
+- Hypothesis: no profile is registered and `tests/conftest.py` is unchanged. Hypothesis loads its built-in `ci` profile by itself on GitHub Actions (`derandomize=True, deadline=None, database=None, print_blob=True`, `too_slow` suppressed); the default profile runs everywhere else.
 - `tests/test_architecture.py`:
   - no float literal and no `float(...)` call anywhere in `src/` (the `isinstance(value, bool | int | float)` guard in `models.py` stays allowed);
   - no string literal in `src/` equals a market code from `data/raw/gcc_config.json` (§3 rule 4, enforced).
@@ -882,7 +882,8 @@ Branch `chore/release-0.2.0`.
 ### v0.2
 - CI runs on Ubuntu and Windows: the project is built on Windows, and most servers run Linux. Both must pass.
 - Actions are pinned to commits with the version in a comment; Dependabot proposes updates monthly. CI uses the laptop's uv version, and `UV_LOCKED` fails the build on a stale `uv.lock`.
-- Hypothesis gets a `ci` profile without deadlines: shared runners are slow and uneven, and a deadline there fails for no reason.
+- Hypothesis's built-in `ci` profile is used as it is. It loads by itself on GitHub Actions and has no deadlines: shared runners are slow and uneven, and a deadline there fails for no reason. It runs fixed examples, so a red run points at the change; the laptop runs random ones.
+- Ruff does not format Markdown: the code blocks in SPEC.md and the README are sketches for people, not code to run.
 - Two non-negotiables are now enforced by tests: no floats in `src/`, and no market code in `src/`.
 - Product attributes are a fixed schema, so a typo in a market's rules fails when the config loads. Adding an attribute is then a code change, which is accepted.
 - `compliance`, `de_minimis` and parcel freight are required fields. "Nothing banned" and "no de minimis" must be written out.
@@ -930,7 +931,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   checks:
@@ -943,7 +944,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     env:
       UV_LOCKED: "1"            # every uv command fails if uv.lock is out of date
-      HYPOTHESIS_PROFILE: ci    # no deadlines on shared runners; print reproduction blobs
+      # No HYPOTHESIS_PROFILE: Hypothesis loads its built-in ci profile by itself on GitHub Actions.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
