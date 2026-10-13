@@ -114,7 +114,7 @@ souqsort/
     ├── test_display.py
     ├── test_cli.py
     ├── test_app.py           # the dashboard, run headlessly with Streamlit's AppTest
-    ├── test_architecture.py  # M7: no floats and no market codes in src/
+    ├── test_architecture.py  # M7: no floats in src/; no market codes in src/ or app/
     ├── test_markets.py       # M8: per-market worked examples, price lists, delivery rows
     ├── test_compliance.py    # M9
     ├── test_format_hook.py   # M9
@@ -788,8 +788,8 @@ Branch `chore/m7-ci`.
 - `.github/workflows/ci.yml` and `.github/dependabot.yml` from Appendix A. setup-uv's `version` is what `uv --version` prints on the laptop.
 - Hypothesis: no profile is registered and `tests/conftest.py` is unchanged. Hypothesis loads its built-in `ci` profile by itself on GitHub Actions (`derandomize=True, deadline=None, database=None, print_blob=True`, `too_slow` suppressed); the default profile runs everywhere else.
 - `tests/test_architecture.py`:
-  - no float literal and no `float(...)` call anywhere in `src/` (the `isinstance(value, bool | int | float)` guard in `models.py` stays allowed);
-  - no string literal in `src/` equals a market code from `data/raw/gcc_config.json` (§3 rule 4, enforced).
+  - no float literal and no use of the name `float` anywhere in `src/` (a call, a type annotation or a type alias), except as the class argument of `isinstance(...)`, which keeps the `isinstance(value, bool | int | float)` guard in `models.py` allowed;
+  - no string literal in `src/` or `app/` equals a market code from `data/raw/gcc_config.json` (§3 rule 4, enforced).
 - `.claude/skills/verify/SKILL.md` from Appendix A.
 - README: a CI badge (the URL uses the owner from `gh repo view --json nameWithOwner`).
 - Optional: a ruleset on `main` that requires a pull request and both `checks` jobs. Optional: push a deliberately failing test to a scratch branch once, watch CI fail, delete the branch.
@@ -884,7 +884,7 @@ Branch `chore/release-0.2.0`.
 - Actions are pinned to commits with the version in a comment; Dependabot proposes updates monthly. CI uses the laptop's uv version, and `UV_LOCKED` fails the build on a stale `uv.lock`.
 - Hypothesis's built-in `ci` profile is used as it is. It loads by itself on GitHub Actions and has no deadlines: shared runners are slow and uneven, and a deadline there fails for no reason. It runs fixed examples, so a red run points at the change; the laptop runs random ones.
 - Ruff does not format Markdown: the code blocks in SPEC.md and the README are sketches for people, not code to run.
-- Two non-negotiables are now enforced by tests: no floats in `src/`, and no market code in `src/`.
+- Two non-negotiables are now enforced by tests: no floats in `src/`, and no market code in `src/` or `app/`.
 - Product attributes are a fixed schema, so a typo in a market's rules fails when the config loads. Adding an attribute is then a code change, which is accepted.
 - `compliance`, `de_minimis` and parcel freight are required fields. "Nothing banned" and "no de minimis" must be written out.
 - A product a market does not allow is reported as not sold, never priced and never silently dropped (§3 rule 7).
