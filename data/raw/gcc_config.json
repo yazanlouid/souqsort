@@ -16,7 +16,10 @@
         "weekend": ["FRI", "SAT"],
         "order_cutoff_local": "14:00",
         "holidays": [
-          { "date": "2027-02-22", "name": "Founding Day", "provisional": false }
+          { "date": "2027-02-22", "name": "Founding Day", "provisional": false },
+          { "date": "2027-03-09", "name": "Eid al-Fitr", "provisional": true },
+          { "date": "2027-03-10", "name": "Eid al-Fitr", "provisional": true },
+          { "date": "2027-03-11", "name": "Eid al-Fitr", "provisional": true }
         ]
       },
       "logistics": { "freight_per_kg_usd": "4.50", "linehaul_business_days": 3, "last_mile_business_days": 2 }

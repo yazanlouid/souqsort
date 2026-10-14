@@ -121,7 +121,10 @@ def test_sample_config_loads(config_path: Path) -> None:
     assert list(ksa.calendar.weekend) == ["FRI", "SAT"]
     assert ksa.calendar.order_cutoff_local == time(14, 0)
     assert [(h.date, h.name, h.provisional) for h in ksa.calendar.holidays] == [
-        (date(2027, 2, 22), "Founding Day", False)
+        (date(2027, 2, 22), "Founding Day", False),
+        (date(2027, 3, 9), "Eid al-Fitr", True),
+        (date(2027, 3, 10), "Eid al-Fitr", True),
+        (date(2027, 3, 11), "Eid al-Fitr", True),
     ]
     assert ksa.logistics.freight_per_kg_usd == Decimal("4.50")
     assert ksa.logistics.linehaul_business_days == 3

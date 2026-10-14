@@ -1,12 +1,15 @@
-"""M8: every market's price list (SPEC §7.9.1).
+"""M8: every market's price list and delivery dates (SPEC §7.9.1 and §8.2).
 
-Each market adds its own column to ``PRICE_LISTS``; the tests below run over every market
-listed, and fail if a configured market has no column.
+Each market adds its own column to ``PRICE_LISTS`` and its own cells to ``DELIVERY_CELLS``;
+the tests below run over every market listed, and fail if a configured market has none.
 """
+
+from datetime import UTC, date, datetime
 
 import pytest
 
 from helpers import SAMPLE_PRODUCT_COUNT
+from souqsort.logistics.calendar import estimate_delivery
 from souqsort.models import Catalogue, GccConfig
 from souqsort.pricing.landed_cost import price_product
 
@@ -60,3 +63,45 @@ def test_consolidated_price_list(
 
     # Compared as text, so the number of decimals (the currency's minor units) counts too.
     assert str(quote.shelf_price) == shelf_price
+
+
+# SPEC §8.2: the same six moments in every market.
+ORDER_TIMES = (
+    datetime(2026, 10, 15, 9, 30, tzinfo=UTC),  # the UAE's shorter last mile
+    datetime(2026, 10, 15, 10, 30, tzinfo=UTC),  # Kuwait's earlier cutoff
+    datetime(2026, 10, 16, 7, 0, tzinfo=UTC),  # the UAE works on Fridays
+    datetime(2026, 12, 1, 8, 0, tzinfo=UTC),  # UAE National Day, 2-3 Dec
+    datetime(2027, 2, 24, 7, 0, tzinfo=UTC),  # Kuwait's National and Liberation Days
+    datetime(2027, 3, 8, 7, 0, tzinfo=UTC),  # Eid al-Fitr (provisional)
+)
+
+# Each cell: (dispatch, delivery), one per order time above.
+DELIVERY_CELLS: dict[str, tuple[tuple[date, date], ...]] = {
+    "KSA": (
+        (date(2026, 10, 15), date(2026, 10, 22)),  # Thu 12:30
+        (date(2026, 10, 15), date(2026, 10, 22)),  # Thu 13:30, SPEC §8.1 row 3
+        (date(2026, 10, 18), date(2026, 10, 25)),  # Fri 10:00, weekend
+        (date(2026, 12, 1), date(2026, 12, 8)),
+        (date(2027, 2, 24), date(2027, 3, 3)),
+        (date(2027, 3, 8), date(2027, 3, 18)),  # Eid, Tue 9 to Thu 11
+    ),
+}
+
+DELIVERY_PARAMS = [
+    pytest.param(market, ordered_at, dispatch, delivery, id=f"{market}-{ordered_at:%Y-%m-%dT%H:%M}")
+    for market, cells in DELIVERY_CELLS.items()
+    for ordered_at, (dispatch, delivery) in zip(ORDER_TIMES, cells, strict=True)
+]
+
+
+def test_every_market_has_delivery_cells(config: GccConfig) -> None:
+    assert set(DELIVERY_CELLS) == set(config.markets)
+
+
+@pytest.mark.parametrize(("market", "ordered_at", "dispatch", "delivery"), DELIVERY_PARAMS)
+def test_delivery_cells(
+    config: GccConfig, market: str, ordered_at: datetime, dispatch: date, delivery: date
+) -> None:
+    estimate = estimate_delivery(ordered_at, config.markets[market])
+
+    assert (estimate.dispatch_date, estimate.delivery_date) == (dispatch, delivery)
