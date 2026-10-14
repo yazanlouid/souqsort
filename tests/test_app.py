@@ -111,6 +111,10 @@ def _search(at: AppTest, text: str) -> AppTest:
     return at.text_input(key="search").input(text).run()
 
 
+def _select_market(at: AppTest, code: str) -> AppTest:
+    return at.selectbox(key="market").select(code).run()
+
+
 # --- first load ---------------------------------------------------------------------------
 
 
@@ -178,7 +182,7 @@ def test_market_selector_is_filled_from_the_config(app: AppTest, config: GccConf
     selector = app.selectbox(key="market")
 
     assert selector.value == "KSA"
-    assert len(selector.options) == len(config.markets)
+    assert len(selector.options) == len(config.markets) == 3
     for option, (code, market) in zip(selector.options, config.markets.items(), strict=True):
         assert code in option
         assert market.name in option  # the name comes from the config too
@@ -465,6 +469,86 @@ def test_opening_the_app_reads_the_clock_once_per_session() -> None:
     at.slider(key="duty_points").set_value(3).run()
 
     assert at.session_state["opened_at"] == opened_at  # a rerun does not move the pickers
+
+
+def test_order_time_default_is_to_the_minute() -> None:
+    at = _new_app()
+    at.session_state["opened_at"] = datetime(2026, 10, 11, 7, 0, 45, 500000, tzinfo=UTC)
+
+    at.run()
+
+    assert at.time_input(key="order_time").value == time(10, 0)
+    assert "Sun 2026-10-11 10:00 Asia/Riyadh" in _captions(at)
+
+
+def test_order_pickers_start_on_the_selected_market_clock() -> None:
+    at = _new_app()
+    at.session_state["opened_at"] = OPENED_AT
+    at.session_state["market"] = "UAE"  # a session that starts with another market selected
+
+    at.run()
+
+    assert at.time_input(key="order_time").value == time(11, 0)  # 07:00 UTC in Dubai
+    assert "Sun 2026-10-11 11:00 Asia/Dubai" in _captions(at)
+
+
+# --- switching markets (SPEC §10.2, issue #3) ---------------------------------------------
+
+
+def test_switching_markets_keeps_the_picked_date_and_time(app: AppTest) -> None:
+    # The pickers hold a local date and time, read on the selected market's clock: 13:30 stays
+    # 13:30 and becomes 13:30 in the new market, as the CLI reads --ordered-at without an offset.
+    _order(app, date(2026, 10, 15), time(13, 30))
+    assert set(_grid(app)[DELIVERY]) == {"2026-10-22"}
+
+    _select_market(app, "KWT")
+
+    assert app.date_input(key="order_date").value == date(2026, 10, 15)
+    assert app.time_input(key="order_time").value == time(13, 30)
+    assert "Thu 2026-10-15 13:30 Asia/Kuwait" in _captions(app)
+    assert set(_grid(app)[DELIVERY]) == {"2026-10-25"}  # after Kuwait's 13:00 cutoff
+
+    _select_market(app, "UAE")
+
+    assert app.time_input(key="order_time").value == time(13, 30)
+    assert "Thu 2026-10-15 13:30 Asia/Dubai" in _captions(app)
+    assert set(_grid(app)[DELIVERY]) == {"2026-10-21"}  # the UAE's shorter last mile
+
+
+def test_time_picker_help_names_the_selected_market_and_says_switching_keeps_it(
+    app: AppTest,
+) -> None:
+    help_text = app.time_input(key="order_time").help
+    assert help_text == (
+        "Local time in the selected market (Asia/Riyadh). "
+        "Switching markets keeps the date and time."
+    )
+
+    _select_market(app, "UAE")
+
+    assert "(Asia/Dubai)" in app.time_input(key="order_time").help
+
+
+@pytest.mark.parametrize(
+    ("market", "currency", "headphones", "places"),
+    [
+        ("UAE", "AED", Decimal("612.99"), 2),  # SPEC §7.8, worked example C
+        ("KWT", "KWD", Decimal("48.950"), 3),  # worked example D
+    ],
+)
+def test_switching_markets_changes_the_currency_header_and_prices(
+    app: AppTest, market: str, currency: str, headphones: Decimal, places: int
+) -> None:
+    _select_market(app, market)
+
+    price_column = f"Shelf price ({currency})"
+    frame = _grid(app)
+    assert list(frame.columns) == [SKU, NAME, price_column, MARGIN, DELIVERY, FLAGS]
+    assert _column(app, price_column)[HEADPHONES] == headphones
+    assert all(decimal_places(price) == places for price in frame[price_column])
+    (grid,) = app.dataframe
+    assert f"%.{places}f" in grid.proto.columns
+    assert f"All {SAMPLE_PRODUCT_COUNT} products in {market}" in _captions(app)
 
 
 # --- problems are shown as a message, not a traceback -------------------------------------
