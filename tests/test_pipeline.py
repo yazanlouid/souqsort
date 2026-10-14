@@ -258,10 +258,10 @@ def test_find_market_returns_the_configured_market(config: GccConfig) -> None:
 
 def test_unknown_market_rejected(catalogue: Catalogue, config: GccConfig) -> None:
     with pytest.raises(LocalisationError) as excinfo:
-        localise_catalogue(catalogue.products, config, "UAE", THU_EVENING)
+        localise_catalogue(catalogue.products, config, "ZZZ", THU_EVENING)
 
     message = str(excinfo.value)
-    assert message.startswith("UAE: ")
+    assert message.startswith("ZZZ: ")
     assert "KSA" in message  # the message lists the markets that are configured
 
 
@@ -269,9 +269,9 @@ def test_find_market_and_the_pipeline_report_an_unknown_market_the_same_way(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
     with pytest.raises(LocalisationError) as from_lookup:
-        find_market(config, "UAE")
+        find_market(config, "ZZZ")
     with pytest.raises(LocalisationError) as from_pipeline:
-        localise_catalogue(catalogue.products, config, "UAE", THU_EVENING)
+        localise_catalogue(catalogue.products, config, "ZZZ", THU_EVENING)
 
     assert str(from_lookup.value) == str(from_pipeline.value)
 
@@ -667,8 +667,8 @@ def test_localise_and_summarise_of_an_empty_catalogue(config: GccConfig) -> None
 def test_localise_and_summarise_fails_as_localise_catalogue_does(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    with pytest.raises(LocalisationError, match=r"^UAE: "):
-        localise_and_summarise(catalogue.products, config, "UAE", THU_EVENING)
+    with pytest.raises(LocalisationError, match=r"^ZZZ: "):
+        localise_and_summarise(catalogue.products, config, "ZZZ", THU_EVENING)
     with pytest.raises(LocalisationError, match="timezone-aware"):
         localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING.replace(tzinfo=None))
     with pytest.raises(ValueError, match="duty_adjustment") as excinfo:

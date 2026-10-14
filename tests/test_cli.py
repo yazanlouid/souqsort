@@ -711,13 +711,13 @@ def test_another_market_from_another_config(run: Callable[..., Result]) -> None:
 
 
 def test_unknown_market_is_a_usage_error_listing_the_configured_markets(
-    run: Callable[..., Result],
+    run: Callable[..., Result], config: GccConfig
 ) -> None:
-    result = run(*_price(market="UAE"), *THU_EVENING)
+    result = run(*_price(market="ZZZ"), *THU_EVENING)
 
     assert result.code == 2
-    assert "UAE" in result.err
-    assert "KSA" in result.err
+    assert "ZZZ" in result.err
+    assert f"configured markets: {', '.join(sorted(config.markets))}" in result.err
     assert "usage: python -m souqsort price" in result.err  # the price command's own usage
     assert "--market" in result.err
     assert result.out == ""

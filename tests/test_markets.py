@@ -4,7 +4,8 @@ Each market adds its own column to ``PRICE_LISTS`` and its own cells to ``DELIVE
 the tests below run over every market listed, and fail if a configured market has none.
 """
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
+from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 
@@ -31,6 +32,21 @@ PRICE_LISTS: dict[str, dict[str, str]] = {
         "GROC-TEA-060": "34.95",
         "GROC-VAN-061": "61.95",
         "GROC-GUM-062": "22.95",
+    },
+    "UAE": {
+        "ELEC-HP-001": "612.99",
+        "ELEC-CHG-002": "164.99",
+        "FASH-BAG-014": "496.99",
+        "FASH-SCF-015": "246.99",
+        "SPRT-KTB-020": "498.99",
+        "HOME-KTL-030": "209.99",
+        "HOME-ESP-031": "3685.99",
+        "BEAU-LIP-040": "14.99",
+        "BEAU-SRM-041": "99.99",
+        "DIGI-LIC-050": "304.99",
+        "GROC-TEA-060": "29.99",
+        "GROC-VAN-061": "55.99",
+        "GROC-GUM-062": "19.99",
     },
 }
 
@@ -85,6 +101,14 @@ DELIVERY_CELLS: dict[str, tuple[tuple[date, date], ...]] = {
         (date(2027, 2, 24), date(2027, 3, 3)),
         (date(2027, 3, 8), date(2027, 3, 18)),  # Eid, Tue 9 to Thu 11
     ),
+    "UAE": (
+        (date(2026, 10, 15), date(2026, 10, 21)),  # Thu 13:30, shorter last mile
+        (date(2026, 10, 15), date(2026, 10, 21)),  # Thu 14:30, before the 15:00 cutoff
+        (date(2026, 10, 16), date(2026, 10, 22)),  # Fri 11:00, a UAE business day
+        (date(2026, 12, 1), date(2026, 12, 9)),  # National Day, Wed 2 and Thu 3
+        (date(2027, 2, 24), date(2027, 3, 2)),
+        (date(2027, 3, 8), date(2027, 3, 17)),  # Eid, Tue 9 to Thu 11
+    ),
 }
 
 DELIVERY_PARAMS = [
@@ -105,3 +129,54 @@ def test_delivery_cells(
     estimate = estimate_delivery(ordered_at, config.markets[market])
 
     assert (estimate.dispatch_date, estimate.delivery_date) == (dispatch, delivery)
+
+
+# --- UAE (SPEC §6.2 and §7.8) --------------------------------------------------------------
+
+
+def _dp(value: Decimal, places: int) -> Decimal:
+    """Round for comparison with the spec tables, which show a fixed number of decimals."""
+    return value.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
+
+
+def test_config_loads_the_uae(config: GccConfig) -> None:
+    uae = config.markets["UAE"]
+
+    assert uae.code == "UAE"
+    assert uae.name == "United Arab Emirates"
+    assert (uae.currency.code, uae.currency.minor_units) == ("AED", 2)
+    assert uae.currency.charm_ending == Decimal("0.99")
+    assert uae.tax.vat_rate == Decimal("0.05")
+    assert uae.tax.effective_from == date(2018, 1, 1)
+    assert uae.customs.default_duty_rate == Decimal("0.05")
+    assert uae.customs.category_overrides == {"digital": Decimal("0.00")}
+    assert uae.calendar.timezone == "Asia/Dubai"
+    assert uae.calendar.weekend == ("SAT", "SUN")
+    assert uae.calendar.order_cutoff_local == time(15, 0)
+    assert [(h.date, h.name, h.provisional) for h in uae.calendar.holidays] == [
+        (date(2026, 12, 2), "National Day", False),
+        (date(2026, 12, 3), "National Day", False),
+        (date(2027, 1, 1), "New Year's Day", False),
+        (date(2027, 3, 9), "Eid al-Fitr", True),
+        (date(2027, 3, 10), "Eid al-Fitr", True),
+        (date(2027, 3, 11), "Eid al-Fitr", True),
+    ]
+    assert uae.logistics.freight_per_kg_usd == Decimal("4.00")
+    assert (uae.logistics.linehaul_business_days, uae.logistics.last_mile_business_days) == (3, 1)
+    assert config.fx.per_usd["AED"] == Decimal("3.6725")
+
+
+def test_worked_example_c_headphones_in_the_uae(catalogue: Catalogue, config: GccConfig) -> None:
+    product = next(product for product in catalogue.products if product.sku == "ELEC-HP-001")
+
+    quote = price_product(product, config.markets["UAE"], config.fx)
+
+    assert (quote.market, quote.currency) == ("UAE", "AED")
+    assert quote.goods == Decimal("550.838275")
+    assert quote.freight == Decimal("5.1415")
+    assert quote.goods + quote.freight == Decimal("555.979775")  # cif
+    assert quote.duty == Decimal("27.79898875")
+    assert quote.vat == Decimal("29.1889381875")
+    assert quote.gross == Decimal("612.9677019375")
+    assert str(quote.shelf_price) == "612.99"
+    assert _dp(quote.margin_pct, 3) == Decimal("0.587")

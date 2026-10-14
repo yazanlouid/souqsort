@@ -178,9 +178,10 @@ def test_market_selector_is_filled_from_the_config(app: AppTest, config: GccConf
     selector = app.selectbox(key="market")
 
     assert selector.value == "KSA"
-    assert len(selector.options) == len(config.markets) == 1
-    assert "KSA" in selector.options[0]
-    assert "Saudi Arabia" in selector.options[0]  # the name comes from the config too
+    assert len(selector.options) == len(config.markets)
+    for option, (code, market) in zip(selector.options, config.markets.items(), strict=True):
+        assert code in option
+        assert market.name in option  # the name comes from the config too
 
 
 def test_duty_slider_is_whole_points_from_0_to_20(app: AppTest) -> None:
