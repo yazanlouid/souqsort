@@ -32,7 +32,7 @@ except OSError as exc:
     st.error(f"Cannot read data file: {exc}")
     st.stop()
 
-# The clock is read once per session: the pickers below default to the moment the dashboard
+# The clock is read once per session: the pickers below start at the moment the dashboard
 # was opened, and a rerun must not move them.
 if "opened_at" not in st.session_state:
     st.session_state["opened_at"] = datetime.now(UTC)
@@ -51,6 +51,15 @@ with st.sidebar:
     market = find_market(config, market_code)
     timezone = market.calendar.timezone
 
+    # The pickers hold a local date and time, read on the selected market's clock, as the CLI
+    # reads --ordered-at without an offset. They start once per session at the opening moment
+    # on the selected market's clock, to the minute; switching markets keeps the date and time,
+    # so the same reading is then read on the new market's clock.
+    if "order_date" not in st.session_state:
+        opened_local = to_market_time(st.session_state["opened_at"], market)
+        st.session_state["order_date"] = opened_local.date()
+        st.session_state["order_time"] = opened_local.time().replace(second=0, microsecond=0)
+
     duty_points = st.slider(
         "Duty adjustment",
         min_value=0,
@@ -62,13 +71,14 @@ with st.sidebar:
         key="duty_points",
     )
 
-    opened_local = to_market_time(st.session_state["opened_at"], market)
-    order_date = st.date_input("Order date", value=opened_local.date(), key="order_date")
+    order_date = st.date_input("Order date", key="order_date")
     order_time = st.time_input(
         "Order time",
-        value=opened_local.time(),
         step=60,
-        help=f"Local time in the market ({timezone}).",
+        help=(
+            f"Local time in the selected market ({timezone}). "
+            "Switching markets keeps the date and time."
+        ),
         key="order_time",
     )
 

@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from helpers import decimal_places
+from helpers import SAMPLE_PRODUCT_COUNT, decimal_places
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
 from souqsort.models import Catalogue, GccConfig, MarketConfig, Product, ProductName
 from souqsort.pipeline import (
@@ -47,6 +47,7 @@ KSA_SHELF_PRICES = {
     "FASH-SCF-015": "293.95",  # cif 228.19756711..., 12% duty, gross 293.91846644...
     "SPRT-KTB-020": "593.95",  # gross 593.184375
     "HOME-KTL-030": "237.95",  # cif 196.37416107..., gross 237.12179949...
+    "HOME-ESP-031": "4144.95",  # cif 3432.15352348..., gross 4144.32537961... -> 4144.33
     "BEAU-LIP-040": "16.95",  # gross 16.2106875
     "BEAU-SRM-041": "111.95",  # cif 92.025, gross 111.1201875
     "DIGI-LIC-050": "340.95",  # gross 340.6875 (0% duty, no freight)
@@ -102,7 +103,7 @@ def plus_three_points(catalogue: Catalogue, config: GccConfig) -> list[Localised
 def test_every_product_is_localised_in_catalogue_order(
     catalogue: Catalogue, localised: list[LocalisedProduct]
 ) -> None:
-    assert len(localised) == 12
+    assert len(localised) == SAMPLE_PRODUCT_COUNT
     assert [item.sku for item in localised] == [p.sku for p in catalogue.products]
     assert [item.sku for item in localised] == list(KSA_SHELF_PRICES)
 
@@ -248,7 +249,7 @@ def test_another_market_is_priced_from_its_own_config(
     assert str(headphones.quote.shelf_price) == "48.950"
     assert headphones.quote.vat == 0
     assert headphones.delivery.ordered_at_local.isoformat() == "2026-10-15T23:59:00+03:00"
-    assert len(items) == 12
+    assert len(items) == SAMPLE_PRODUCT_COUNT
 
 
 def test_find_market_returns_the_configured_market(config: GccConfig) -> None:
@@ -257,10 +258,10 @@ def test_find_market_returns_the_configured_market(config: GccConfig) -> None:
 
 def test_unknown_market_rejected(catalogue: Catalogue, config: GccConfig) -> None:
     with pytest.raises(LocalisationError) as excinfo:
-        localise_catalogue(catalogue.products, config, "UAE", THU_EVENING)
+        localise_catalogue(catalogue.products, config, "ZZZ", THU_EVENING)
 
     message = str(excinfo.value)
-    assert message.startswith("UAE: ")
+    assert message.startswith("ZZZ: ")
     assert "KSA" in message  # the message lists the markets that are configured
 
 
@@ -268,9 +269,9 @@ def test_find_market_and_the_pipeline_report_an_unknown_market_the_same_way(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
     with pytest.raises(LocalisationError) as from_lookup:
-        find_market(config, "UAE")
+        find_market(config, "ZZZ")
     with pytest.raises(LocalisationError) as from_pipeline:
-        localise_catalogue(catalogue.products, config, "UAE", THU_EVENING)
+        localise_catalogue(catalogue.products, config, "ZZZ", THU_EVENING)
 
     assert str(from_lookup.value) == str(from_pipeline.value)
 
@@ -466,16 +467,18 @@ def test_summary_counts_products_and_flagged_products(localised: list[LocalisedP
     summary = summarise_catalogue(localised, localised)
 
     assert isinstance(summary, CatalogueSummary)
-    assert summary.product_count == 12
+    assert summary.product_count == SAMPLE_PRODUCT_COUNT
     assert summary.flagged_count == 2  # the bag and the tea have no Arabic name
 
 
 def test_average_margin_is_the_unweighted_mean(localised: list[LocalisedProduct]) -> None:
     summary = summarise_catalogue(localised, localised)
 
-    assert summary.average_margin_pct == sum(item.quote.margin_pct for item in localised) / 12
+    assert summary.average_margin_pct == (
+        sum(item.quote.margin_pct for item in localised) / SAMPLE_PRODUCT_COUNT
+    )
     assert summary.average_margin_pct is not None
-    assert _dp(summary.average_margin_pct, 3) == Decimal("0.677")
+    assert _dp(summary.average_margin_pct, 3) == Decimal("0.656")
 
 
 def test_average_margin_of_the_worked_examples(localised: list[LocalisedProduct]) -> None:
@@ -528,16 +531,16 @@ def test_summary_of_the_sample_catalogue_at_three_points(
 ) -> None:
     summary = summarise_catalogue(plus_three_points, localised)
 
-    assert summary.product_count == 12
+    assert summary.product_count == SAMPLE_PRODUCT_COUNT
     assert summary.flagged_count == 2
     assert summary.average_margin_pct is not None
     assert summary.average_price_change_pct is not None
-    assert _dp(summary.average_price_change_pct, 4) == Decimal("0.0214")
-    # The margin is the adjusted catalogue's own, not the baseline's: 67.4%, down from 67.7%.
+    assert _dp(summary.average_price_change_pct, 4) == Decimal("0.0219")
+    # The margin is the adjusted catalogue's own, not the baseline's: 65.3%, down from 65.6%.
     assert summary.average_margin_pct == (
-        sum(item.quote.margin_pct for item in plus_three_points) / 12
+        sum(item.quote.margin_pct for item in plus_three_points) / SAMPLE_PRODUCT_COUNT
     )
-    assert _dp(summary.average_margin_pct, 3) == Decimal("0.674")
+    assert _dp(summary.average_margin_pct, 3) == Decimal("0.653")
 
 
 def test_price_change_never_falls_as_the_duty_adjustment_rises(
@@ -626,7 +629,7 @@ def test_localise_and_summarise_returns_the_items_and_their_summary(
     # The baseline is the same catalogue, market and order time with no duty adjustment.
     assert result.summary == summarise_catalogue(plus_three_points, localised)
     assert result.summary.average_price_change_pct is not None
-    assert _dp(result.summary.average_price_change_pct, 4) == Decimal("0.0214")
+    assert _dp(result.summary.average_price_change_pct, 4) == Decimal("0.0219")
 
 
 def test_localise_and_summarise_without_an_adjustment(
@@ -664,8 +667,8 @@ def test_localise_and_summarise_of_an_empty_catalogue(config: GccConfig) -> None
 def test_localise_and_summarise_fails_as_localise_catalogue_does(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    with pytest.raises(LocalisationError, match=r"^UAE: "):
-        localise_and_summarise(catalogue.products, config, "UAE", THU_EVENING)
+    with pytest.raises(LocalisationError, match=r"^ZZZ: "):
+        localise_and_summarise(catalogue.products, config, "ZZZ", THU_EVENING)
     with pytest.raises(LocalisationError, match="timezone-aware"):
         localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING.replace(tzinfo=None))
     with pytest.raises(ValueError, match="duty_adjustment") as excinfo:

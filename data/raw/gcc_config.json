@@ -16,10 +16,53 @@
         "weekend": ["FRI", "SAT"],
         "order_cutoff_local": "14:00",
         "holidays": [
-          { "date": "2027-02-22", "name": "Founding Day", "provisional": false }
+          { "date": "2027-02-22", "name": "Founding Day", "provisional": false },
+          { "date": "2027-03-09", "name": "Eid al-Fitr", "provisional": true },
+          { "date": "2027-03-10", "name": "Eid al-Fitr", "provisional": true },
+          { "date": "2027-03-11", "name": "Eid al-Fitr", "provisional": true }
         ]
       },
       "logistics": { "freight_per_kg_usd": "4.50", "linehaul_business_days": 3, "last_mile_business_days": 2 }
+    },
+    "UAE": {
+      "name": "United Arab Emirates",
+      "currency": { "code": "AED", "minor_units": 2, "charm_ending": "0.99" },
+      "tax": { "vat_rate": "0.05", "source": "illustrative - verify before quoting", "effective_from": "2018-01-01" },
+      "customs": { "default_duty_rate": "0.05", "category_overrides": { "digital": "0.00" } },
+      "calendar": {
+        "timezone": "Asia/Dubai",
+        "weekend": ["SAT", "SUN"],
+        "order_cutoff_local": "15:00",
+        "holidays": [
+          { "date": "2026-12-02", "name": "National Day", "provisional": false },
+          { "date": "2026-12-03", "name": "National Day", "provisional": false },
+          { "date": "2027-01-01", "name": "New Year's Day", "provisional": false },
+          { "date": "2027-03-09", "name": "Eid al-Fitr", "provisional": true },
+          { "date": "2027-03-10", "name": "Eid al-Fitr", "provisional": true },
+          { "date": "2027-03-11", "name": "Eid al-Fitr", "provisional": true }
+        ]
+      },
+      "logistics": { "freight_per_kg_usd": "4.00", "linehaul_business_days": 3, "last_mile_business_days": 1 }
+    },
+    "KWT": {
+      "name": "Kuwait",
+      "currency": { "code": "KWD", "minor_units": 3, "charm_ending": "0.950" },
+      "tax": { "vat_rate": "0", "source": "illustrative - Kuwait has no VAT; verify before quoting", "effective_from": "2026-10-01" },
+      "customs": { "default_duty_rate": "0.05", "category_overrides": { "digital": "0.00" } },
+      "calendar": {
+        "timezone": "Asia/Kuwait",
+        "weekend": ["FRI", "SAT"],
+        "order_cutoff_local": "13:00",
+        "holidays": [
+          { "date": "2027-01-01", "name": "New Year's Day", "provisional": false },
+          { "date": "2027-02-25", "name": "National Day", "provisional": false },
+          { "date": "2027-02-26", "name": "Liberation Day", "provisional": false },
+          { "date": "2027-03-09", "name": "Eid al-Fitr", "provisional": true },
+          { "date": "2027-03-10", "name": "Eid al-Fitr", "provisional": true },
+          { "date": "2027-03-11", "name": "Eid al-Fitr", "provisional": true }
+        ]
+      },
+      "logistics": { "freight_per_kg_usd": "5.00", "linehaul_business_days": 3, "last_mile_business_days": 2 }
     }
   }
 }

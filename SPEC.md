@@ -817,7 +817,7 @@ Commits 1, 2, 4 and 5 change only `data/raw/` and `tests/`. Commit 3 changes `.c
 Issue #3:
 - **What happens today** (checked with AppTest on a three-market config, Streamlit 1.65): the date and time pickers have keys, so after the first run Streamlit keeps their values and ignores the new `value=` default. Switching from KSA to the UAE keeps "13:30" and reads it as 13:30 in Dubai, even if nobody touched the pickers.
 - **Decision:** keep that behaviour, on purpose. The pickers hold a local date and time, read on the selected market's clock, exactly as the CLI reads `--ordered-at` without an offset. Make the code say so:
-  - set `order_date` and `order_time` in `st.session_state` once per session (the opening time on the first market's clock, to the minute), and stop passing `value=`;
+  - set `order_date` and `order_time` in `st.session_state` once per session (the opening time on the selected market's clock, to the minute), and stop passing `value=`;
   - help text: "Local time in the selected market ({timezone}). Switching markets keeps the date and time."
 - **AppTest:** pick Thu 2026-10-15 13:30 in KSA: every delivery is Thu 2026-10-22. Switch to KWT: the pickers still say 13:30, the caption says Asia/Kuwait, and every delivery is Sun 2026-10-25, because 13:30 is after Kuwait's 13:00 cutoff. Switch to the UAE: Wed 2026-10-21.
 

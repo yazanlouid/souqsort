@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 import souqsort
+from helpers import SAMPLE_PRODUCT_COUNT
 from souqsort.cli import _csv_cell, main
 from souqsort.models import Catalogue, GccConfig
 from souqsort.pipeline import localise_catalogue
@@ -133,7 +134,7 @@ def test_price_exits_zero_and_prints_the_expected_columns(run: Callable[..., Res
     assert result.err == ""
     header, rows = _table(result.out)
     assert header == TABLE_HEADER
-    assert len(rows) == 12
+    assert len(rows) == SAMPLE_PRODUCT_COUNT
     assert all(len(cells) == 6 for cells in rows.values())
 
 
@@ -209,7 +210,7 @@ def test_numeric_columns_are_right_aligned_and_lines_have_no_trailing_space(
     price = re.compile(r"\d+\.\d{2}(?=\s+-?\d+\.\d%)")
     price_ends = [match.end() for line in rows for match in price.finditer(line)]
     margin_ends = [line.index("%") for line in rows]
-    assert len(price_ends) == len(margin_ends) == 12
+    assert len(price_ends) == len(margin_ends) == SAMPLE_PRODUCT_COUNT
     assert len(set(price_ends)) == 1
     assert len(set(margin_ends)) == 1
     for line in (header, rule, *rows):
@@ -486,7 +487,7 @@ def test_csv_has_the_table_columns_plus_currency(
     assert result.code == 0
     header, *rows = _read_csv(out_path)
     assert header == CSV_HEADER
-    assert len(rows) == 12
+    assert len(rows) == SAMPLE_PRODUCT_COUNT
     assert rows[0] == [
         "ELEC-HP-001",
         "Wireless Noise-Cancelling Headphones",
@@ -530,7 +531,7 @@ def test_csv_creates_missing_parent_folders(run: Callable[..., Result], tmp_path
 
     assert result.code == 0
     assert result.err == ""
-    assert len(_read_csv(out_path)) == 13  # header + 12 products
+    assert len(_read_csv(out_path)) == SAMPLE_PRODUCT_COUNT + 1  # header + products
 
 
 def test_csv_reports_where_it_was_written(run: Callable[..., Result], tmp_path: Path) -> None:
@@ -538,7 +539,7 @@ def test_csv_reports_where_it_was_written(run: Callable[..., Result], tmp_path: 
 
     result = run(*PRICE_KSA, *THU_EVENING, "--csv", str(out_path))
 
-    assert "12 rows" in result.out
+    assert f"{SAMPLE_PRODUCT_COUNT} rows" in result.out
     assert out_path.name in result.out
 
 
@@ -549,7 +550,7 @@ def test_csv_overwrites_an_existing_file(run: Callable[..., Result], tmp_path: P
     run(*PRICE_KSA, *THU_EVENING, "--duty-adjust", "3", "--csv", str(out_path))
 
     rows = _read_csv(out_path)
-    assert len(rows) == 13
+    assert len(rows) == SAMPLE_PRODUCT_COUNT + 1  # header + products
     assert rows[1][3] == "705.95"
 
 
@@ -561,7 +562,7 @@ def test_csv_has_no_blank_lines_between_rows(run: Callable[..., Result], tmp_pat
 
     raw = out_path.read_bytes()
     assert b"\r\r\n" not in raw
-    assert len(raw.splitlines()) == 13
+    assert len(raw.splitlines()) == SAMPLE_PRODUCT_COUNT + 1  # header + products
 
 
 def test_csv_path_that_cannot_be_written_exits_one(
@@ -709,14 +710,39 @@ def test_another_market_from_another_config(run: Callable[..., Result]) -> None:
     assert "Asia/Kuwait" in result.out.splitlines()[0]
 
 
-def test_unknown_market_is_a_usage_error_listing_the_configured_markets(
+@pytest.mark.parametrize(
+    ("market", "currency", "headphones", "price_pattern", "timezone"),
+    [
+        ("UAE", "AED", "612.99", r"\d+\.\d{2}", "Asia/Dubai"),
+        ("KWT", "KWD", "48.950", r"\d+\.\d{3}", "Asia/Kuwait"),
+    ],
+)
+def test_every_configured_market_prints_in_its_own_currency(
     run: Callable[..., Result],
+    market: str,
+    currency: str,
+    headphones: str,
+    price_pattern: str,
+    timezone: str,
 ) -> None:
-    result = run(*_price(market="UAE"), *THU_EVENING)
+    result = run(*_price(market=market), *THU_EVENING)
+
+    assert result.code == 0
+    header, rows = _table(result.out)
+    assert header[PRICE] == f"Shelf price ({currency})"
+    assert rows[HEADPHONES][PRICE] == headphones  # SPEC §7.8, worked examples C and D
+    assert all(re.fullmatch(price_pattern, cells[PRICE]) for cells in rows.values())
+    assert timezone in result.out.splitlines()[0]
+
+
+def test_unknown_market_is_a_usage_error_listing_the_configured_markets(
+    run: Callable[..., Result], config: GccConfig
+) -> None:
+    result = run(*_price(market="ZZZ"), *THU_EVENING)
 
     assert result.code == 2
-    assert "UAE" in result.err
-    assert "KSA" in result.err
+    assert "ZZZ" in result.err
+    assert f"configured markets: {', '.join(sorted(config.markets))}" in result.err
     assert "usage: python -m souqsort price" in result.err  # the price command's own usage
     assert "--market" in result.err
     assert result.out == ""
@@ -741,7 +767,7 @@ def test_data_files_default_to_data_raw_under_the_current_folder(
     result = run("price", "--market", "KSA", *THU_EVENING)
 
     assert result.code == 0
-    assert len(_table(result.out)[1]) == 12
+    assert len(_table(result.out)[1]) == SAMPLE_PRODUCT_COUNT
 
 
 def test_missing_data_file_exits_one_naming_the_file(
@@ -910,7 +936,7 @@ def test_names_the_output_encoding_cannot_represent_are_replaced_not_fatal(
     printed = piped.getvalue().decode("cp1252")
     assert code == 0
     _, rows = _table(printed)
-    assert len(rows) == 12
+    assert len(rows) == SAMPLE_PRODUCT_COUNT
     assert rows[HEADPHONES][NAME] == "Oud ?Attar Hal?l"
     assert rows[HEADPHONES][PRICE] == "686.95"
     assert _read_csv(csv_path)[1][1] == name
@@ -956,4 +982,4 @@ def test_python_dash_m_souqsort_runs_the_cli() -> None:
     header, rows = _table(completed.stdout)
     assert header == TABLE_HEADER
     assert rows[HEADPHONES][PRICE] == "686.95"
-    assert len(rows) == 12
+    assert len(rows) == SAMPLE_PRODUCT_COUNT

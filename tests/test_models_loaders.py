@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from helpers import SAMPLE_PRODUCT_COUNT
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
 from souqsort.models import GccConfig, Product, ProductName
 
@@ -86,7 +87,7 @@ def test_sample_catalogue_loads(catalogue_path: Path) -> None:
     catalogue = load_catalogue(catalogue_path)
 
     assert catalogue.catalogue_version == "2026-10-01"
-    assert len(catalogue.products) == 12
+    assert len(catalogue.products) == SAMPLE_PRODUCT_COUNT
     for product in catalogue.products:
         assert isinstance(product.base_price, Decimal)
         assert isinstance(product.unit_cost, Decimal)
@@ -106,6 +107,9 @@ def test_sample_config_loads(config_path: Path) -> None:
     assert config.fx.as_of == date(2026, 10, 1)
     assert config.fx.per_usd["SAR"] == Decimal("3.7500")
     assert config.fx.per_usd["GBP"] == Decimal("0.7450")
+    assert config.fx.per_usd["AED"] == Decimal("3.6725")
+    assert config.fx.per_usd["KWD"] == Decimal("0.3070")
+    assert list(config.markets) == ["KSA", "UAE", "KWT"]  # three markets, in file order
 
     ksa = config.markets["KSA"]
     assert ksa.code == "KSA"
@@ -120,7 +124,10 @@ def test_sample_config_loads(config_path: Path) -> None:
     assert list(ksa.calendar.weekend) == ["FRI", "SAT"]
     assert ksa.calendar.order_cutoff_local == time(14, 0)
     assert [(h.date, h.name, h.provisional) for h in ksa.calendar.holidays] == [
-        (date(2027, 2, 22), "Founding Day", False)
+        (date(2027, 2, 22), "Founding Day", False),
+        (date(2027, 3, 9), "Eid al-Fitr", True),
+        (date(2027, 3, 10), "Eid al-Fitr", True),
+        (date(2027, 3, 11), "Eid al-Fitr", True),
     ]
     assert ksa.logistics.freight_per_kg_usd == Decimal("4.50")
     assert ksa.logistics.linehaul_business_days == 3
