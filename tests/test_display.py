@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from helpers import decimal_places
+from helpers import SAMPLE_PRODUCT_COUNT, decimal_places
 from souqsort.display import (
     DisplayRow,
     DisplaySummary,
@@ -31,6 +31,7 @@ BAG = "FASH-BAG-014"
 SCARF = "FASH-SCF-015"
 KETTLEBELL = "SPRT-KTB-020"
 KETTLE = "HOME-KTL-030"
+ESPRESSO = "HOME-ESP-031"
 LIP_BALM = "BEAU-LIP-040"
 SERUM = "BEAU-SRM-041"
 LICENCE = "DIGI-LIC-050"
@@ -68,7 +69,7 @@ def headphones(localised: list[LocalisedProduct]) -> LocalisedProduct:
 def test_one_row_per_product_in_the_same_order(localised: list[LocalisedProduct]) -> None:
     rows = display_rows(localised)
 
-    assert len(rows) == 12
+    assert len(rows) == SAMPLE_PRODUCT_COUNT
     assert [row.sku for row in rows] == [item.sku for item in localised]
 
 
@@ -158,7 +159,7 @@ def test_grid_rows_show_what_the_display_rows_show(localised: list[LocalisedProd
     rows = grid_rows(localised)
     text_rows = display_rows(localised)
 
-    assert len(rows) == 12
+    assert len(rows) == SAMPLE_PRODUCT_COUNT
     for row, text in zip(rows, text_rows, strict=True):
         assert isinstance(row, GridRow)
         assert (row.sku, row.name_en, row.delivery_date) == (
@@ -224,6 +225,7 @@ def test_grid_prices_sort_by_value_where_text_would_not(
         KETTLEBELL,  # 593.95
         BAG,  # 594.95
         HEADPHONES,  # 686.95
+        ESPRESSO,  # 4144.95
     ]
     assert as_text[:2] == [SERUM, LIP_BALM]  # as text, "111.95" comes before "16.95"
 
@@ -395,7 +397,7 @@ def test_summary_of_the_sample_catalogue(localised: list[LocalisedProduct]) -> N
     summary = summarise_catalogue(localised, localised)
 
     assert display_summary(summary) == DisplaySummary(
-        average_margin="67.7%",
+        average_margin="65.6%",
         flagged_products="2",
         average_price_change="0.0%",
     )
@@ -407,9 +409,9 @@ def test_summary_of_the_sample_catalogue_at_three_points(
     adjusted = localise_catalogue(catalogue.products, config, "KSA", THU_EVENING, Decimal("0.03"))
 
     assert display_summary(summarise_catalogue(adjusted, localised)) == DisplaySummary(
-        average_margin="67.4%",
+        average_margin="65.3%",
         flagged_products="2",
-        average_price_change="+2.1%",
+        average_price_change="+2.2%",
     )
 
 

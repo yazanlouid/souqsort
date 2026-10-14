@@ -17,7 +17,7 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from helpers import decimal_places
+from helpers import SAMPLE_PRODUCT_COUNT, decimal_places
 from souqsort.display import display_summary, grid_rows
 from souqsort.loaders import load_gcc_config
 from souqsort.models import Catalogue, GccConfig
@@ -33,6 +33,7 @@ APP_PATH = Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py"
 HEADPHONES = "ELEC-HP-001"
 CHARGER = "ELEC-CHG-002"
 BAG = "FASH-BAG-014"
+ESPRESSO = "HOME-ESP-031"
 LIP_BALM = "BEAU-LIP-040"
 SERUM = "BEAU-SRM-041"
 LICENCE = "DIGI-LIC-050"
@@ -53,7 +54,7 @@ AVERAGE_MARGIN = "Average margin"
 FLAGGED = "Flagged products"
 PRICE_CHANGE = "Average price change vs 0 pp"
 
-SCOPE_NOTE = "All 12 products in KSA; search filters the table only"
+SCOPE_NOTE = f"All {SAMPLE_PRODUCT_COUNT} products in KSA; search filters the table only"
 
 # The moment the dashboard is opened: Sun 10:00 in Riyadh, before the cutoff (SPEC §8.1 row 1).
 OPENED_AT = datetime(2026, 10, 11, 7, 0, tzinfo=UTC)
@@ -118,12 +119,12 @@ def test_app_starts_and_shows_every_product(app: AppTest, catalogue: Catalogue) 
 
     assert list(frame.columns) == list(COLUMNS)
     assert list(frame[SKU]) == [product.sku for product in catalogue.products]
-    assert len(frame) == 12
+    assert len(frame) == SAMPLE_PRODUCT_COUNT
 
 
 def test_headline_metrics_on_first_load(app: AppTest) -> None:
     assert _metrics(app) == {
-        AVERAGE_MARGIN: "67.7%",
+        AVERAGE_MARGIN: "65.6%",
         FLAGGED: "2",
         PRICE_CHANGE: "0.0%",
     }
@@ -240,11 +241,11 @@ def test_price_change_metric_reacts_to_the_slider(app: AppTest) -> None:
     assert _metrics(app)[PRICE_CHANGE] == "0.0%"
 
     app.slider(key="duty_points").set_value(3).run()
-    assert _metrics(app)[PRICE_CHANGE] == "+2.1%"
-    assert _metrics(app)[AVERAGE_MARGIN] == "67.4%"  # barely moves: duty is passed through
+    assert _metrics(app)[PRICE_CHANGE] == "+2.2%"
+    assert _metrics(app)[AVERAGE_MARGIN] == "65.3%"  # barely moves: duty is passed through
 
     app.slider(key="duty_points").set_value(20).run()
-    assert _metrics(app)[PRICE_CHANGE] == "+18.5%"
+    assert _metrics(app)[PRICE_CHANGE] == "+18.6%"
 
     app.slider(key="duty_points").set_value(0).run()
     assert _metrics(app)[PRICE_CHANGE] == "0.0%"
@@ -286,7 +287,7 @@ def test_price_column_sorts_by_value_not_as_text(app: AppTest) -> None:
 
     assert by_price.index(LIP_BALM) < by_price.index(SERUM)  # 16.95 before 111.95
     assert by_price[0] == LIP_BALM
-    assert by_price[-1] == HEADPHONES
+    assert by_price[-1] == ESPRESSO
     assert sorted(map(str, frame[PRICE]))[0] == "111.95"  # where text order would start
 
 
@@ -342,7 +343,7 @@ def test_clearing_the_search_brings_every_row_back(app: AppTest) -> None:
 
     _search(app, "")
 
-    assert len(_grid(app)) == 12
+    assert len(_grid(app)) == SAMPLE_PRODUCT_COUNT
 
 
 def test_search_with_no_match_shows_an_empty_grid_not_an_error(app: AppTest) -> None:
@@ -377,7 +378,7 @@ def test_page_says_that_the_metrics_cover_the_whole_market(app: AppTest) -> None
 
     _search(app, "crossbody")
 
-    assert SCOPE_NOTE in _captions(app)  # still 12, with one row showing
+    assert SCOPE_NOTE in _captions(app)  # still all of them, with one row showing
 
 
 # --- order date and time ------------------------------------------------------------------
@@ -458,7 +459,7 @@ def test_opening_the_app_reads_the_clock_once_per_session() -> None:
     opened_at = at.session_state["opened_at"]
     assert not at.exception
     assert before <= opened_at <= after  # timezone-aware, or this comparison would raise
-    assert len(_grid(at)) == 12
+    assert len(_grid(at)) == SAMPLE_PRODUCT_COUNT
 
     at.slider(key="duty_points").set_value(3).run()
 

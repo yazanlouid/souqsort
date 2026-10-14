@@ -60,11 +60,22 @@
       "sku": "HOME-KTL-030",
       "name": { "en": "Electric Kettle 1.7 L", "ar": "غلاية كهربائية 1.7 لتر" },
       "category": "home",
-      "hs_code": "851671",
+      "hs_code": "851679",
       "base_price": "34.99",
       "currency": "GBP",
       "unit_cost": "13.40",
       "weight_kg": "1.20",
+      "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
+    },
+    {
+      "sku": "HOME-ESP-031",
+      "name": { "en": "Bean-to-Cup Espresso Machine", "ar": "ماكينة إسبريسو أوتوماتيكية بمطحنة مدمجة" },
+      "category": "home",
+      "hs_code": "851671",
+      "base_price": "649.00",
+      "currency": "GBP",
+      "unit_cost": "389.00",
+      "weight_kg": "9.80",
       "attributes": { "contains_alcohol": false, "contains_pork": false, "contains_lithium_battery": false }
     },
     {

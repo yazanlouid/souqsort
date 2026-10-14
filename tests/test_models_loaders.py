@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from helpers import SAMPLE_PRODUCT_COUNT
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
 from souqsort.models import GccConfig, Product, ProductName
 
@@ -86,7 +87,7 @@ def test_sample_catalogue_loads(catalogue_path: Path) -> None:
     catalogue = load_catalogue(catalogue_path)
 
     assert catalogue.catalogue_version == "2026-10-01"
-    assert len(catalogue.products) == 12
+    assert len(catalogue.products) == SAMPLE_PRODUCT_COUNT
     for product in catalogue.products:
         assert isinstance(product.base_price, Decimal)
         assert isinstance(product.unit_cost, Decimal)
