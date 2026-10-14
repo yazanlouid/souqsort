@@ -35,6 +35,7 @@ Always run Python through `uv run`. Never use `pip install` or a conda environme
 
 ## Project tools
 - `/verify` runs the same four checks as CI, each through `uv run --locked`, and ends with `verify: PASS` or `verify: FAIL (...)`.
+- `/add-market CODE "Name"` adds a market as data only (`data/raw/gcc_config.json` and `tests/`), with tests for its worked example, price column and delivery cells. Only you can start it; Claude never runs it on its own.
 
 ## Environment
 - Windows laptop. Claude Code runs commands through Git Bash; the commands above work in Git Bash and PowerShell.
