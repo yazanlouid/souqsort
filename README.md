@@ -1,5 +1,7 @@
 # SouqSort
 
+[![CI](https://github.com/yazanlouid/souqsort/actions/workflows/ci.yml/badge.svg)](https://github.com/yazanlouid/souqsort/actions/workflows/ci.yml)
+
 SouqSort is a localisation and pricing engine for a UK-based retailer launching its catalogue in the
 GCC. It turns a global catalogue priced in USD/GBP into market-ready shelf prices (FX, freight,
 duty, VAT, rounding and charm endings), margins and delivery dates. It is built for an expansion
