@@ -107,6 +107,9 @@ def test_sample_config_loads(config_path: Path) -> None:
     assert config.fx.as_of == date(2026, 10, 1)
     assert config.fx.per_usd["SAR"] == Decimal("3.7500")
     assert config.fx.per_usd["GBP"] == Decimal("0.7450")
+    assert config.fx.per_usd["AED"] == Decimal("3.6725")
+    assert config.fx.per_usd["KWD"] == Decimal("0.3070")
+    assert list(config.markets) == ["KSA", "UAE", "KWT"]  # three markets, in file order
 
     ksa = config.markets["KSA"]
     assert ksa.code == "KSA"

@@ -710,6 +710,31 @@ def test_another_market_from_another_config(run: Callable[..., Result]) -> None:
     assert "Asia/Kuwait" in result.out.splitlines()[0]
 
 
+@pytest.mark.parametrize(
+    ("market", "currency", "headphones", "price_pattern", "timezone"),
+    [
+        ("UAE", "AED", "612.99", r"\d+\.\d{2}", "Asia/Dubai"),
+        ("KWT", "KWD", "48.950", r"\d+\.\d{3}", "Asia/Kuwait"),
+    ],
+)
+def test_every_configured_market_prints_in_its_own_currency(
+    run: Callable[..., Result],
+    market: str,
+    currency: str,
+    headphones: str,
+    price_pattern: str,
+    timezone: str,
+) -> None:
+    result = run(*_price(market=market), *THU_EVENING)
+
+    assert result.code == 0
+    header, rows = _table(result.out)
+    assert header[PRICE] == f"Shelf price ({currency})"
+    assert rows[HEADPHONES][PRICE] == headphones  # SPEC §7.8, worked examples C and D
+    assert all(re.fullmatch(price_pattern, cells[PRICE]) for cells in rows.values())
+    assert timezone in result.out.splitlines()[0]
+
+
 def test_unknown_market_is_a_usage_error_listing_the_configured_markets(
     run: Callable[..., Result], config: GccConfig
 ) -> None:
