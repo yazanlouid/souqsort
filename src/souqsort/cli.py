@@ -39,6 +39,11 @@ _CSV_COLUMNS: tuple[tuple[str, Callable[[DisplayRow], str]], ...] = (
     ("flags", lambda row: ";".join(row.flags)),
 )
 
+# A spreadsheet runs a cell that starts with one of these as a formula (issue #2).
+_FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
+# fullmatch, not $: in Python, $ also matches before a trailing newline. ASCII keeps \d to 0-9.
+_PLAIN_NUMBER = re.compile(r"-?\d+(\.\d+)?", re.ASCII)
+
 
 # A date, then T or a space, then a time with at least hours and minutes, then an optional
 # offset. datetime.fromisoformat() alone is too loose: it takes a bare date as midnight, and
@@ -190,13 +195,23 @@ def _table_lines(rows: Sequence[DisplayRow], currency_code: str) -> list[str]:
     ]
 
 
+def _csv_cell(text: str) -> str:
+    """``text`` with a leading ``'`` if a spreadsheet would run it as a formula.
+
+    A plain decimal number, such as a negative margin ``-12.3``, is kept as it is.
+    """
+    if text.startswith(_FORMULA_STARTS) and not _PLAIN_NUMBER.fullmatch(text):
+        return f"'{text}"
+    return text
+
+
 def _write_csv(path: Path, rows: Sequence[DisplayRow]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # newline="" leaves line endings to the csv module; otherwise Windows writes \r\r\n.
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow([name for name, _ in _CSV_COLUMNS])
-        writer.writerows([cell(row) for _, cell in _CSV_COLUMNS] for row in rows)
+        writer.writerows([_csv_cell(cell(row)) for _, cell in _CSV_COLUMNS] for row in rows)
 
 
 def _print(text: str = "") -> None:

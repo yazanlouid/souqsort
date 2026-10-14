@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 import souqsort
-from souqsort.cli import main
+from souqsort.cli import _csv_cell, main
 from souqsort.models import Catalogue, GccConfig
 from souqsort.pipeline import localise_catalogue
 from souqsort.pricing.money import format_money
@@ -615,6 +615,84 @@ def test_csv_refuses_an_input_file_spelled_differently(
 
     assert result.code == 2
     assert catalogue.read_bytes() == original
+
+
+# --- --csv: spreadsheet formulas (issue #2) -----------------------------------------------
+
+
+def test_csv_prefixes_a_formula_name_with_a_quote(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path
+) -> None:
+    name = '=HYPERLINK("http://example.com","x")'
+    raw_catalogue["products"][0]["name"]["en"] = name
+    catalogue = _write_json(tmp_path / "catalogue.json", raw_catalogue)
+    csv_path = tmp_path / "ksa.csv"
+
+    result = run(*_price(catalogue=catalogue), *THU_EVENING, "--csv", str(csv_path))
+
+    assert result.code == 0
+    assert _read_csv(csv_path)[1][1] == f"'{name}"
+    _, rows = _table(result.out)
+    assert rows[HEADPHONES][NAME] == name  # the table is unchanged
+
+
+@pytest.mark.parametrize("name", ["+1", "-1+2", "@SUM(A1)", "\tTabbed name"])
+def test_csv_prefixes_names_that_start_like_a_formula(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path, name: str
+) -> None:
+    raw_catalogue["products"][0]["name"]["en"] = name
+    catalogue = _write_json(tmp_path / "catalogue.json", raw_catalogue)
+    csv_path = tmp_path / "ksa.csv"
+
+    result = run(*_price(catalogue=catalogue), *THU_EVENING, "--csv", str(csv_path))
+
+    assert result.code == 0
+    assert _read_csv(csv_path)[1][1] == f"'{name}"
+
+
+def test_csv_keeps_a_negative_margin_as_a_number(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path
+) -> None:
+    raw_catalogue["products"][0]["unit_cost"] = "1000.00"  # far above what the price brings in
+    catalogue = _write_json(tmp_path / "catalogue.json", raw_catalogue)
+    csv_path = tmp_path / "ksa.csv"
+
+    result = run(*_price(catalogue=catalogue), *THU_EVENING, "--csv", str(csv_path))
+
+    assert result.code == 0
+    margin = _read_csv(csv_path)[1][4]
+    assert margin.startswith("-")
+    _, rows = _table(result.out)
+    assert rows[HEADPHONES][MARGIN] == f"{margin}%"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("=1+1", "'=1+1"),
+        ("+1", "'+1"),
+        ("-1+2", "'-1+2"),
+        ("@SUM(A1)", "'@SUM(A1)"),
+        ("\tx", "'\tx"),
+        ("\rx", "'\rx"),
+        # Start like a number, but are not a plain decimal.
+        ("-12.", "'-12."),
+        ("-.5", "'-.5"),
+        ("-1e5", "'-1e5"),
+        ("--1", "'--1"),
+        ("-12.3\n", "'-12.3\n"),
+        ("-١٢", "'-١٢"),  # Arabic-Indic digits
+        # Left as they are.
+        ("-12.3", "-12.3"),
+        ("686.95", "686.95"),
+        ("0", "0"),
+        ("Leather Crossbody Bag", "Leather Crossbody Bag"),
+        ("", ""),
+        ("missing_arabic_name", "missing_arabic_name"),
+    ],
+)
+def test_csv_cell_escapes_only_what_a_spreadsheet_would_run(text: str, expected: str) -> None:
+    assert _csv_cell(text) == expected
 
 
 # --- markets and data files ---------------------------------------------------------------
