@@ -17,9 +17,11 @@ from pathlib import Path
 
 
 def main() -> int:
+    # Bytes, not sys.stdin: the event is UTF-8, and Windows would decode text in its code page,
+    # garbling a non-ASCII path. ValueError covers bad JSON and bytes that are not UTF-8.
     try:
-        event = json.load(sys.stdin)
-    except json.JSONDecodeError:
+        event = json.load(sys.stdin.buffer)
+    except ValueError:
         return 0
     tool_input = event.get("tool_input") if isinstance(event, dict) else None
     file_path = tool_input.get("file_path") if isinstance(tool_input, dict) else None
