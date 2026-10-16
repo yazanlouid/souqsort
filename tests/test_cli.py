@@ -17,10 +17,10 @@ from typing import Any
 import pytest
 
 import souqsort
-from helpers import SAMPLE_PRODUCT_COUNT
+from helpers import FOR_SALE_COUNTS
 from souqsort.cli import _csv_cell, main
 from souqsort.models import Catalogue, GccConfig
-from souqsort.pipeline import localise_catalogue
+from souqsort.pipeline import localise_and_summarise
 from souqsort.pricing.money import format_money
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +44,10 @@ def _price(
 
 PRICE_KSA = _price()
 THU_EVENING = ("--ordered-at", "2026-10-15T20:59Z")  # Thu 23:59 in Riyadh: after the cutoff
+
+KSA_FOR_SALE = FOR_SALE_COUNTS["KSA"]  # the table and the CSV leave out what KSA does not sell
+VANILLA = "GROC-VAN-061"
+GUMMY_BEARS = "GROC-GUM-062"
 
 TABLE_HEADER = ["SKU", "Name", "Shelf price (SAR)", "Margin %", "Delivery", "Flags"]
 CSV_HEADER = [
@@ -134,13 +138,14 @@ def test_price_exits_zero_and_prints_the_expected_columns(run: Callable[..., Res
     assert result.err == ""
     header, rows = _table(result.out)
     assert header == TABLE_HEADER
-    assert len(rows) == SAMPLE_PRODUCT_COUNT
+    assert len(rows) == KSA_FOR_SALE
     assert all(len(cells) == 6 for cells in rows.values())
 
 
 def test_rows_are_in_catalogue_order(run: Callable[..., Result], catalogue: Catalogue) -> None:
     _, rows = _table(run(*PRICE_KSA, *THU_EVENING).out)
-    assert list(rows) == [p.sku for p in catalogue.products]
+    not_sold = (VANILLA, GUMMY_BEARS)
+    assert list(rows) == [p.sku for p in catalogue.products if p.sku not in not_sold]
 
 
 def test_worked_example_rows(run: Callable[..., Result]) -> None:
@@ -168,7 +173,7 @@ def test_table_shows_the_same_result_as_the_pipeline(
     run: Callable[..., Result], catalogue: Catalogue, config: GccConfig
 ) -> None:
     ordered_at = datetime(2026, 10, 15, 20, 59, tzinfo=UTC)
-    expected = localise_catalogue(catalogue.products, config, "KSA", ordered_at)
+    expected = localise_and_summarise(catalogue.products, config, "KSA", ordered_at).items
 
     _, rows = _table(run(*PRICE_KSA, *THU_EVENING).out)
 
@@ -210,7 +215,7 @@ def test_numeric_columns_are_right_aligned_and_lines_have_no_trailing_space(
     price = re.compile(r"\d+\.\d{2}(?=\s+-?\d+\.\d%)")
     price_ends = [match.end() for line in rows for match in price.finditer(line)]
     margin_ends = [line.index("%") for line in rows]
-    assert len(price_ends) == len(margin_ends) == SAMPLE_PRODUCT_COUNT
+    assert len(price_ends) == len(margin_ends) == KSA_FOR_SALE
     assert len(set(price_ends)) == 1
     assert len(set(margin_ends)) == 1
     for line in (header, rule, *rows):
@@ -221,6 +226,95 @@ def test_numeric_columns_are_right_aligned_and_lines_have_no_trailing_space(
 def test_output_is_ascii(run: Callable[..., Result]) -> None:
     # Arabic names are not printed, so the output is safe on a Windows console code page.
     assert run(*PRICE_KSA, *THU_EVENING).out.isascii()
+
+
+# --- not sold (SPEC §7.6, §9.2; M9) --------------------------------------------------------
+
+
+def _not_sold(out: str) -> tuple[list[str], list[str]]:
+    """The lines before the "Not sold in" title, and the section from the title to a blank line."""
+    lines = out.splitlines()
+    title_at = next(i for i, line in enumerate(lines) if line.startswith("Not sold in "))
+    section: list[str] = []
+    for line in lines[title_at:]:
+        if not line.strip():
+            break
+        section.append(line)
+    return lines[:title_at], section
+
+
+def test_products_ksa_does_not_sell_are_listed_after_the_table(
+    run: Callable[..., Result],
+) -> None:
+    result = run(*PRICE_KSA, *THU_EVENING)
+
+    assert result.code == 0
+    before, section = _not_sold(result.out)
+    assert before[-1] == ""  # a blank line after the table
+    title, header, rule, *rows = section
+    assert title == "Not sold in KSA (2):"
+    assert _cells(header) == ["SKU", "Name", "Reasons"]
+    assert set(rule.replace("  ", "")) == {"-"}
+    assert [_cells(row) for row in rows] == [
+        [VANILLA, "Pure Vanilla Extract", "contains_alcohol"],
+        [GUMMY_BEARS, "Gummy Bears (pork gelatine)", "contains_pork"],
+    ]
+    for line in (header, rule, *rows):
+        assert line == line.rstrip()
+
+
+def test_products_not_sold_are_not_in_the_table(run: Callable[..., Result]) -> None:
+    _, rows = _table(run(*PRICE_KSA, *THU_EVENING).out)
+    assert VANILLA not in rows
+    assert GUMMY_BEARS not in rows
+
+
+def test_several_reasons_are_joined_with_commas(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path
+) -> None:
+    gummy_bears = next(p for p in raw_catalogue["products"] if p["sku"] == GUMMY_BEARS)
+    gummy_bears["attributes"]["contains_alcohol"] = True
+    catalogue = _write_json(tmp_path / "catalogue.json", raw_catalogue)
+
+    result = run(*_price(catalogue=catalogue), *THU_EVENING)
+
+    _, (title, _header, _rule, *rows) = _not_sold(result.out)
+    assert title == "Not sold in KSA (2):"
+    assert _cells(rows[1]) == [
+        GUMMY_BEARS,
+        "Gummy Bears (pork gelatine)",
+        "contains_alcohol,contains_pork",  # in the order KSA lists them
+    ]
+
+
+def test_uae_lists_one_product_as_not_sold(run: Callable[..., Result]) -> None:
+    result = run(*_price(market="UAE"), *THU_EVENING)
+
+    _, (title, _header, _rule, *rows) = _not_sold(result.out)
+    assert title == "Not sold in UAE (1):"
+    assert [_cells(row)[0] for row in rows] == [GUMMY_BEARS]
+    assert len(_table(result.out)[1]) == FOR_SALE_COUNTS["UAE"]
+
+
+def test_a_market_that_bans_nothing_prints_no_not_sold_section(
+    run: Callable[..., Result],
+) -> None:
+    result = run(*_price(market="TEST-KWD", config=ZERO_VAT_CONFIG_PATH), *THU_EVENING)
+
+    assert result.code == 0
+    assert "Not sold" not in result.out
+    assert result.out.splitlines()[-1].strip() != ""
+
+
+def test_csv_holds_only_the_products_for_sale(run: Callable[..., Result], tmp_path: Path) -> None:
+    out_path = tmp_path / "ksa.csv"
+
+    result = run(*PRICE_KSA, *THU_EVENING, "--csv", str(out_path))
+
+    _, *rows = _read_csv(out_path)
+    assert len(rows) == KSA_FOR_SALE
+    assert {row[0] for row in rows}.isdisjoint({VANILLA, GUMMY_BEARS})
+    assert "Wrote 11 rows" in result.out
 
 
 # --- --duty-adjust (SPEC §7.4) ------------------------------------------------------------
@@ -487,7 +581,7 @@ def test_csv_has_the_table_columns_plus_currency(
     assert result.code == 0
     header, *rows = _read_csv(out_path)
     assert header == CSV_HEADER
-    assert len(rows) == SAMPLE_PRODUCT_COUNT
+    assert len(rows) == KSA_FOR_SALE
     assert rows[0] == [
         "ELEC-HP-001",
         "Wireless Noise-Cancelling Headphones",
@@ -531,7 +625,7 @@ def test_csv_creates_missing_parent_folders(run: Callable[..., Result], tmp_path
 
     assert result.code == 0
     assert result.err == ""
-    assert len(_read_csv(out_path)) == SAMPLE_PRODUCT_COUNT + 1  # header + products
+    assert len(_read_csv(out_path)) == KSA_FOR_SALE + 1  # header + products
 
 
 def test_csv_reports_where_it_was_written(run: Callable[..., Result], tmp_path: Path) -> None:
@@ -539,7 +633,7 @@ def test_csv_reports_where_it_was_written(run: Callable[..., Result], tmp_path: 
 
     result = run(*PRICE_KSA, *THU_EVENING, "--csv", str(out_path))
 
-    assert f"{SAMPLE_PRODUCT_COUNT} rows" in result.out
+    assert f"{KSA_FOR_SALE} rows" in result.out
     assert out_path.name in result.out
 
 
@@ -550,7 +644,7 @@ def test_csv_overwrites_an_existing_file(run: Callable[..., Result], tmp_path: P
     run(*PRICE_KSA, *THU_EVENING, "--duty-adjust", "3", "--csv", str(out_path))
 
     rows = _read_csv(out_path)
-    assert len(rows) == SAMPLE_PRODUCT_COUNT + 1  # header + products
+    assert len(rows) == KSA_FOR_SALE + 1  # header + products
     assert rows[1][3] == "705.95"
 
 
@@ -562,7 +656,7 @@ def test_csv_has_no_blank_lines_between_rows(run: Callable[..., Result], tmp_pat
 
     raw = out_path.read_bytes()
     assert b"\r\r\n" not in raw
-    assert len(raw.splitlines()) == SAMPLE_PRODUCT_COUNT + 1  # header + products
+    assert len(raw.splitlines()) == KSA_FOR_SALE + 1  # header + products
 
 
 def test_csv_path_that_cannot_be_written_exits_one(
@@ -767,7 +861,7 @@ def test_data_files_default_to_data_raw_under_the_current_folder(
     result = run("price", "--market", "KSA", *THU_EVENING)
 
     assert result.code == 0
-    assert len(_table(result.out)[1]) == SAMPLE_PRODUCT_COUNT
+    assert len(_table(result.out)[1]) == KSA_FOR_SALE
 
 
 def test_missing_data_file_exits_one_naming_the_file(
@@ -909,7 +1003,7 @@ def test_unexpected_errors_are_not_turned_into_an_exit_code(
     def broken(*args: Any, **kwargs: Any) -> None:
         raise bug
 
-    monkeypatch.setattr("souqsort.cli.localise_catalogue", broken)
+    monkeypatch.setattr("souqsort.cli.localise_and_summarise", broken)
 
     with pytest.raises(type(bug), match="boom"):
         run(*PRICE_KSA, *THU_EVENING)
@@ -936,7 +1030,7 @@ def test_names_the_output_encoding_cannot_represent_are_replaced_not_fatal(
     printed = piped.getvalue().decode("cp1252")
     assert code == 0
     _, rows = _table(printed)
-    assert len(rows) == SAMPLE_PRODUCT_COUNT
+    assert len(rows) == KSA_FOR_SALE
     assert rows[HEADPHONES][NAME] == "Oud ?Attar Hal?l"
     assert rows[HEADPHONES][PRICE] == "686.95"
     assert _read_csv(csv_path)[1][1] == name
@@ -982,4 +1076,4 @@ def test_python_dash_m_souqsort_runs_the_cli() -> None:
     header, rows = _table(completed.stdout)
     assert header == TABLE_HEADER
     assert rows[HEADPHONES][PRICE] == "686.95"
-    assert len(rows) == SAMPLE_PRODUCT_COUNT
+    assert len(rows) == KSA_FOR_SALE

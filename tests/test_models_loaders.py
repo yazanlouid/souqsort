@@ -4,14 +4,14 @@ from collections.abc import Callable
 from datetime import date, time
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from pydantic import ValidationError
 
-from helpers import SAMPLE_PRODUCT_COUNT
+from helpers import NO_ATTRIBUTES, SAMPLE_PRODUCT_COUNT
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
-from souqsort.models import GccConfig, Product, ProductName
+from souqsort.models import AttributeName, GccConfig, Product, ProductAttributes, ProductName
 
 WriteJson = Callable[[Any], Path]
 Raw = dict[str, Any]
@@ -97,7 +97,7 @@ def test_sample_catalogue_loads(catalogue_path: Path) -> None:
     assert headphones.base_price == Decimal("149.99")
     assert headphones.unit_cost == Decimal("62.00")
     assert headphones.weight_kg == Decimal("0.35")
-    assert headphones.attributes["contains_lithium_battery"] is True
+    assert headphones.attributes.contains_lithium_battery is True
 
 
 def test_sample_config_loads(config_path: Path) -> None:
@@ -164,8 +164,8 @@ def test_catalogue_covers_spec_cases(catalogue_path: Path, config_path: Path) ->
     assert any(p.weight_kg >= 10 for p in products), "heavy item"
     assert any(p.currency == "USD" and p.base_price < 10 for p in products), "cheap item"
     assert sum(p.name.ar is None for p in products) >= 2
-    assert any(p.attributes.get("contains_alcohol") for p in products)
-    assert any(p.attributes.get("contains_pork") for p in products)
+    assert any(p.attributes.contains_alcohol for p in products)
+    assert any(p.attributes.contains_pork for p in products)
 
     categories = {p.category for p in products}
     assert len(categories) >= 4
@@ -237,7 +237,7 @@ def test_python_float_rejected_for_money() -> None:
             currency="USD",
             unit_cost=Decimal("1.00"),
             weight_kg=Decimal("0"),
-            attributes={},
+            attributes=NO_ATTRIBUTES,
         )
 
 
@@ -251,7 +251,7 @@ def test_python_decimal_accepted_for_money() -> None:
         currency="USD",
         unit_cost=Decimal("1.00"),
         weight_kg=Decimal("0"),
-        attributes={},
+        attributes=NO_ATTRIBUTES,
     )
     assert product.base_price == Decimal("1.50")
 
@@ -371,6 +371,101 @@ def test_non_boolean_attribute_rejected(
 ) -> None:
     _product(raw_catalogue)["attributes"]["contains_alcohol"] = value
     _reject_catalogue(write_json, raw_catalogue, "contains_alcohol")
+
+
+# --- ProductAttributes: a fixed schema (SPEC §6.1, M9) -----------------------------------
+
+
+def test_missing_attribute_rejected(write_json: WriteJson, raw_catalogue: Raw) -> None:
+    del _product(raw_catalogue)["attributes"]["contains_pork"]
+    _reject_catalogue(write_json, raw_catalogue, "contains_pork", "Field required")
+
+
+def test_unknown_attribute_rejected(write_json: WriteJson, raw_catalogue: Raw) -> None:
+    _product(raw_catalogue)["attributes"]["contains_nuts"] = False
+    _reject_catalogue(write_json, raw_catalogue, "contains_nuts", "Extra inputs")
+
+
+def test_attribute_names_are_exactly_the_attribute_fields() -> None:
+    assert get_args(AttributeName) == tuple(ProductAttributes.model_fields)
+
+
+@pytest.mark.parametrize("name", get_args(AttributeName))
+def test_has_reads_the_named_attribute(name: AttributeName) -> None:
+    only_this = NO_ATTRIBUTES.model_copy(update={name: True})
+    assert only_this.has(name) is True
+    assert NO_ATTRIBUTES.has(name) is False
+    assert [other for other in get_args(AttributeName) if only_this.has(other)] == [name]
+
+
+# --- CategoryName: lowercase, so an override never misses (issue #1) ---------------------
+
+
+@pytest.mark.parametrize(
+    "category", ["Fashion", "FASHION", "fashion wear", "fashion-wear", "1fashion", "_fashion", ""]
+)
+def test_category_that_is_not_lowercase_snake_case_rejected(
+    write_json: WriteJson, raw_catalogue: Raw, category: str
+) -> None:
+    _product(raw_catalogue, BAG)["category"] = category
+    _reject_catalogue(write_json, raw_catalogue, "category", "should match pattern")
+
+
+@pytest.mark.parametrize("category", ["fashion", "home_audio", "a1"])
+def test_lowercase_category_accepted(
+    write_json: WriteJson, raw_catalogue: Raw, category: str
+) -> None:
+    _product(raw_catalogue, BAG)["category"] = category
+    bag = next(p for p in load_catalogue(write_json(raw_catalogue)).products if p.sku == BAG)
+    assert bag.category == category
+
+
+def test_sample_markets_ban_the_attributes_in_the_spec(config_path: Path) -> None:
+    markets = load_gcc_config(config_path).markets
+    assert {code: market.compliance.banned_attributes for code, market in markets.items()} == {
+        "KSA": ("contains_alcohol", "contains_pork"),
+        "UAE": ("contains_pork",),
+        "KWT": ("contains_alcohol", "contains_pork"),
+    }
+    assert all(market.compliance.source for market in markets.values())
+
+
+# --- ComplianceConfig (SPEC §6.2, M9) -----------------------------------------------------
+
+
+def test_market_without_compliance_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    del _ksa(raw_config)["compliance"]
+    _reject_config(write_json, raw_config, "compliance", "Field required")
+
+
+def test_unknown_banned_attribute_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["compliance"]["banned_attributes"] = ["contains_pork", "contains_porc"]
+    _reject_config(write_json, raw_config, "banned_attributes", "contains_porc")
+
+
+def test_duplicate_banned_attribute_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    banned = ["contains_pork", "contains_alcohol", "contains_pork"]
+    _ksa(raw_config)["compliance"]["banned_attributes"] = banned
+    _reject_config(write_json, raw_config, "duplicate banned attribute", "contains_pork")
+
+
+def test_empty_compliance_source_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["compliance"]["source"] = ""
+    _reject_config(write_json, raw_config, "compliance.source")
+
+
+def test_nothing_banned_accepted(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["compliance"]["banned_attributes"] = []
+    assert _load_config(write_json, raw_config).markets["KSA"].compliance.banned_attributes == ()
+
+
+@pytest.mark.parametrize("key", ["Fashion", "FASHION", "fashion wear"])
+def test_category_override_key_that_is_not_lowercase_rejected(
+    write_json: WriteJson, raw_config: Raw, key: str
+) -> None:
+    overrides = _ksa(raw_config)["customs"]["category_overrides"]
+    overrides[key] = overrides.pop("fashion")
+    _reject_config(write_json, raw_config, "category_overrides", key, "should match pattern")
 
 
 # --- Catalogue: unique SKUs ---------------------------------------------------------------

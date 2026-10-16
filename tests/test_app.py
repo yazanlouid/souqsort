@@ -17,15 +17,14 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from helpers import SAMPLE_PRODUCT_COUNT, decimal_places
-from souqsort.display import display_summary, grid_rows
+from helpers import FOR_SALE_COUNTS, decimal_places
+from souqsort.display import display_summary, excluded_grid_rows, grid_rows
 from souqsort.loaders import load_gcc_config
 from souqsort.models import Catalogue, GccConfig
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     duty_adjustment_from_points,
-    localise_catalogue,
-    summarise_catalogue,
+    localise_and_summarise,
 )
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py"
@@ -38,6 +37,8 @@ LIP_BALM = "BEAU-LIP-040"
 SERUM = "BEAU-SRM-041"
 LICENCE = "DIGI-LIC-050"
 TEA = "GROC-TEA-060"
+VANILLA = "GROC-VAN-061"
+GUMMY_BEARS = "GROC-GUM-062"
 
 # Grid columns.
 SKU, NAME, PRICE, MARGIN, DELIVERY, FLAGS = COLUMNS = (
@@ -53,8 +54,13 @@ SKU, NAME, PRICE, MARGIN, DELIVERY, FLAGS = COLUMNS = (
 AVERAGE_MARGIN = "Average margin"
 FLAGGED = "Flagged products"
 PRICE_CHANGE = "Average price change vs 0 pp"
+NOT_SOLD = "Not sold in KSA"
 
-SCOPE_NOTE = f"All {SAMPLE_PRODUCT_COUNT} products in KSA; search filters the table only"
+# The table of products the market does not sell, under the grid.
+NOT_SOLD_COLUMNS = ("SKU", "Name", "Reason")
+KSA_FOR_SALE = FOR_SALE_COUNTS["KSA"]
+
+SCOPE_NOTE = "All 11 products for sale in KSA; search filters the table only"
 
 # The moment the dashboard is opened: Sun 10:00 in Riyadh, before the cutoff (SPEC §8.1 row 1).
 OPENED_AT = datetime(2026, 10, 11, 7, 0, tzinfo=UTC)
@@ -78,11 +84,20 @@ def app() -> AppTest:
 
 
 def _grid(at: AppTest) -> pd.DataFrame:
-    """The data sent to the one grid on the page."""
+    """The data sent to the main grid: the first table on the page."""
     assert not at.exception, at.exception
     assert not at.error, [error.value for error in at.error]
-    (grid,) = at.dataframe
-    frame: pd.DataFrame = grid.value
+    frame: pd.DataFrame = at.dataframe[0].value
+    return frame
+
+
+def _not_sold(at: AppTest) -> pd.DataFrame | None:
+    """The table of products the market does not sell, or None when it is not shown."""
+    assert not at.exception, at.exception
+    assert len(at.dataframe) <= 2
+    if len(at.dataframe) < 2:
+        return None
+    frame: pd.DataFrame = at.dataframe[1].value
     return frame
 
 
@@ -122,22 +137,24 @@ def test_app_starts_and_shows_every_product(app: AppTest, catalogue: Catalogue) 
     frame = _grid(app)
 
     assert list(frame.columns) == list(COLUMNS)
-    assert list(frame[SKU]) == [product.sku for product in catalogue.products]
-    assert len(frame) == SAMPLE_PRODUCT_COUNT
+    not_sold = (VANILLA, GUMMY_BEARS)
+    assert list(frame[SKU]) == [p.sku for p in catalogue.products if p.sku not in not_sold]
+    assert len(frame) == KSA_FOR_SALE
 
 
 def test_headline_metrics_on_first_load(app: AppTest) -> None:
     assert _metrics(app) == {
-        AVERAGE_MARGIN: "65.6%",
+        AVERAGE_MARGIN: "64.6%",  # over the 11 products for sale
         FLAGGED: "2",
         PRICE_CHANGE: "0.0%",
+        NOT_SOLD: "2",
     }
 
 
 def test_grid_shows_what_the_engine_returns(
     app: AppTest, catalogue: Catalogue, config: GccConfig
 ) -> None:
-    expected = grid_rows(localise_catalogue(catalogue.products, config, "KSA", OPENED_AT))
+    expected = grid_rows(localise_and_summarise(catalogue.products, config, "KSA", OPENED_AT).items)
 
     shown = list(_grid(app).itertuples(index=False, name=None))
 
@@ -225,20 +242,20 @@ def test_moving_the_duty_slider_changes_prices(app: AppTest) -> None:
 def test_grid_and_metrics_follow_the_engine_at_any_slider_value(
     app: AppTest, catalogue: Catalogue, config: GccConfig, points: int
 ) -> None:
-    baseline = localise_catalogue(catalogue.products, config, "KSA", OPENED_AT)
-    adjusted = localise_catalogue(
+    adjusted = localise_and_summarise(
         catalogue.products, config, "KSA", OPENED_AT, duty_adjustment_from_points(points)
     )
-    summary = display_summary(summarise_catalogue(adjusted, baseline))
+    summary = display_summary(adjusted.summary)
 
     app.slider(key="duty_points").set_value(points).run()
 
     shown = list(_grid(app).itertuples(index=False, name=None))
-    assert shown == [astuple(row) for row in grid_rows(adjusted)]
+    assert shown == [astuple(row) for row in grid_rows(adjusted.items)]
     assert _metrics(app) == {
         AVERAGE_MARGIN: summary.average_margin,
         FLAGGED: summary.flagged_products,
         PRICE_CHANGE: summary.average_price_change,
+        NOT_SOLD: str(len(adjusted.excluded)),
     }
 
 
@@ -246,8 +263,8 @@ def test_price_change_metric_reacts_to_the_slider(app: AppTest) -> None:
     assert _metrics(app)[PRICE_CHANGE] == "0.0%"
 
     app.slider(key="duty_points").set_value(3).run()
-    assert _metrics(app)[PRICE_CHANGE] == "+2.2%"
-    assert _metrics(app)[AVERAGE_MARGIN] == "65.3%"  # barely moves: duty is passed through
+    assert _metrics(app)[PRICE_CHANGE] == "+2.3%"
+    assert _metrics(app)[AVERAGE_MARGIN] == "64.5%"  # barely moves: duty is passed through
 
     app.slider(key="duty_points").set_value(20).run()
     assert _metrics(app)[PRICE_CHANGE] == "+18.6%"
@@ -298,7 +315,7 @@ def test_price_column_sorts_by_value_not_as_text(app: AppTest) -> None:
 
 def test_price_and_margin_columns_have_a_fixed_number_of_decimals(app: AppTest) -> None:
     # The column settings travel to the browser as JSON next to the data.
-    (grid,) = app.dataframe
+    grid = app.dataframe[0]
     settings = grid.proto.columns
 
     assert "%.2f" in settings  # shelf price: the currency's minor units
@@ -318,7 +335,7 @@ def test_flags_are_shown_as_labels(app: AppTest) -> None:
 def test_flags_column_has_a_fixed_width(app: AppTest) -> None:
     # Left to size itself, a column can end up narrower than its text. AppTest cannot measure
     # pixels, so this checks only that a fixed width was asked for.
-    (grid,) = app.dataframe
+    grid = app.dataframe[0]
     settings = json.loads(grid.proto.columns)
 
     assert settings[FLAGS]["width"] in {"medium", "large"}  # 200 px or 400 px
@@ -348,7 +365,7 @@ def test_clearing_the_search_brings_every_row_back(app: AppTest) -> None:
 
     _search(app, "")
 
-    assert len(_grid(app)) == SAMPLE_PRODUCT_COUNT
+    assert len(_grid(app)) == KSA_FOR_SALE
 
 
 def test_search_with_no_match_shows_an_empty_grid_not_an_error(app: AppTest) -> None:
@@ -422,7 +439,9 @@ def test_order_pickers_are_in_market_local_time(
 def test_order_time_matches_the_engine_for_the_same_moment(
     app: AppTest, catalogue: Catalogue, config: GccConfig
 ) -> None:
-    expected = grid_rows(localise_catalogue(catalogue.products, config, "KSA", THU_EVENING))
+    expected = grid_rows(
+        localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING).items
+    )
 
     _order(app, date(2026, 10, 15), time(23, 59))
 
@@ -464,7 +483,7 @@ def test_opening_the_app_reads_the_clock_once_per_session() -> None:
     opened_at = at.session_state["opened_at"]
     assert not at.exception
     assert before <= opened_at <= after  # timezone-aware, or this comparison would raise
-    assert len(_grid(at)) == SAMPLE_PRODUCT_COUNT
+    assert len(_grid(at)) == KSA_FOR_SALE
 
     at.slider(key="duty_points").set_value(3).run()
 
@@ -546,9 +565,82 @@ def test_switching_markets_changes_the_currency_header_and_prices(
     assert list(frame.columns) == [SKU, NAME, price_column, MARGIN, DELIVERY, FLAGS]
     assert _column(app, price_column)[HEADPHONES] == headphones
     assert all(decimal_places(price) == places for price in frame[price_column])
-    (grid,) = app.dataframe
+    grid = app.dataframe[0]
     assert f"%.{places}f" in grid.proto.columns
-    assert f"All {SAMPLE_PRODUCT_COUNT} products in {market}" in _captions(app)
+    assert f"All {FOR_SALE_COUNTS[market]} products for sale in {market}" in _captions(app)
+
+
+# --- not sold (SPEC §7.6, §9.2; M9) -------------------------------------------------------
+
+
+def test_products_ksa_does_not_sell_are_listed_under_the_grid(app: AppTest) -> None:
+    table = _not_sold(app)
+
+    assert table is not None
+    assert list(table.columns) == list(NOT_SOLD_COLUMNS)
+    assert list(table.itertuples(index=False, name=None)) == [
+        (VANILLA, "Pure Vanilla Extract", "Contains alcohol"),
+        (GUMMY_BEARS, "Gummy Bears (pork gelatine)", "Contains pork"),
+    ]
+    assert "Not sold in KSA" in [subheader.value for subheader in app.subheader]
+
+
+def test_not_sold_table_shows_what_the_engine_returns(
+    app: AppTest, catalogue: Catalogue, config: GccConfig
+) -> None:
+    excluded = localise_and_summarise(catalogue.products, config, "KSA", OPENED_AT).excluded
+    table = _not_sold(app)
+
+    assert table is not None
+    shown = list(table.itertuples(index=False, name=None))
+    assert shown == [astuple(row) for row in excluded_grid_rows(excluded)]
+
+
+def test_switching_to_the_uae_shows_one_product_not_sold(app: AppTest) -> None:
+    _select_market(app, "UAE")
+
+    assert _metrics(app)["Not sold in UAE"] == "1"
+    table = _not_sold(app)
+    assert table is not None
+    assert list(table[SKU]) == [GUMMY_BEARS]
+    assert "Not sold in UAE" in [subheader.value for subheader in app.subheader]
+
+
+def test_search_filters_the_grid_but_not_the_not_sold_table(app: AppTest) -> None:
+    _search(app, "headphones")
+
+    assert list(_grid(app)[SKU]) == [HEADPHONES]
+    table = _not_sold(app)
+    assert table is not None
+    assert list(table[SKU]) == [VANILLA, GUMMY_BEARS]
+    assert _metrics(app)[NOT_SOLD] == "2"
+
+
+def test_a_catalogue_of_only_banned_products_says_none_can_be_sold(
+    monkeypatch: pytest.MonkeyPatch, catalogue: Catalogue
+) -> None:
+    banned = [p for p in catalogue.products if p.sku in (VANILLA, GUMMY_BEARS)]
+    only_banned = catalogue.model_copy(update={"products": banned})
+
+    at = _run_with(monkeypatch, load_catalogue=lambda path: only_banned)
+
+    assert len(_grid(at)) == 0
+    assert [info.value for info in at.info] == ["No product in the catalogue can be sold in KSA."]
+    assert _metrics(at)[NOT_SOLD] == "2"
+    table = _not_sold(at)
+    assert table is not None
+    assert list(table[SKU]) == [VANILLA, GUMMY_BEARS]
+
+
+def test_a_market_that_bans_nothing_shows_no_not_sold_table(
+    monkeypatch: pytest.MonkeyPatch, zero_vat_config: GccConfig
+) -> None:
+    at = _run_with(monkeypatch, load_gcc_config=lambda path: zero_vat_config)
+
+    assert len(_grid(at)) == 13  # every sample product
+    assert _metrics(at)["Not sold in TEST-KWD"] == "0"
+    assert _not_sold(at) is None
+    assert not [s.value for s in at.subheader if s.value.startswith("Not sold")]
 
 
 # --- problems are shown as a message, not a traceback -------------------------------------
@@ -576,8 +668,9 @@ def test_empty_catalogue_says_so_instead_of_blaming_the_search(
 
     assert len(_grid(at)) == 0
     assert [info.value for info in at.info] == ["The catalogue has no products."]
-    assert _metrics(at) == {AVERAGE_MARGIN: "-", FLAGGED: "0", PRICE_CHANGE: "-"}
-    assert "All 0 products in KSA" in _captions(at)
+    assert _metrics(at) == {AVERAGE_MARGIN: "-", FLAGGED: "0", PRICE_CHANGE: "-", NOT_SOLD: "0"}
+    assert "All 0 products for sale in KSA" in _captions(at)
+    assert _not_sold(at) is None
 
 
 def test_config_with_no_markets_is_reported_as_a_bad_data_file(

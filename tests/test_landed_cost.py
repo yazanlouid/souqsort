@@ -8,7 +8,7 @@ import pytest
 from hypothesis import given, reject
 from hypothesis import strategies as st
 
-from helpers import decimal_places
+from helpers import NO_ATTRIBUTES, decimal_places
 from souqsort.models import Catalogue, FxTable, GccConfig, MarketConfig, Product, ProductName
 from souqsort.pricing.fx import convert
 from souqsort.pricing.landed_cost import PriceQuote, PriceStep, price_product
@@ -504,7 +504,7 @@ GENERATED_PRODUCTS = st.builds(
     currency=st.sampled_from(["USD", "GBP"]),
     unit_cost=PRICES,
     weight_kg=st.decimals(min_value=0, max_value=1000, places=3),
-    attributes=st.just({}),
+    attributes=st.just(NO_ATTRIBUTES),
 )
 
 # 0 to 100 percentage points, in steps of one basis point.

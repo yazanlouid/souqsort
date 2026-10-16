@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from souqsort.compliance import ExcludedProduct
 from souqsort.display import DisplayRow, display_rows
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
 from souqsort.logistics.calendar import in_market_time, to_market_time
@@ -22,7 +23,7 @@ from souqsort.pipeline import (
     LocalisationError,
     duty_adjustment_from_points,
     find_market,
-    localise_catalogue,
+    localise_and_summarise,
 )
 
 DEFAULT_CATALOGUE = Path("data/raw/global_products.json")
@@ -152,9 +153,9 @@ def _same_file(path: Path, other: Path) -> bool:
 
 
 @dataclass(frozen=True)
-class _TableColumn:
+class _TableColumn[R]:
     header: str
-    cell: Callable[[DisplayRow], str]
+    cell: Callable[[R], str]
     right_aligned: bool = False
 
 
@@ -166,8 +167,8 @@ def _summary_line(market: MarketConfig, ordered_at_local: datetime, duty_points:
     )
 
 
-def _table_lines(rows: Sequence[DisplayRow], currency_code: str) -> list[str]:
-    columns = (
+def _price_table(rows: Sequence[DisplayRow], currency_code: str) -> list[str]:
+    columns: tuple[_TableColumn[DisplayRow], ...] = (
         _TableColumn("SKU", lambda row: row.sku),
         _TableColumn("Name", lambda row: row.name_en),
         _TableColumn(f"Shelf price ({currency_code})", lambda row: row.shelf_price, True),
@@ -175,6 +176,20 @@ def _table_lines(rows: Sequence[DisplayRow], currency_code: str) -> list[str]:
         _TableColumn("Delivery", lambda row: row.delivery_date),
         _TableColumn("Flags", lambda row: ",".join(row.flags) or "-"),
     )
+    return _table_lines(columns, rows)
+
+
+def _not_sold_table(excluded: Sequence[ExcludedProduct]) -> list[str]:
+    columns: tuple[_TableColumn[ExcludedProduct], ...] = (
+        _TableColumn("SKU", lambda item: item.sku),
+        _TableColumn("Name", lambda item: item.name_en),
+        _TableColumn("Reasons", lambda item: ",".join(item.reasons)),
+    )
+    return _table_lines(columns, excluded)
+
+
+def _table_lines[R](columns: Sequence[_TableColumn[R]], rows: Sequence[R]) -> list[str]:
+    """A header, a rule and one line per row, with columns two spaces apart."""
     body = [[column.cell(row) for column in columns] for row in rows]
     widths = [
         max([len(column.header), *(len(cells[position]) for cells in body)])
@@ -268,14 +283,14 @@ def main(argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = _ut
     ordered_at = now() if args.ordered_at is None else in_market_time(args.ordered_at, market)
 
     try:
-        items = localise_catalogue(
+        localised = localise_and_summarise(
             catalogue.products,
             config,
             market.code,
             ordered_at,
             duty_adjustment_from_points(duty_points),  # to a fraction, at the boundary
         )
-        rows = display_rows(items)
+        rows = display_rows(localised.items)
     except LocalisationError as exc:
         return _fail(str(exc))
 
@@ -284,7 +299,12 @@ def main(argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = _ut
 
     _print(_summary_line(market, ordered_at_local, duty_points))
     _print()
-    _print("\n".join(_table_lines(rows, market.currency.code)))
+    _print("\n".join(_price_table(rows, market.currency.code)))
+
+    if localised.excluded:
+        _print()
+        _print(f"Not sold in {market.code} ({len(localised.excluded)}):")
+        _print("\n".join(_not_sold_table(localised.excluded)))
 
     if csv_path is not None:
         try:

@@ -3,20 +3,25 @@
 from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import get_args
 
 import pytest
 
 from helpers import SAMPLE_PRODUCT_COUNT, decimal_places
+from souqsort.compliance import ExcludedProduct
 from souqsort.display import (
+    ATTRIBUTE_LABELS,
     DisplayRow,
     DisplaySummary,
+    ExcludedGridRow,
     GridRow,
     display_rows,
     display_summary,
+    excluded_grid_rows,
     grid_rows,
     search_products,
 )
-from souqsort.models import Catalogue, GccConfig
+from souqsort.models import AttributeName, Catalogue, GccConfig
 from souqsort.pipeline import (
     CatalogueSummary,
     LocalisationError,
@@ -298,6 +303,46 @@ def test_grid_flag_labels(
 ) -> None:
     (row,) = grid_rows([replace(headphones, flags=flags)])
     assert row.flags == expected
+
+
+# --- not sold: reasons as labels a person can read (SPEC §7.6, M9) -----------------------
+
+
+def test_every_attribute_has_a_label() -> None:
+    assert set(ATTRIBUTE_LABELS) == set(get_args(AttributeName))
+    assert ATTRIBUTE_LABELS == {
+        "contains_alcohol": "Contains alcohol",
+        "contains_pork": "Contains pork",
+        "contains_lithium_battery": "Contains lithium battery",
+    }
+
+
+def test_excluded_grid_rows_show_labels_in_the_same_order() -> None:
+    excluded = (
+        ExcludedProduct(VANILLA, "Pure Vanilla Extract", ("contains_alcohol",)),
+        ExcludedProduct(GUMMY_BEARS, "Gummy Bears (pork gelatine)", ("contains_pork",)),
+    )
+
+    assert excluded_grid_rows(excluded) == [
+        ExcludedGridRow(VANILLA, "Pure Vanilla Extract", "Contains alcohol"),
+        ExcludedGridRow(GUMMY_BEARS, "Gummy Bears (pork gelatine)", "Contains pork"),
+    ]
+
+
+def test_several_reasons_are_joined_in_the_markets_order() -> None:
+    both = ExcludedProduct("TEST-001", "Test", ("contains_pork", "contains_alcohol"))
+    (row,) = excluded_grid_rows([both])
+    assert row.reasons == "Contains pork, Contains alcohol"
+
+
+def test_no_excluded_products_gives_no_rows() -> None:
+    assert excluded_grid_rows([]) == []
+
+
+def test_excluded_grid_row_is_frozen() -> None:
+    (row,) = excluded_grid_rows([ExcludedProduct("TEST-001", "Test", ("contains_pork",))])
+    with pytest.raises(FrozenInstanceError):
+        row.reasons = ""  # type: ignore[misc]
 
 
 # --- search: SKU or English name ----------------------------------------------------------

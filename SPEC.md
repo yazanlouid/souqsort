@@ -1042,7 +1042,7 @@ Steps:
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet --project \"$CLAUDE_PROJECT_DIR\" python \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_python.py\"",
+            "command": "uv run --quiet --no-sync --project \"$CLAUDE_PROJECT_DIR\" python \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_python.py\"",
             "timeout": 60
           }
         ]
@@ -1052,7 +1052,7 @@ Steps:
 }
 ```
 
-On Windows, Claude Code runs this through Git Bash, where `uv` is on the PATH.
+On Windows, Claude Code runs this through Git Bash, where `uv` is on the PATH. `--no-sync` because the hook runs after every edit, including one to `pyproject.toml`: without it, `uv run` would rewrite `uv.lock` and install packages as a side effect.
 
 ### `.claude/hooks/format_python.py` (M9)
 
@@ -1076,9 +1076,11 @@ from pathlib import Path
 
 
 def main() -> int:
+    # Bytes, not sys.stdin: the event is UTF-8, and Windows would decode text in its code page,
+    # garbling a non-ASCII path. ValueError covers bad JSON and bytes that are not UTF-8.
     try:
-        event = json.load(sys.stdin)
-    except json.JSONDecodeError:
+        event = json.load(sys.stdin.buffer)
+    except ValueError:
         return 0
     tool_input = event.get("tool_input") if isinstance(event, dict) else None
     file_path = tool_input.get("file_path") if isinstance(tool_input, dict) else None
