@@ -53,6 +53,8 @@ Weekday = Literal["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 CategoryName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
 # The fields of ProductAttributes; a test keeps the two in step.
 AttributeName = Literal["contains_alcohol", "contains_pork", "contains_lithium_battery"]
+# How an order travels: a scenario parameter, like the duty adjustment; the config never stores it.
+ShippingModel = Literal["consolidated", "parcel"]
 
 
 class _Model(BaseModel):

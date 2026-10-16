@@ -7,7 +7,8 @@ from decimal import Decimal, DecimalException
 
 from souqsort.compliance import ExcludedProduct, screen_products
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
-from souqsort.models import FxTable, GccConfig, MarketConfig, Product
+from souqsort.models import FxTable, GccConfig, MarketConfig, Product, ShippingModel
+from souqsort.pricing.customs import require_shipping
 from souqsort.pricing.landed_cost import PriceQuote, price_product
 from souqsort.pricing.money import require_decimal
 
@@ -100,10 +101,14 @@ def _flags(product: Product) -> tuple[str, ...]:
 
 
 def _quote(
-    product: Product, market: MarketConfig, fx: FxTable, duty_adjustment: Decimal
+    product: Product,
+    market: MarketConfig,
+    fx: FxTable,
+    duty_adjustment: Decimal,
+    shipping: ShippingModel,
 ) -> PriceQuote:
     try:
-        return price_product(product, market, fx, duty_adjustment)
+        return price_product(product, market, fx, duty_adjustment, shipping)
     except (ValueError, ArithmeticError) as exc:
         raise _about(product.sku, exc) from exc
 
@@ -114,22 +119,26 @@ def localise_catalogue(
     market_code: str,
     ordered_at: datetime,
     duty_adjustment: Decimal = Decimal("0"),
+    shipping: ShippingModel = "consolidated",
 ) -> list[LocalisedProduct]:
     """Price every product for a market and estimate its delivery, in catalogue order.
 
     It prices exactly the products it is given and does not screen them for compliance;
     anything that shows a market uses ``localise_and_summarise``. ``ordered_at`` must be
     timezone-aware. ``duty_adjustment`` is a fraction added to every
-    duty rate (``Decimal("0.03")`` = +3 percentage points).
+    duty rate (``Decimal("0.03")`` = +3 percentage points). ``shipping`` is the shipping model
+    every product is priced with (``"consolidated"`` or ``"parcel"``).
 
     Raises ``LocalisationError``, with no partial result, if the market is not in the config,
     if the delivery date cannot be estimated (a naive or out-of-range ``ordered_at``), or if a
     product cannot be priced. Other exceptions are bugs and are not wrapped.
 
     Raises a plain ``TypeError`` or ``ValueError``, before anything else is looked at, if
-    ``duty_adjustment`` is not a finite ``Decimal`` >= 0.
+    ``duty_adjustment`` is not a finite ``Decimal`` >= 0, and then a plain ``ValueError`` if
+    ``shipping`` is not a shipping model.
     """
     _require_duty_adjustment(duty_adjustment)
+    require_shipping(shipping)
     market = find_market(config, market_code)
 
     # The estimate depends only on the order time and the market, so every product shares it.
@@ -144,7 +153,7 @@ def localise_catalogue(
             name_en=product.name.en,
             name_ar=product.name.ar,
             category=product.category,
-            quote=_quote(product, market, config.fx, duty_adjustment),
+            quote=_quote(product, market, config.fx, duty_adjustment, shipping),
             delivery=delivery,
             flags=_flags(product),
         )
@@ -215,8 +224,8 @@ class LocalisedCatalogue:
     """A catalogue localised for a market, with its headline figures.
 
     ``items`` are the products for sale and ``excluded`` those the market does not sell, each
-    in catalogue order. ``summary`` covers ``items`` only, compared with the same products at
-    no duty adjustment.
+    in catalogue order. ``summary`` covers ``items`` only, compared with the same products in
+    the same shipping model at no duty adjustment.
     """
 
     items: tuple[LocalisedProduct, ...]
@@ -230,25 +239,28 @@ def localise_and_summarise(
     market_code: str,
     ordered_at: datetime,
     duty_adjustment: Decimal = Decimal("0"),
+    shipping: ShippingModel = "consolidated",
 ) -> LocalisedCatalogue:
     """Screen a catalogue for a market, localise what is for sale and summarise it.
 
     A product the market does not allow is never priced: it is returned in ``excluded`` with
     its reasons. The rest are localised as ``localise_catalogue`` does. The price change in the
     summary is measured against a baseline built here: the same products for sale, config,
-    market and order time with no duty adjustment. Callers do not build or pair the baseline
-    themselves.
+    market, order time and shipping model with no duty adjustment. Callers do not build or
+    pair the baseline themselves.
 
-    Checks ``duty_adjustment`` first, then the market, then screens, then prices, so a bad
-    argument fails the same way whatever the catalogue holds. Raises what
+    Checks ``duty_adjustment`` first, then ``shipping``, then the market, then screens, then
+    prices, so a bad argument fails the same way whatever the catalogue holds. Raises what
     ``localise_catalogue`` raises.
     """
     _require_duty_adjustment(duty_adjustment)
+    require_shipping(shipping)
     market = find_market(config, market_code)
     screen = screen_products(products, market)
 
-    items = localise_catalogue(screen.sellable, config, market.code, ordered_at, duty_adjustment)
-    baseline = localise_catalogue(screen.sellable, config, market.code, ordered_at)
+    sellable, code = screen.sellable, market.code
+    items = localise_catalogue(sellable, config, code, ordered_at, duty_adjustment, shipping)
+    baseline = localise_catalogue(sellable, config, code, ordered_at, Decimal("0"), shipping)
     return LocalisedCatalogue(
         items=tuple(items),
         excluded=screen.excluded,

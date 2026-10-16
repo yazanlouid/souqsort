@@ -823,6 +823,83 @@ def test_excluded_is_a_tuple(catalogue: Catalogue, config: GccConfig) -> None:
         result.excluded = ()  # type: ignore[misc]
 
 
+# --- shipping model (SPEC §7.7, M10) ------------------------------------------------------
+
+
+def test_shipping_is_passed_to_pricing(catalogue: Catalogue, config: GccConfig) -> None:
+    items = localise_catalogue(
+        catalogue.products, config, "KSA", THU_EVENING, Decimal("0"), "parcel"
+    )
+
+    assert {item.quote.shipping for item in items} == {"parcel"}
+    by_sku = _by_sku(items)
+    assert str(by_sku[HEADPHONES].quote.shelf_price) == "660.95"  # SPEC §7.8 E
+    assert by_sku[HEADPHONES].quote.duty_waived is True
+
+
+def test_shipping_defaults_to_consolidated(
+    catalogue: Catalogue, config: GccConfig, localised: list[LocalisedProduct]
+) -> None:
+    explicit = localise_catalogue(
+        catalogue.products, config, "KSA", THU_EVENING, Decimal("0"), "consolidated"
+    )
+
+    assert explicit == localised
+    assert {item.quote.shipping for item in localised} == {"consolidated"}
+
+
+def test_shipping_does_not_change_delivery(
+    catalogue: Catalogue, config: GccConfig, localised: list[LocalisedProduct]
+) -> None:
+    parcels = localise_catalogue(
+        catalogue.products, config, "KSA", THU_EVENING, Decimal("0"), "parcel"
+    )
+    assert [item.delivery for item in parcels] == [item.delivery for item in localised]
+
+
+def test_localise_and_summarise_compares_with_the_same_shipping_model_at_0_points(
+    for_sale: list[Product], config: GccConfig
+) -> None:
+    adjusted = localise_catalogue(for_sale, config, "KSA", THU_EVENING, Decimal("0.03"), "parcel")
+    baseline = localise_catalogue(for_sale, config, "KSA", THU_EVENING, Decimal("0"), "parcel")
+
+    result = localise_and_summarise(for_sale, config, "KSA", THU_EVENING, Decimal("0.03"), "parcel")
+
+    assert list(result.items) == adjusted
+    assert result.summary == summarise_catalogue(adjusted, baseline)
+
+
+def test_parcel_at_0_points_shows_no_price_change(catalogue: Catalogue, config: GccConfig) -> None:
+    result = localise_and_summarise(
+        catalogue.products, config, "KSA", THU_EVENING, Decimal("0"), "parcel"
+    )
+
+    # Compared with parcel prices at 0 pp, not with consolidated ones.
+    assert result.summary.average_price_change_pct == 0
+    assert {item.quote.shipping for item in result.items} == {"parcel"}
+
+
+@pytest.mark.parametrize("shipping", ["bulk", "Parcel", "", None])
+def test_bad_shipping_is_a_plain_value_error_checked_before_anything_else(
+    products: dict[str, Product], config: GccConfig, shipping: Any
+) -> None:
+    banned_only = [products[VANILLA], products[GUMMY_BEARS]]
+
+    for localise in (localise_catalogue, localise_and_summarise):
+        # An unknown market and banned products: the shipping model still fails first.
+        with pytest.raises(ValueError, match="shipping") as excinfo:
+            localise(banned_only, config, "ZZZ", THU_EVENING, Decimal("0"), shipping)
+        assert type(excinfo.value) is ValueError
+        assert VANILLA not in str(excinfo.value)
+
+
+def test_duty_adjustment_is_checked_before_shipping(config: GccConfig) -> None:
+    bad_shipping: Any = "bulk"
+
+    with pytest.raises(ValueError, match="duty_adjustment"):
+        localise_and_summarise([], config, "KSA", THU_EVENING, Decimal("-0.01"), bad_shipping)
+
+
 # --- result objects -----------------------------------------------------------------------
 
 

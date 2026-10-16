@@ -2,14 +2,25 @@
 
 from dataclasses import FrozenInstanceError
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from hypothesis import given, reject
 from hypothesis import strategies as st
 
-from helpers import NO_ATTRIBUTES, decimal_places
-from souqsort.models import Catalogue, FxTable, GccConfig, MarketConfig, Product, ProductName
+from helpers import decimal_places
+from souqsort.models import (
+    AttributeName,
+    Catalogue,
+    DeMinimisRule,
+    FxTable,
+    GccConfig,
+    MarketConfig,
+    Product,
+    ProductAttributes,
+    ProductName,
+    ShippingModel,
+)
 from souqsort.pricing.fx import convert
 from souqsort.pricing.landed_cost import PriceQuote, PriceStep, price_product
 from souqsort.pricing.money import format_money
@@ -43,11 +54,15 @@ def _without_charm(market: MarketConfig) -> MarketConfig:
 
 
 def _quote_or_none(
-    product: Product, market: MarketConfig, fx: FxTable, duty_adjustment: Decimal
+    product: Product,
+    market: MarketConfig,
+    fx: FxTable,
+    duty_adjustment: Decimal,
+    shipping: ShippingModel = "consolidated",
 ) -> PriceQuote | None:
     """The quote, or None if the product is rejected because it earns no goods revenue."""
     try:
-        return price_product(product, market, fx, duty_adjustment)
+        return price_product(product, market, fx, duty_adjustment, shipping)
     except ValueError as exc:
         if product.sku not in str(exc):
             raise
@@ -149,6 +164,11 @@ def test_worked_example_a_headphones_in_ksa(
     assert quote.gross == Decimal("686.305265625")
     assert str(quote.shelf_price) == "686.95"
     assert _dp(quote.margin_pct, 3) == Decimal("0.587")
+    assert (quote.shipping, quote.duty_rate, quote.duty_waived) == (
+        "consolidated",
+        Decimal("0.05"),
+        False,
+    )
     assert quote.steps == ()
 
 
@@ -166,6 +186,20 @@ def test_worked_example_b_bag_in_ksa(
     assert _dp(quote.gross, 8) == Decimal("594.39471141")
     assert str(quote.shelf_price) == "594.95"
     assert _dp(quote.margin_pct, 3) == Decimal("0.646")
+    assert (quote.shipping, quote.duty_rate, quote.duty_waived) == (
+        "consolidated",
+        Decimal("0.12"),
+        False,
+    )
+
+
+def test_duty_rate_includes_the_duty_adjustment(
+    products: dict[str, Product], ksa: MarketConfig, fx: FxTable
+) -> None:
+    quote = price_product(products[BAG], ksa, fx, Decimal("0.03"))
+
+    assert quote.duty_rate == Decimal("0.15")  # 12% fashion + 3 pp
+    assert quote.duty == (quote.goods + quote.freight) * quote.duty_rate
 
 
 @pytest.mark.parametrize(
@@ -504,11 +538,38 @@ GENERATED_PRODUCTS = st.builds(
     currency=st.sampled_from(["USD", "GBP"]),
     unit_cost=PRICES,
     weight_kg=st.decimals(min_value=0, max_value=1000, places=3),
-    attributes=st.just(NO_ATTRIBUTES),
+    attributes=st.builds(
+        ProductAttributes,
+        contains_alcohol=st.booleans(),
+        contains_pork=st.booleans(),
+        contains_lithium_battery=st.booleans(),
+    ),
 )
 
 # 0 to 100 percentage points, in steps of one basis point.
 ADJUSTMENTS = st.integers(min_value=0, max_value=10_000).map(lambda bp: Decimal(bp).scaleb(-4))
+
+SHIPPING_MODELS: st.SearchStrategy[ShippingModel] = st.sampled_from(get_args(ShippingModel))
+
+# Any de minimis rule, or none. Thresholds span the generated CIFs, so both sides are reached.
+DE_MINIMIS_RULES = st.one_of(
+    st.none(),
+    st.builds(
+        DeMinimisRule,
+        threshold=st.decimals(min_value=Decimal("0.01"), max_value=Decimal("1000000"), places=2),
+        applies=st.sampled_from(["below", "at_or_below"]),
+        excluded_attributes=st.lists(st.sampled_from(get_args(AttributeName)), unique=True).map(
+            tuple
+        ),
+        source=st.just("generated rule"),
+    ),
+)
+
+
+def _with_de_minimis(market: MarketConfig, rule: DeMinimisRule | None) -> MarketConfig:
+    """A copy of the market with another de minimis rule; the original is untouched."""
+    customs = market.customs.model_copy(update={"de_minimis": rule})
+    return market.model_copy(update={"customs": customs})
 
 
 def _generated_market(
@@ -525,6 +586,8 @@ def _generated_market(
     adjustments=st.tuples(ADJUSTMENTS, ADJUSTMENTS),
     use_zero_vat_market=st.booleans(),
     with_charm=st.booleans(),
+    shipping=SHIPPING_MODELS,
+    rule=DE_MINIMIS_RULES,
 )
 def test_higher_duty_adjustment_never_lowers_shelf_price(
     config: GccConfig,
@@ -533,18 +596,22 @@ def test_higher_duty_adjustment_never_lowers_shelf_price(
     adjustments: tuple[Decimal, Decimal],
     use_zero_vat_market: bool,
     with_charm: bool,
+    shipping: ShippingModel,
+    rule: DeMinimisRule | None,
 ) -> None:
     market, fx = _generated_market(config, zero_vat_config, use_zero_vat_market, with_charm)
+    market = _with_de_minimis(market, rule)
     lower, higher = sorted(adjustments)
 
-    low = _quote_or_none(product, market, fx, lower)
-    high = _quote_or_none(product, market, fx, higher)
+    low = _quote_or_none(product, market, fx, lower, shipping)
+    high = _quote_or_none(product, market, fx, higher, shipping)
     if low is None or high is None:
         reject()  # no goods revenue at one of the two rates: nothing to compare
 
     assert high.shelf_price >= low.shelf_price
     assert decimal_places(low.shelf_price) == market.currency.minor_units
     assert decimal_places(high.shelf_price) == market.currency.minor_units
+    assert high.duty_waived is low.duty_waived  # the adjustment never decides de minimis
 
 
 @given(
@@ -552,6 +619,33 @@ def test_higher_duty_adjustment_never_lowers_shelf_price(
     duty_adjustment=ADJUSTMENTS,
     use_zero_vat_market=st.booleans(),
     with_charm=st.booleans(),
+    rules=st.tuples(DE_MINIMIS_RULES, DE_MINIMIS_RULES),
+)
+def test_consolidated_quotes_never_depend_on_the_de_minimis_rule(
+    config: GccConfig,
+    zero_vat_config: GccConfig,
+    product: Product,
+    duty_adjustment: Decimal,
+    use_zero_vat_market: bool,
+    with_charm: bool,
+    rules: tuple[DeMinimisRule | None, DeMinimisRule | None],
+) -> None:
+    market, fx = _generated_market(config, zero_vat_config, use_zero_vat_market, with_charm)
+    first, second = (_with_de_minimis(market, rule) for rule in rules)
+
+    quote = _quote_or_none(product, first, fx, duty_adjustment)
+
+    assert _quote_or_none(product, second, fx, duty_adjustment) == quote
+    if quote is not None:
+        assert quote.duty_waived is False
+
+
+@given(
+    product=GENERATED_PRODUCTS,
+    duty_adjustment=ADJUSTMENTS,
+    use_zero_vat_market=st.booleans(),
+    with_charm=st.booleans(),
+    shipping=SHIPPING_MODELS,
 )
 def test_every_quote_has_a_positive_shelf_price_and_a_margin_below_one(
     config: GccConfig,
@@ -560,12 +654,13 @@ def test_every_quote_has_a_positive_shelf_price_and_a_margin_below_one(
     duty_adjustment: Decimal,
     use_zero_vat_market: bool,
     with_charm: bool,
+    shipping: ShippingModel,
 ) -> None:
     market, fx = _generated_market(config, zero_vat_config, use_zero_vat_market, with_charm)
 
     # Either a ValueError naming the SKU (checked in _quote_or_none) or a sound quote; never
     # a DivisionByZero, and never a margin above 100% from dividing by negative revenue.
-    quote = _quote_or_none(product, market, fx, duty_adjustment)
+    quote = _quote_or_none(product, market, fx, duty_adjustment, shipping)
     if quote is None:
         return
 
