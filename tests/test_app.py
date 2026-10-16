@@ -41,11 +41,12 @@ VANILLA = "GROC-VAN-061"
 GUMMY_BEARS = "GROC-GUM-062"
 
 # Grid columns.
-SKU, NAME, PRICE, MARGIN, DELIVERY, FLAGS = COLUMNS = (
+SKU, NAME, PRICE, MARGIN, DUTY, DELIVERY, FLAGS = COLUMNS = (
     "SKU",
     "Name",
     "Shelf price (SAR)",
     "Margin %",
+    "Duty",
     "Delivery",
     "Flags",
 )
@@ -61,6 +62,12 @@ NOT_SOLD_COLUMNS = ("SKU", "Name", "Reason")
 KSA_FOR_SALE = FOR_SALE_COUNTS["KSA"]
 
 SCOPE_NOTE = "All 11 products for sale in KSA; search filters the table only"
+
+SHIPPING_HELP = (
+    "Consolidated: orders travel as one commercial import, so de minimis never applies. "
+    "Direct parcel: each order is cleared on its own; under the market's threshold it pays no "
+    "duty, but parcel freight costs more per kg."
+)
 
 # The moment the dashboard is opened: Sun 10:00 in Riyadh, before the cutoff (SPEC §8.1 row 1).
 OPENED_AT = datetime(2026, 10, 11, 7, 0, tzinfo=UTC)
@@ -130,6 +137,10 @@ def _select_market(at: AppTest, code: str) -> AppTest:
     return at.selectbox(key="market").select(code).run()
 
 
+def _ship(at: AppTest, shipping: str) -> AppTest:
+    return at.radio(key="shipping").set_value(shipping).run()
+
+
 # --- first load ---------------------------------------------------------------------------
 
 
@@ -169,6 +180,7 @@ def test_worked_example_rows(app: AppTest) -> None:
         "Wireless Noise-Cancelling Headphones",
         Decimal("686.95"),
         Decimal("58.7"),
+        "5.0%",
         "2026-10-18",
         "",
     )
@@ -177,6 +189,7 @@ def test_worked_example_rows(app: AppTest) -> None:
         "Leather Crossbody Bag",
         Decimal("594.95"),
         Decimal("64.6"),
+        "12.0%",
         "2026-10-18",
         "No Arabic name",
     )
@@ -185,10 +198,11 @@ def test_worked_example_rows(app: AppTest) -> None:
 # --- sidebar ------------------------------------------------------------------------------
 
 
-def test_sidebar_holds_the_five_controls(app: AppTest) -> None:
+def test_sidebar_holds_the_six_controls(app: AppTest) -> None:
     sidebar = app.sidebar
 
     assert [widget.key for widget in sidebar.selectbox] == ["market"]
+    assert [widget.key for widget in sidebar.radio] == ["shipping"]
     assert [widget.key for widget in sidebar.slider] == ["duty_points"]
     assert [widget.key for widget in sidebar.date_input] == ["order_date"]
     assert [widget.key for widget in sidebar.time_input] == ["order_time"]
@@ -220,6 +234,113 @@ def test_time_picker_steps_by_one_minute(app: AppTest) -> None:
 
 def test_search_box_starts_empty(app: AppTest) -> None:
     assert app.text_input(key="search").value == ""
+
+
+# --- the shipping model (SPEC §7.7 and §9.2, M10) -----------------------------------------
+
+
+def test_shipping_radio_offers_the_two_models_and_starts_consolidated(app: AppTest) -> None:
+    radio = app.radio(key="shipping")
+
+    assert radio.label == "Shipping model"
+    assert list(radio.options) == ["Consolidated import", "Direct parcel"]
+    assert radio.value == "consolidated"
+    assert radio.help == SHIPPING_HELP
+
+
+def test_shipping_radio_is_right_under_the_market_selector() -> None:
+    source = APP_PATH.read_text(encoding="utf-8")
+    widgets = [
+        node.func.attr
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"selectbox", "radio", "slider", "date_input", "time_input"}
+    ]
+    assert widgets[:2] == ["selectbox", "radio"]
+
+
+def test_direct_parcel_switches_prices(app: AppTest) -> None:
+    before = _column(app, PRICE)
+
+    _ship(app, "parcel")
+    after = _column(app, PRICE)
+
+    assert before[HEADPHONES] == Decimal("686.95")
+    assert after[HEADPHONES] == Decimal("660.95")  # SPEC §7.8 E
+    assert after[ESPRESSO] == Decimal("4344.95")  # SPEC §7.8 G
+    assert after[TEA] == Decimal("37.95")  # dearer: parcel freight costs more
+
+
+def test_duty_column_shows_waived_for_a_waived_parcel(app: AppTest) -> None:
+    assert _column(app, DUTY)[HEADPHONES] == "5.0%"
+
+    _ship(app, "parcel")
+    duty = _column(app, DUTY)
+
+    assert duty[HEADPHONES] == "waived"
+    assert duty[LICENCE] == "waived"  # SPEC §7.9.2: waived although its rate is already 0
+    assert duty[ESPRESSO] == "5.0%"  # above the threshold
+
+
+@pytest.mark.parametrize("points", [0, 3])
+def test_parcel_grid_and_metrics_follow_the_engine(
+    app: AppTest, catalogue: Catalogue, config: GccConfig, points: int
+) -> None:
+    expected = localise_and_summarise(
+        catalogue.products,
+        config,
+        "KSA",
+        OPENED_AT,
+        duty_adjustment_from_points(points),
+        "parcel",
+    )
+    summary = display_summary(expected.summary)
+
+    _ship(app, "parcel")
+    app.slider(key="duty_points").set_value(points).run()
+
+    shown = list(_grid(app).itertuples(index=False, name=None))
+    assert shown == [astuple(row) for row in grid_rows(expected.items)]
+    assert _metrics(app) == {
+        AVERAGE_MARGIN: summary.average_margin,
+        FLAGGED: summary.flagged_products,
+        PRICE_CHANGE: summary.average_price_change,
+        NOT_SOLD: "2",
+    }
+
+
+def test_price_change_compares_with_0_points_in_the_same_shipping_model(app: AppTest) -> None:
+    _ship(app, "parcel")
+
+    # Parcel prices differ from consolidated ones, but at 0 pp nothing has changed.
+    assert _metrics(app)[PRICE_CHANGE] == "0.0%"
+
+
+def test_caption_names_the_shipping_model(app: AppTest) -> None:
+    assert "Shipping: Consolidated import" in _captions(app)
+
+    _ship(app, "parcel")
+
+    assert "Shipping: Direct parcel" in _captions(app)
+    assert "Consolidated import" not in _captions(app)
+
+
+def test_switching_markets_keeps_the_shipping_model(app: AppTest) -> None:
+    _ship(app, "parcel")
+
+    _select_market(app, "UAE")
+
+    assert app.radio(key="shipping").value == "parcel"
+    assert _column(app, "Shelf price (AED)")[HEADPHONES] == Decimal("589.99")  # SPEC §7.9.2
+
+
+def test_shipping_model_does_not_change_delivery_dates(app: AppTest) -> None:
+    before = _column(app, DELIVERY)
+
+    _ship(app, "parcel")
+
+    assert _column(app, DELIVERY) == before
 
 
 # --- the duty slider changes prices -------------------------------------------------------
@@ -562,7 +683,7 @@ def test_switching_markets_changes_the_currency_header_and_prices(
 
     price_column = f"Shelf price ({currency})"
     frame = _grid(app)
-    assert list(frame.columns) == [SKU, NAME, price_column, MARGIN, DELIVERY, FLAGS]
+    assert list(frame.columns) == [SKU, NAME, price_column, MARGIN, DUTY, DELIVERY, FLAGS]
     assert _column(app, price_column)[HEADPHONES] == headphones
     assert all(decimal_places(price) == places for price in frame[price_column])
     grid = app.dataframe[0]

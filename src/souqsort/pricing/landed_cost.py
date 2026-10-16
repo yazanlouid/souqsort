@@ -3,7 +3,8 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
-from souqsort.models import FxTable, MarketConfig, Product
+from souqsort.models import FxTable, MarketConfig, Product, ShippingModel
+from souqsort.pricing.customs import assess_duty, require_shipping
 from souqsort.pricing.fx import convert
 from souqsort.pricing.money import charm_up, require_decimal, round_minor
 
@@ -25,7 +26,8 @@ class PriceQuote:
 
     ``shelf_price`` is the only rounded value and is authoritative. The components keep full
     precision and are rounded for display only, so their displayed sum can differ from it.
-    ``margin_pct`` is a fraction (``0.587`` = 58.7%).
+    ``margin_pct`` is a fraction (``0.587`` = 58.7%). ``duty_rate`` is the rate applied to
+    CIF, 0 when ``duty_waived`` (de minimis applied).
     """
 
     sku: str
@@ -38,6 +40,9 @@ class PriceQuote:
     gross: Decimal
     shelf_price: Decimal
     margin_pct: Decimal
+    shipping: ShippingModel
+    duty_rate: Decimal
+    duty_waived: bool
     steps: tuple[PriceStep, ...] = ()
 
 
@@ -46,29 +51,40 @@ def price_product(
     market: MarketConfig,
     fx: FxTable,
     duty_adjustment: Decimal = Decimal("0"),
+    shipping: ShippingModel = "consolidated",
 ) -> PriceQuote:
     """Price a product for a market, passing every cost through to the customer.
 
     ``duty_adjustment`` is a fraction added to the product's duty rate, whatever its category
     (``Decimal("0.03")`` = +3 percentage points). The config itself is never modified.
 
-    Raises ``ValueError`` naming the SKU if the shelf price leaves no goods revenue.
+    ``shipping`` is ``"consolidated"`` (freight at ``freight_per_kg_usd``, never de minimis) or
+    ``"parcel"``: a one-item parcel, with freight at ``parcel_freight_per_kg_usd`` and no duty
+    when the market's de minimis rule applies to its CIF.
+
+    Raises ``ValueError`` for an unknown ``shipping``, and naming the SKU if the shelf price
+    leaves no goods revenue.
     """
     require_decimal("duty_adjustment", duty_adjustment)
     if not duty_adjustment.is_finite() or duty_adjustment < 0:
         raise ValueError(f"duty_adjustment must be a finite fraction >= 0, got {duty_adjustment}")
+    require_shipping(shipping)
 
     currency = market.currency
-    customs = market.customs
+    logistics = market.logistics
     vat_rate = market.tax.vat_rate
 
     goods = convert(product.base_price, product.currency, currency.code, fx)
-    freight_usd = market.logistics.freight_per_kg_usd * product.weight_kg
-    freight = convert(freight_usd, "USD", currency.code, fx)
+    freight_per_kg = (
+        logistics.parcel_freight_per_kg_usd
+        if shipping == "parcel"
+        else logistics.freight_per_kg_usd
+    )
+    freight = convert(freight_per_kg * product.weight_kg, "USD", currency.code, fx)
     cif = goods + freight
 
-    category_rate = customs.category_overrides.get(product.category, customs.default_duty_rate)
-    duty = cif * (category_rate + duty_adjustment)
+    assessment = assess_duty(product, market, cif, duty_adjustment, shipping)
+    duty = cif * assessment.rate
     vat = (cif + duty) * vat_rate
     gross = cif + duty + vat
 
@@ -96,4 +112,7 @@ def price_product(
         gross=gross,
         shelf_price=shelf_price,
         margin_pct=margin_pct,
+        shipping=shipping,
+        duty_rate=assessment.rate,
+        duty_waived=assessment.waived,
     )

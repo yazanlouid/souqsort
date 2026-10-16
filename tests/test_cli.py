@@ -31,6 +31,7 @@ ZERO_VAT_CONFIG_PATH = Path(__file__).resolve().parent / "fixtures" / "zero_vat_
 
 HEADPHONES = "ELEC-HP-001"
 BAG = "FASH-BAG-014"
+ESPRESSO = "HOME-ESP-031"
 KETTLEBELL = "SPRT-KTB-020"
 TEA = "GROC-TEA-060"
 
@@ -49,19 +50,21 @@ KSA_FOR_SALE = FOR_SALE_COUNTS["KSA"]  # the table and the CSV leave out what KS
 VANILLA = "GROC-VAN-061"
 GUMMY_BEARS = "GROC-GUM-062"
 
-TABLE_HEADER = ["SKU", "Name", "Shelf price (SAR)", "Margin %", "Delivery", "Flags"]
+TABLE_HEADER = ["SKU", "Name", "Shelf price (SAR)", "Margin %", "Duty", "Delivery", "Flags"]
 CSV_HEADER = [
     "sku",
     "name_en",
     "currency",
     "shelf_price",
     "margin_percent",
+    "duty_percent",
+    "duty_waived",
     "delivery_date",
     "flags",
 ]
 
 # Table columns, by position.
-SKU, NAME, PRICE, MARGIN, DELIVERY, FLAGS = range(6)
+SKU, NAME, PRICE, MARGIN, DUTY, DELIVERY, FLAGS = range(7)
 
 
 # --- helpers and fixtures -----------------------------------------------------------------
@@ -139,7 +142,7 @@ def test_price_exits_zero_and_prints_the_expected_columns(run: Callable[..., Res
     header, rows = _table(result.out)
     assert header == TABLE_HEADER
     assert len(rows) == KSA_FOR_SALE
-    assert all(len(cells) == 6 for cells in rows.values())
+    assert all(len(cells) == 7 for cells in rows.values())
 
 
 def test_rows_are_in_catalogue_order(run: Callable[..., Result], catalogue: Catalogue) -> None:
@@ -156,6 +159,7 @@ def test_worked_example_rows(run: Callable[..., Result]) -> None:
         "Wireless Noise-Cancelling Headphones",
         "686.95",
         "58.7%",
+        "5.0%",
         "2026-10-25",
         "-",
     ]
@@ -164,6 +168,7 @@ def test_worked_example_rows(run: Callable[..., Result]) -> None:
         "Leather Crossbody Bag",
         "594.95",
         "64.6%",
+        "12.0%",
         "2026-10-25",
         "missing_arabic_name",
     ]
@@ -181,6 +186,7 @@ def test_table_shows_the_same_result_as_the_pipeline(
         cells = rows[item.sku]
         assert cells[NAME] == item.name_en
         assert cells[PRICE] == format_money(item.quote.shelf_price, 2)
+        assert cells[DUTY] == f"{format_money(item.quote.duty_rate * 100, 1)}%"
         assert cells[DELIVERY] == item.delivery.delivery_date.isoformat()
         assert cells[FLAGS] == (",".join(item.flags) or "-")
 
@@ -205,6 +211,7 @@ def test_summary_line_names_the_market_order_time_and_adjustment(
     assert "KSA (Saudi Arabia)" in summary
     assert "2026-10-15 23:59 Asia/Riyadh" in summary  # shown in market local time
     assert "+0 pp" in summary
+    assert summary.endswith("   Shipping: consolidated")
 
 
 def test_numeric_columns_are_right_aligned_and_lines_have_no_trailing_space(
@@ -349,6 +356,81 @@ def test_duty_adjust_outside_whole_points_0_to_20_is_a_usage_error(
 
     assert result.code == 2
     assert "--duty-adjust" in result.err
+    assert result.out == ""
+
+
+# --- --shipping (SPEC §7.7 and §9.2, M10) ------------------------------------------------
+
+
+def test_shipping_parcel_prices_direct_parcels(run: Callable[..., Result]) -> None:
+    result = run(*PRICE_KSA, *THU_EVENING, "--shipping", "parcel")
+
+    assert result.code == 0
+    assert result.out.splitlines()[0].endswith("   Shipping: parcel")
+    _, rows = _table(result.out)
+    assert rows[HEADPHONES][PRICE] == "660.95"  # SPEC §7.8 E
+    assert rows[HEADPHONES][DUTY] == "waived"
+    assert rows[ESPRESSO][PRICE] == "4344.95"  # SPEC §7.8 G: above the threshold
+    assert rows[ESPRESSO][DUTY] == "5.0%"
+
+
+def test_shipping_defaults_to_consolidated(run: Callable[..., Result]) -> None:
+    default = run(*PRICE_KSA, *THU_EVENING)
+    explicit = run(*PRICE_KSA, *THU_EVENING, "--shipping", "consolidated")
+
+    assert default.out == explicit.out
+    _, rows = _table(default.out)
+    assert "waived" not in {cells[DUTY] for cells in rows.values()}
+
+
+def test_duty_column_includes_the_duty_adjustment(run: Callable[..., Result]) -> None:
+    _, rows = _table(run(*PRICE_KSA, *THU_EVENING, "--duty-adjust", "3").out)
+
+    assert rows[BAG][DUTY] == "15.0%"  # fashion 12% + 3 pp
+    assert rows[HEADPHONES][DUTY] == "8.0%"
+
+
+def test_shipping_parcel_with_the_duty_adjustment(run: Callable[..., Result]) -> None:
+    result = run(*PRICE_KSA, *THU_EVENING, "--shipping", "parcel", "--duty-adjust", "3")
+
+    _, rows = _table(result.out)
+    assert rows[HEADPHONES][PRICE] == "660.95"  # waived: the adjustment changes nothing
+    assert rows[ESPRESSO][PRICE] == "4468.95"
+
+
+def test_csv_records_the_duty_and_whether_it_was_waived(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    out_path = tmp_path / "ksa-parcel.csv"
+
+    result = run(*PRICE_KSA, *THU_EVENING, "--shipping", "parcel", "--csv", str(out_path))
+
+    assert result.code == 0
+    header, *rows = _read_csv(out_path)
+    assert header == CSV_HEADER
+    by_sku = {row[0]: dict(zip(header, row, strict=True)) for row in rows}
+    assert (by_sku[HEADPHONES]["duty_percent"], by_sku[HEADPHONES]["duty_waived"]) == (
+        "0.0",
+        "true",
+    )
+    assert (by_sku[ESPRESSO]["duty_percent"], by_sku[ESPRESSO]["duty_waived"]) == ("5.0", "false")
+    assert by_sku[HEADPHONES]["shelf_price"] == "660.95"
+
+
+def test_kuwait_never_waives_duty_by_parcel(run: Callable[..., Result]) -> None:
+    result = run(*_price("KWT"), *THU_EVENING, "--shipping", "parcel")
+
+    _, rows = _table(result.out)
+    assert rows[HEADPHONES][PRICE] == "49.950"  # SPEC §7.9.2
+    assert {cells[DUTY] for cells in rows.values()} <= {"5.0%", "0.0%"}
+
+
+@pytest.mark.parametrize("value", ["bulk", "Parcel", "PARCEL", ""])
+def test_unknown_shipping_model_is_a_usage_error(run: Callable[..., Result], value: str) -> None:
+    result = run(*PRICE_KSA, *THU_EVENING, "--shipping", value)
+
+    assert result.code == 2
+    assert "--shipping" in result.err
     assert result.out == ""
 
 
@@ -588,6 +670,8 @@ def test_csv_has_the_table_columns_plus_currency(
         "SAR",
         "686.95",
         "58.7",
+        "5.0",
+        "false",
         "2026-10-25",
         "",
     ]
@@ -597,6 +681,8 @@ def test_csv_has_the_table_columns_plus_currency(
         "SAR",
         "594.95",
         "64.6",
+        "12.0",
+        "false",
         "2026-10-25",
         "missing_arabic_name",
     ]
@@ -610,10 +696,11 @@ def test_csv_matches_the_printed_table(run: Callable[..., Result], tmp_path: Pat
     _, table_rows = _table(result.out)  # the table is still printed
     _, *csv_rows = _read_csv(out_path)
     assert [row[0] for row in csv_rows] == list(table_rows)
-    for sku, name, currency, price, margin, delivery, flags in csv_rows:
+    for sku, name, currency, price, margin, duty, waived, delivery, flags in csv_rows:
         cells = table_rows[sku]
         assert currency == "SAR"
-        assert [name, price, f"{margin}%", delivery] == cells[NAME:FLAGS]
+        assert [name, price, f"{margin}%", f"{duty}%", delivery] == cells[NAME:FLAGS]
+        assert waived == "false"
         assert flags == ("" if cells[FLAGS] == "-" else cells[FLAGS])
 
 
@@ -1059,8 +1146,19 @@ def test_price_help_lists_every_option(run: Callable[..., Result]) -> None:
     result = run("price", "--help")
 
     assert result.code == 0
-    for option in ("--market", "--duty-adjust", "--ordered-at", "--csv", "--catalogue", "--config"):
+    options = (
+        "--market",
+        "--shipping",
+        "--duty-adjust",
+        "--ordered-at",
+        "--csv",
+        "--catalogue",
+        "--config",
+    )
+    for option in options:
         assert option in result.out
+    assert "{consolidated,parcel}" in result.out
+    assert "(default: consolidated)" in " ".join(result.out.split())  # help may wrap lines
 
 
 def test_python_dash_m_souqsort_runs_the_cli() -> None:

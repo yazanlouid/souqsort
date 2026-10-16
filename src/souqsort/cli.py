@@ -14,10 +14,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from souqsort.compliance import ExcludedProduct
-from souqsort.display import DisplayRow, display_rows
+from souqsort.display import DisplayRow, display_rows, duty_text
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
 from souqsort.logistics.calendar import in_market_time, to_market_time
-from souqsort.models import MarketConfig
+from souqsort.models import MarketConfig, ShippingModel
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     LocalisationError,
@@ -25,6 +25,7 @@ from souqsort.pipeline import (
     find_market,
     localise_and_summarise,
 )
+from souqsort.pricing.customs import SHIPPING_MODELS
 
 DEFAULT_CATALOGUE = Path("data/raw/global_products.json")
 DEFAULT_CONFIG = Path("data/raw/gcc_config.json")
@@ -36,6 +37,8 @@ _CSV_COLUMNS: tuple[tuple[str, Callable[[DisplayRow], str]], ...] = (
     ("currency", lambda row: row.currency),
     ("shelf_price", lambda row: row.shelf_price),
     ("margin_percent", lambda row: row.margin_percent),
+    ("duty_percent", lambda row: row.duty_percent),
+    ("duty_waived", lambda row: "true" if row.duty_waived else "false"),
     ("delivery_date", lambda row: row.delivery_date),
     ("flags", lambda row: ";".join(row.flags)),
 )
@@ -100,6 +103,16 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
         "--market", required=True, metavar="CODE", help="market code from the config, e.g. KSA"
     )
     price.add_argument(
+        "--shipping",
+        choices=SHIPPING_MODELS,
+        default="consolidated",
+        help=(
+            "shipping model: consolidated (one commercial import, no de minimis) or parcel "
+            "(each order cleared on its own, duty-free under the market's de minimis "
+            "threshold, dearer freight) (default: %(default)s)"
+        ),
+    )
+    price.add_argument(
         "--duty-adjust",
         type=_percentage_points,
         default=0,
@@ -159,11 +172,14 @@ class _TableColumn[R]:
     right_aligned: bool = False
 
 
-def _summary_line(market: MarketConfig, ordered_at_local: datetime, duty_points: int) -> str:
+def _summary_line(
+    market: MarketConfig, ordered_at_local: datetime, duty_points: int, shipping: ShippingModel
+) -> str:
     return (
         f"Market: {market.code} ({market.name})   "
         f"Ordered at: {ordered_at_local:%Y-%m-%d %H:%M} {market.calendar.timezone}   "
-        f"Duty adjustment: +{duty_points} pp"
+        f"Duty adjustment: +{duty_points} pp   "
+        f"Shipping: {shipping}"
     )
 
 
@@ -173,6 +189,7 @@ def _price_table(rows: Sequence[DisplayRow], currency_code: str) -> list[str]:
         _TableColumn("Name", lambda row: row.name_en),
         _TableColumn(f"Shelf price ({currency_code})", lambda row: row.shelf_price, True),
         _TableColumn("Margin %", lambda row: f"{row.margin_percent}%", True),
+        _TableColumn("Duty", duty_text, True),
         _TableColumn("Delivery", lambda row: row.delivery_date),
         _TableColumn("Flags", lambda row: ",".join(row.flags) or "-"),
     )
@@ -258,6 +275,7 @@ def main(argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = _ut
     parser, price_parser = _build_parser()
     args = parser.parse_args(argv)
     duty_points: int = args.duty_adjust
+    shipping: ShippingModel = args.shipping
     csv_path: Path | None = args.csv_path
 
     if csv_path is not None:
@@ -289,6 +307,7 @@ def main(argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = _ut
             market.code,
             ordered_at,
             duty_adjustment_from_points(duty_points),  # to a fraction, at the boundary
+            shipping,
         )
         rows = display_rows(localised.items)
     except LocalisationError as exc:
@@ -297,7 +316,7 @@ def main(argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = _ut
     # The delivery estimate has already made this conversion, so it cannot be out of range.
     ordered_at_local = to_market_time(ordered_at, market)
 
-    _print(_summary_line(market, ordered_at_local, duty_points))
+    _print(_summary_line(market, ordered_at_local, duty_points, shipping))
     _print()
     _print("\n".join(_price_table(rows, market.currency.code)))
 

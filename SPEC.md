@@ -897,6 +897,8 @@ Branch `chore/release-0.2.0`.
 - Every market lists holidays up to the same date (2027-03-31), so delivery comparisons are fair. KSA gains Eid al-Fitr 2027 (provisional).
 - The format hook only formats. `ruff check --fix` would delete an import that Claude adds in one edit and uses in the next.
 - Pull requests merge with a merge commit, which keeps the small conventional commits and shows where each milestone begins and ends.
+- The dashboard's Duty column is text, so one column can show a rate or "waived". It therefore sorts as text ("12.0%" before "5.0%"); price and margin still sort by value, and the CSV keeps the rate and the waiver in separate columns. Rejected alternative: a number column plus a waived column, which would be unticked for every product in the default consolidated mode.
+- Market rules are a snapshot, not dated: every order is priced under the current config, whatever its date. VAT's `effective_from` is a record, not a switch, and an order dated before 2026-08-03 still gets the UAE waiver.
 
 ## 12. Sources (v0.2 market rules)
 

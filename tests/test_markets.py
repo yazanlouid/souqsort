@@ -91,9 +91,109 @@ def test_consolidated_price_list(
     product = next(product for product in catalogue.products if product.sku == sku)
 
     quote = price_product(product, config.markets[market], config.fx)
+    explicit = price_product(
+        product, config.markets[market], config.fx, Decimal("0"), "consolidated"
+    )
 
     # Compared as text, so the number of decimals (the currency's minor units) counts too.
     assert str(quote.shelf_price) == shelf_price
+    # Consolidated is the default and keeps every price; de minimis never applies to it.
+    assert explicit == quote
+    assert (quote.shipping, quote.duty_waived) == ("consolidated", False)
+
+
+# SPEC §7.9.2: direct-parcel shelf prices with no duty adjustment, and whether de minimis
+# waived the duty (the spec's "w"). As in §7.9.1, a † does not matter to price_product.
+W = True  # duty waived by de minimis
+PARCEL_PRICE_LISTS: dict[str, dict[str, tuple[str, bool]]] = {
+    "KSA": {
+        "ELEC-HP-001": ("660.95", W),
+        "ELEC-CHG-002": ("179.95", W),
+        "FASH-BAG-014": ("546.95", W),
+        "FASH-SCF-015": ("264.95", W),
+        "SPRT-KTB-020": ("875.95", W),
+        "HOME-KTL-030": ("249.95", W),
+        "HOME-ESP-031": ("4344.95", False),
+        "BEAU-LIP-040": ("15.95", W),
+        "BEAU-SRM-041": ("108.95", W),
+        "DIGI-LIC-050": ("340.95", W),
+        "GROC-TEA-060": ("37.95", W),
+        "GROC-VAN-061": ("61.95", W),
+        "GROC-GUM-062": ("25.95", W),
+    },
+    "UAE": {
+        "ELEC-HP-001": ("589.99", W),
+        "ELEC-CHG-002": ("159.99", W),
+        "FASH-BAG-014": ("485.99", W),
+        "FASH-SCF-015": ("236.99", W),
+        "SPRT-KTB-020": ("721.99", W),
+        "HOME-KTL-030": ("218.99", W),
+        "HOME-ESP-031": ("3844.99", False),
+        "BEAU-LIP-040": ("14.99", W),
+        "BEAU-SRM-041": ("96.99", W),
+        "DIGI-LIC-050": ("304.99", W),
+        "GROC-TEA-060": ("32.99", W),
+        "GROC-VAN-061": ("57.99", False),  # alcohol is excluded from the UAE's de minimis
+        "GROC-GUM-062": ("21.99", W),
+    },
+    "KWT": {  # no de minimis
+        "ELEC-HP-001": ("49.950", False),
+        "ELEC-CHG-002": ("13.950", False),
+        "FASH-BAG-014": ("41.950", False),
+        "FASH-SCF-015": ("19.950", False),
+        "SPRT-KTB-020": ("70.950", False),
+        "HOME-KTL-030": ("19.950", False),
+        "HOME-ESP-031": ("312.950", False),
+        "BEAU-LIP-040": ("1.950", False),
+        "BEAU-SRM-041": ("8.950", False),
+        "DIGI-LIC-050": ("24.950", False),
+        "GROC-TEA-060": ("2.950", False),
+        "GROC-VAN-061": ("4.950", False),
+        "GROC-GUM-062": ("1.950", False),
+    },
+}
+
+PARCEL_CELLS = [
+    pytest.param(market, sku, shelf_price, waived, id=f"{market}-{sku}")
+    for market, column in PARCEL_PRICE_LISTS.items()
+    for sku, (shelf_price, waived) in column.items()
+]
+
+WAIVED_CELLS = [cell for cell in PARCEL_CELLS if cell.values[3]]
+
+
+def test_every_market_has_a_parcel_price_list(config: GccConfig) -> None:
+    assert set(PARCEL_PRICE_LISTS) == set(config.markets)
+
+
+@pytest.mark.parametrize("market", list(PARCEL_PRICE_LISTS))
+def test_parcel_price_list_covers_the_catalogue_in_order(catalogue: Catalogue, market: str) -> None:
+    assert list(PARCEL_PRICE_LISTS[market]) == [product.sku for product in catalogue.products]
+
+
+@pytest.mark.parametrize(("market", "sku", "shelf_price", "waived"), PARCEL_CELLS)
+def test_parcel_price_list(
+    catalogue: Catalogue, config: GccConfig, market: str, sku: str, shelf_price: str, waived: bool
+) -> None:
+    product = next(product for product in catalogue.products if product.sku == sku)
+
+    quote = price_product(product, config.markets[market], config.fx, shipping="parcel")
+
+    assert str(quote.shelf_price) == shelf_price
+    assert quote.duty_waived is waived
+    assert quote.shipping == "parcel"
+
+
+@pytest.mark.parametrize(("market", "sku", "shelf_price", "waived"), WAIVED_CELLS)
+def test_a_waived_product_costs_the_same_at_0_and_20_points(
+    catalogue: Catalogue, config: GccConfig, market: str, sku: str, shelf_price: str, waived: bool
+) -> None:
+    product = next(product for product in catalogue.products if product.sku == sku)
+
+    at_twenty = price_product(product, config.markets[market], config.fx, Decimal("0.20"), "parcel")
+
+    assert str(at_twenty.shelf_price) == shelf_price
+    assert (at_twenty.duty, at_twenty.duty_rate, at_twenty.duty_waived) == (0, 0, True)
 
 
 # SPEC §8.2: the same six moments in every market.
