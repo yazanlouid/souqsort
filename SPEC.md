@@ -2,7 +2,7 @@
 
 > The single source of truth for building SouqSort with Claude Code.
 > Work one milestone at a time (M0 → M10). Each milestone lists its acceptance tests.
-> v0.1 (M0–M6) is done and tagged `v0.1.0`. v0.2 runs **M7 → Fix #2 → M8 → M9 → M10 → Release**. Each step has its own branch and reaches `main` through a pull request with green CI.
+> v0.1 (M0–M6) is done and tagged `v0.1.0`. v0.2 (**M7 → Fix #2 → M8 → M9 → M10 → Release**) is done and tagged `v0.2.0`. Each step had its own branch and reached `main` through a pull request with green CI.
 
 ## 1. What SouqSort is
 
@@ -18,7 +18,7 @@ SouqSort is a localisation and pricing engine for a UK-based retailer launching 
 - Estimate the delivery date for an order placed at a given time.
 - Show the result in a Streamlit grid with a duty slider and search, and print the same result from a CLI.
 
-### v0.2 (this spec)
+### v0.2: three markets, compliance, de minimis (done, tag `v0.2.0`)
 - **CI:** every push to `main` and every pull request runs the format check, lint, type check and tests on Ubuntu and Windows. Two non-negotiables also get tests that enforce them.
 - **UAE and Kuwait,** added to the config with no change to `src/` or `app/`, plus a 13th product above the de minimis thresholds.
 - **Compliance:** each market lists the product attributes it does not allow. Those products are reported as not sold, never priced and never silently dropped.
@@ -49,7 +49,7 @@ SouqSort is a localisation and pricing engine for a UK-based retailer launching 
   - `tzdata` is required on Windows, which has no system timezone database for `zoneinfo`.
 - Dev dependencies: `pytest`, `hypothesis`, `ruff`, `mypy`.
 - Standard library: `decimal`, `zoneinfo`, `datetime`, `argparse`, `json`, `dataclasses`.
-- CI (from M7): GitHub Actions on Ubuntu and Windows (Appendix A). v0.2 adds no dependencies.
+- CI (from M7): GitHub Actions on Ubuntu and Windows (`.github/workflows/ci.yml`). v0.2 adds no dependencies.
 
 ## 5. Project structure (v0.2)
 
@@ -785,12 +785,12 @@ Every step uses the same flow: `git switch -c <branch>` → plan mode → commit
 #### M7: CI and guard rails
 Branch `chore/m7-ci`.
 - This SPEC.md and the v0.2 CLAUDE.md, committed first as `docs: add the v0.2 spec`.
-- `.github/workflows/ci.yml` and `.github/dependabot.yml` from Appendix A. setup-uv's `version` is what `uv --version` prints on the laptop.
+- `.github/workflows/ci.yml` and `.github/dependabot.yml`. setup-uv's `version` is what `uv --version` prints on the laptop.
 - Hypothesis: no profile is registered and `tests/conftest.py` is unchanged. Hypothesis loads its built-in `ci` profile by itself on GitHub Actions (`derandomize=True, deadline=None, database=None, print_blob=True`, `too_slow` suppressed); the default profile runs everywhere else.
 - `tests/test_architecture.py`:
   - no float literal and no use of the name `float` anywhere in `src/` (a call, a type annotation or a type alias), except as the class argument of `isinstance(...)`, which keeps the `isinstance(value, bool | int | float)` guard in `models.py` allowed;
   - no string literal in `src/` or `app/` equals a market code from `data/raw/gcc_config.json` (§3 rule 4, enforced).
-- `.claude/skills/verify/SKILL.md` from Appendix A.
+- `.claude/skills/verify/SKILL.md`: the `/verify` skill.
 - README: a CI badge (the URL uses the owner from `gh repo view --json nameWithOwner`).
 - Optional: a ruleset on `main` that requires a pull request and both `checks` jobs. Optional: push a deliberately failing test to a scratch branch once, watch CI fail, delete the branch.
 - **Accept:** both CI jobs green on the pull request and again on `main` after the merge; `/verify` ends with `verify: PASS`.
@@ -807,7 +807,7 @@ Branch `fix/csv-formulas`. Claude reads the issue itself with `gh issue view 2`.
 Branch `feat/m8-uae-kuwait`. Commits, in order:
 1. `feat: add an espresso machine to the sample catalogue`: the product and the kettle fix from §6.1. With the M8 data, 36 of today's tests fail: about 20 places hard-code 12 products, and the rest check averages, SKU lists or the market list. Replace the hard-coded counts with one constant in `tests/helpers.py` (`SAMPLE_PRODUCT_COUNT = 13`). Add `tests/test_markets.py` with the KSA column of §7.9.1.
 2. `feat: list Eid al-Fitr 2027 in the KSA calendar`: the three provisional days, and the KSA cells of §8.2.
-3. `chore: add the /add-market skill`: the file from Appendix A, and a line for it under "Project tools" in CLAUDE.md.
+3. `chore: add the /add-market skill`: `.claude/skills/add-market/SKILL.md`, and a line for it under "Project tools" in CLAUDE.md.
 4. `/add-market UAE "United Arab Emirates"` → `feat: add the United Arab Emirates market`: the v0.1 fields of the UAE block (§6.2), worked example C (§7.8), the UAE column of §7.9.1 and the UAE cells of §8.2.
 5. `/add-market KWT Kuwait` → `feat: add the Kuwait market`: the same, with worked example D.
 6. `fix: keep the picked order time when switching markets`, with `Fixes #3`.
@@ -827,7 +827,7 @@ Other tests: the config loads three markets; worked examples C and D exactly, wi
 
 #### M9: compliance, typed attributes, format hook
 Branch `feat/m9-compliance`. Commits, in order:
-1. `chore: format Python files after each edit with a Claude Code hook`: `.claude/settings.json` and `.claude/hooks/format_python.py` from Appendix A, `tests/test_format_hook.py`, and a line for the hook under "Project tools" in CLAUDE.md. The hook test checks that it formats a messy `.py` file in a temporary project, leaves a `.md` file and a file outside the project alone, exits 2 with ruff's message on a syntax error, and ignores input that is not JSON. Then restart Claude Code and try it once: ask Claude to write `scratch.py` containing `x=1`, check it now says `x = 1`, delete it.
+1. `chore: format Python files after each edit with a Claude Code hook`: `.claude/settings.json` and `.claude/hooks/format_python.py`, `tests/test_format_hook.py`, and a line for the hook under "Project tools" in CLAUDE.md. The hook test checks that it formats a messy `.py` file in a temporary project, leaves a `.md` file and a file outside the project alone, exits 2 with ruff's message on a syntax error, and ignores input that is not JSON. Then restart Claude Code and try it once: ask Claude to write `scratch.py` containing `x=1`, check it now says `x = 1`, delete it.
 2. `feat: validate product attributes and category names`, with `Fixes #1`: `ProductAttributes`, `AttributeName` and `CategoryName` (§9.1).
    - **Tests:** a missing, unknown or non-boolean attribute is rejected; `"Fashion"` is rejected as a category and as an override key; `AttributeName` lists exactly the fields of `ProductAttributes`. Tests that build products with `attributes={}` switch to a shared `NO_ATTRIBUTES` helper.
 3. `feat: screen products against each market's compliance rules`: the `compliance` blocks and fixtures (§6.2), `compliance.py`, `localise_and_summarise` screening first and returning `excluded`, the CLI moving to `localise_and_summarise` and printing what is not sold, and the dashboard metric and table (§7.6, §9.2).
@@ -840,7 +840,7 @@ Branch `feat/m9-compliance`. Commits, in order:
 
 #### M10: de minimis and the shipping model
 Branch `feat/m10-de-minimis`. Commits, in order:
-1. `chore: add the money-reviewer subagent`: the file from Appendix A, and a line for it under "Project tools" in CLAUDE.md.
+1. `chore: add the money-reviewer subagent`: `.claude/agents/money-reviewer.md`, and a line for it under "Project tools" in CLAUDE.md.
 2. `feat: add parcel freight and de minimis rules to the market config`: models, data and fixtures (§6.2), and `tests/fixtures/de_minimis_boundary_config.json` (§7.8, example H). No price changes yet: apart from the new config-validation tests, the suite passes unchanged.
 3. `feat: price direct parcels with de minimis`: `ShippingModel`, `pricing/customs.py`, `price_product(..., shipping)`, the new `PriceQuote` fields and `shipping` through the pipeline (§7.1, §7.7, §9.1).
 4. `feat: show duty and the shipping model in the CLI and dashboard`: `--shipping`, the radio, the Duty column, the two CSV columns and the captions (§9.2).
@@ -864,7 +864,7 @@ Before opening the pull request: "Use the money-reviewer subagent to review this
 Branch `chore/release-0.2.0`.
 - `pyproject.toml` version `0.2.0`, then `uv lock` so CI's lock check passes.
 - README: the three markets, compliance, the shipping switch with one example from §7.9.3, CLI examples with `--market UAE --shipping parcel`, a fresh `docs/dashboard.png`.
-- SPEC.md: delete Appendix A (every file in it now exists and is its own source of truth) and mark v0.2 done in §2.
+- SPEC.md: delete the appendix that listed the files to create in v0.2 (every one of them now exists and is its own source of truth) and mark v0.2 done in §2.
 - After the merge: `git tag -a v0.2.0 -m "v0.2.0: UAE, Kuwait, compliance, de minimis"` and `git push origin v0.2.0`.
 - Releases: `gh release create v0.1.0 --title "v0.1.0: KSA end to end" --notes "..."` (deferred from v0.1), then `gh release create v0.2.0 --title "v0.2.0: three markets, compliance, de minimis" --generate-notes`, which writes the notes from the merged pull requests.
 
@@ -910,233 +910,3 @@ Market data stays illustrative. These are the rules it is modelled on:
 - Goods Across Borders, Kuwait (no duty-free threshold for commercial parcels; 5% GCC common tariff): https://www.goodsacrossborders.com/importing/into/kuwait
 - VATupdate, Kuwait leaves VAT out of its 2026–2030 fiscal plan: https://www.vatupdate.com/2026/07/24/kuwait-keeps-vat-off-the-table-no-adoption-in-the-2026-2030-fiscal-plan/
 - Claude Code docs: skills https://code.claude.com/docs/en/skills, hooks https://code.claude.com/docs/en/hooks, hooks guide https://code.claude.com/docs/en/hooks-guide, subagents https://code.claude.com/docs/en/sub-agents
-
-## Appendix A: files to create in v0.2
-
-Copy these exactly, in the milestone each one names. Once a file exists it is its own source of truth; this appendix is deleted at the release.
-
-Versions checked on 2026-10-12: `actions/checkout` v7.0.1 and `astral-sh/setup-uv` v10.3.0. setup-uv has had no moving major tag since v7, and its own README pins by commit, so both actions are pinned to the commit with the version in a comment; Dependabot proposes updates.
-
-### `.github/workflows/ci.yml` (M7)
-
-```yaml
-name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-jobs:
-  checks:
-    name: checks (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    env:
-      UV_LOCKED: "1"            # every uv command fails if uv.lock is out of date
-      # No HYPOTHESIS_PROFILE: Hypothesis loads its built-in ci profile by itself on GitHub Actions.
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: "0.12.5"     # the laptop's `uv --version`; update both together
-          python-version: "3.12"
-      - name: Install dependencies
-        run: uv sync
-      - name: Format check
-        run: uv run ruff format --check .
-      - name: Lint
-        run: uv run ruff check .
-      - name: Type-check
-        run: uv run mypy src
-      - name: Test
-        run: uv run pytest
-```
-
-### `.github/dependabot.yml` (M7)
-
-```yaml
-version: 2
-updates:
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: monthly
-    commit-message:
-      prefix: ci
-```
-
-### `.claude/skills/verify/SKILL.md` (M7)
-
-```markdown
----
-name: verify
-description: Run the same checks as CI (format, lint, types, tests) and report the result. Use before saying a task is done and before committing.
-allowed-tools: Bash(uv run *)
----
-
-Run these from the project root, in this order, and show each command's output:
-
-1. `uv run --locked ruff format --check .`
-2. `uv run --locked ruff check .`
-3. `uv run --locked mypy src`
-4. `uv run --locked pytest -q`
-
-`--locked` makes a command fail when `uv.lock` is out of date, as `UV_LOCKED` does in CI.
-
-Run all four even if one fails, so the report is complete. For each failure, say in one or two lines what failed and why. Do not fix anything unless asked.
-
-End with exactly one line: `verify: PASS`, or `verify: FAIL (<the checks that failed>)`.
-```
-
-### `.claude/skills/add-market/SKILL.md` (M8)
-
-```markdown
----
-name: add-market
-description: Add a market to SouqSort as config data only, with tests for its worked examples. Runs only when invoked as /add-market.
-argument-hint: "[CODE] [Name]"
-disable-model-invocation: true
-allowed-tools: Read Grep Glob Bash(uv run *) Bash(git diff *) Bash(git status *)
----
-
-Add market `$0` ("$1") to SouqSort.
-
-Rules:
-- Markets are data. Change only `data/raw/gcc_config.json` and files under `tests/`. Never edit `src/` or `app/`. If the market cannot be expressed in the current config schema, stop and tell me what is missing instead of changing code.
-- Take every value from SPEC.md if it specifies this market. Otherwise ask me for all missing values in one message. Never invent a tax rate, duty rate, threshold, exchange rate or holiday.
-- Money, rates and weights are JSON strings. Holidays that depend on the moon are `"provisional": true`.
-- Fill in every field the config schema requires, including compliance and customs rules if the schema has them.
-
-Steps:
-1. Read SPEC.md (§6.2, §7.8, §7.9, §8.2 and anything else about `$0`) and the current config.
-2. Show me the market's JSON block and wait for my OK before writing it.
-3. Add the block. If its currency is not in `fx.per_usd`, stop and ask me for the rate.
-4. Show the market working: `uv run python -m souqsort price --market $0 --ordered-at 2026-10-15T10:30Z`.
-5. In `tests/test_markets.py`, add for `$0`: the config loads it; its worked example from SPEC.md (shelf price exactly, margin to 3 dp); its column of the price list; its delivery examples.
-6. Run `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy src` and `uv run pytest -q`, and show the results.
-7. Show `git diff --stat`. It must list only `data/raw/gcc_config.json` and files under `tests/`.
-8. Propose the commit message `feat: add the $1 market` and wait for my OK.
-```
-
-### `.claude/settings.json` (M9)
-
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv run --quiet --no-sync --project \"$CLAUDE_PROJECT_DIR\" python \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_python.py\"",
-            "timeout": 60
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-On Windows, Claude Code runs this through Git Bash, where `uv` is on the PATH. `--no-sync` because the hook runs after every edit, including one to `pyproject.toml`: without it, `uv run` would rewrite `uv.lock` and install packages as a side effect.
-
-### `.claude/hooks/format_python.py` (M9)
-
-```python
-"""Claude Code PostToolUse hook: format a Python file right after Claude writes or edits it.
-
-Claude Code passes the hook event as JSON on stdin. Only ``.py`` files inside the project are
-formatted, with the project's own ruff. The hook never blocks an edit: if ruff cannot format
-the file (usually a syntax error halfway through a change), it exits with code 2 so that Claude
-sees ruff's message, and the edit stands.
-
-It formats only. ``ruff check --fix`` would delete an import that Claude adds in one edit and
-uses in the next.
-"""
-
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-
-def main() -> int:
-    # Bytes, not sys.stdin: the event is UTF-8, and Windows would decode text in its code page,
-    # garbling a non-ASCII path. ValueError covers bad JSON and bytes that are not UTF-8.
-    try:
-        event = json.load(sys.stdin.buffer)
-    except ValueError:
-        return 0
-    tool_input = event.get("tool_input") if isinstance(event, dict) else None
-    file_path = tool_input.get("file_path") if isinstance(tool_input, dict) else None
-    if not isinstance(file_path, str) or not file_path.endswith(".py"):
-        return 0
-
-    path = Path(file_path).resolve()
-    project = Path(os.environ.get("CLAUDE_PROJECT_DIR", Path.cwd())).resolve()
-    if not path.is_relative_to(project) or not path.is_file():
-        return 0
-
-    result = subprocess.run(
-        [sys.executable, "-m", "ruff", "format", str(path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        message = result.stderr.strip() or result.stdout.strip()
-        print(f"ruff format could not format {path.name}: {message}", file=sys.stderr)
-        return 2
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-```
-
-### `.claude/agents/money-reviewer.md` (M10)
-
-```markdown
----
-name: money-reviewer
-description: Reviews SouqSort changes that touch money, pricing, FX, customs, de minimis, compliance or market data against the project's money rules. Use after changing src/souqsort/pricing/, compliance.py, pipeline.py or data/raw/*.json, before /code-review.
-tools: Read, Grep, Glob, Bash
-model: inherit
----
-
-You review money-handling changes in SouqSort, a Python pricing engine. You read and run tests; you never edit files.
-
-Start with `git diff main...HEAD`, unless you are given files. Read SPEC.md §3 and §7 first.
-
-Check every change against these rules:
-1. Money, rates and weights are Decimal: no float() call, float literal or float arithmetic on money; JSON money is a string.
-2. Full precision until the shelf price; exactly one rounding there, ROUND_HALF_UP to the currency's minor units, then a charm-up that never lowers the price. Components are rounded only for display.
-3. FX multiplies first: amount * per_usd[to] / per_usd[from].
-4. Duty is on CIF; VAT is on CIF plus duty.
-5. De minimis compares the full-precision CIF in the market currency with the threshold; "below" and "at_or_below" differ exactly at the threshold; a product with an excluded attribute never qualifies; it waives duty only, never VAT, and only in parcel mode; the duty adjustment never changes whether it applies.
-6. Consolidated mode gives exactly the v0.1 prices.
-7. A product with a banned attribute is never priced for that market and never silently dropped: it is reported as not sold, with its reasons.
-8. No code branches on a market code; market rules come from data/raw/gcc_config.json.
-9. Nothing in src/ reads the clock except the injectable `now` in cli.py.
-
-Then run `uv run pytest -q` and report the result.
-
-Report the findings most severe first. For each: the rule, file:line, a concrete input that gives a wrong result, and the fix in one sentence. If there are none, say so plainly. Do not pad the report.
-```
