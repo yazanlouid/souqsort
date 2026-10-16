@@ -420,6 +420,45 @@ def test_lowercase_category_accepted(
     assert bag.category == category
 
 
+def test_sample_markets_ban_the_attributes_in_the_spec(config_path: Path) -> None:
+    markets = load_gcc_config(config_path).markets
+    assert {code: market.compliance.banned_attributes for code, market in markets.items()} == {
+        "KSA": ("contains_alcohol", "contains_pork"),
+        "UAE": ("contains_pork",),
+        "KWT": ("contains_alcohol", "contains_pork"),
+    }
+    assert all(market.compliance.source for market in markets.values())
+
+
+# --- ComplianceConfig (SPEC §6.2, M9) -----------------------------------------------------
+
+
+def test_market_without_compliance_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    del _ksa(raw_config)["compliance"]
+    _reject_config(write_json, raw_config, "compliance", "Field required")
+
+
+def test_unknown_banned_attribute_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["compliance"]["banned_attributes"] = ["contains_pork", "contains_porc"]
+    _reject_config(write_json, raw_config, "banned_attributes", "contains_porc")
+
+
+def test_duplicate_banned_attribute_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    banned = ["contains_pork", "contains_alcohol", "contains_pork"]
+    _ksa(raw_config)["compliance"]["banned_attributes"] = banned
+    _reject_config(write_json, raw_config, "duplicate banned attribute", "contains_pork")
+
+
+def test_empty_compliance_source_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["compliance"]["source"] = ""
+    _reject_config(write_json, raw_config, "compliance.source")
+
+
+def test_nothing_banned_accepted(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["compliance"]["banned_attributes"] = []
+    assert _load_config(write_json, raw_config).markets["KSA"].compliance.banned_attributes == ()
+
+
 @pytest.mark.parametrize("key", ["Fashion", "FASHION", "fashion wear"])
 def test_category_override_key_that_is_not_lowercase_rejected(
     write_json: WriteJson, raw_config: Raw, key: str

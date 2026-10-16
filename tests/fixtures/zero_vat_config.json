@@ -11,6 +11,7 @@
       "currency": { "code": "KWD", "minor_units": 3, "charm_ending": "0.950" },
       "tax": { "vat_rate": "0", "source": "test fixture - not real market data", "effective_from": "2020-01-01" },
       "customs": { "default_duty_rate": "0.05", "category_overrides": { "digital": "0.00" } },
+      "compliance": { "banned_attributes": [], "source": "test fixture - nothing banned" },
       "calendar": {
         "timezone": "Asia/Kuwait",
         "weekend": ["FRI", "SAT"],

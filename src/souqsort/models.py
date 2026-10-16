@@ -152,6 +152,23 @@ class CustomsConfig(_Model):
     category_overrides: dict[CategoryName, NonNegativeDecimal]
 
 
+class ComplianceConfig(_Model):
+    """The product attributes a market does not allow. An empty list bans nothing."""
+
+    banned_attributes: tuple[AttributeName, ...]
+    source: NonEmptyStr
+
+    @field_validator("banned_attributes")
+    @classmethod
+    def _no_duplicate_attributes(
+        cls, value: tuple[AttributeName, ...]
+    ) -> tuple[AttributeName, ...]:
+        duplicates = sorted(name for name, n in Counter(value).items() if n > 1)
+        if duplicates:
+            raise ValueError(f"duplicate banned attribute: {', '.join(duplicates)}")
+        return value
+
+
 class Holiday(_Model):
     date: dt.date
     name: NonEmptyStr
@@ -201,6 +218,7 @@ class MarketConfig(_Model):
     currency: CurrencyConfig
     tax: TaxConfig
     customs: CustomsConfig
+    compliance: ComplianceConfig
     calendar: CalendarConfig
     logistics: LogisticsConfig
 

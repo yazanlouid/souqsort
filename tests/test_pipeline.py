@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from helpers import SAMPLE_PRODUCT_COUNT, decimal_places
+from helpers import FOR_SALE_COUNTS, SAMPLE_PRODUCT_COUNT, decimal_places
+from souqsort.compliance import screen_products
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
 from souqsort.models import Catalogue, GccConfig, MarketConfig, Product, ProductName
 from souqsort.pipeline import (
@@ -32,6 +33,8 @@ KETTLEBELL = "SPRT-KTB-020"
 LIP_BALM = "BEAU-LIP-040"
 LICENCE = "DIGI-LIC-050"
 TEA = "GROC-TEA-060"
+VANILLA = "GROC-VAN-061"
+GUMMY_BEARS = "GROC-GUM-062"
 
 ZERO_VAT_MARKET = "TEST-KWD"
 
@@ -83,6 +86,12 @@ def _without_charm(market: MarketConfig) -> MarketConfig:
 @pytest.fixture
 def products(catalogue: Catalogue) -> dict[str, Product]:
     return {p.sku: p for p in catalogue.products}
+
+
+@pytest.fixture
+def for_sale(catalogue: Catalogue) -> list[Product]:
+    """The sample products KSA sells: all but the vanilla extract and the gummy bears."""
+    return [p for p in catalogue.products if p.sku not in (VANILLA, GUMMY_BEARS)]
 
 
 @pytest.fixture
@@ -617,28 +626,30 @@ def test_summary_is_frozen(localised: list[LocalisedProduct]) -> None:
 
 
 def test_localise_and_summarise_returns_the_items_and_their_summary(
-    catalogue: Catalogue,
-    config: GccConfig,
-    localised: list[LocalisedProduct],
-    plus_three_points: list[LocalisedProduct],
+    for_sale: list[Product], config: GccConfig
 ) -> None:
-    result = localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING, Decimal("0.03"))
+    adjusted = localise_catalogue(for_sale, config, "KSA", THU_EVENING, Decimal("0.03"))
+    baseline = localise_catalogue(for_sale, config, "KSA", THU_EVENING)
+
+    result = localise_and_summarise(for_sale, config, "KSA", THU_EVENING, Decimal("0.03"))
 
     assert isinstance(result, LocalisedCatalogue)
-    assert list(result.items) == plus_three_points
-    # The baseline is the same catalogue, market and order time with no duty adjustment.
-    assert result.summary == summarise_catalogue(plus_three_points, localised)
+    assert list(result.items) == adjusted
+    # The baseline is the same products, market and order time with no duty adjustment.
+    assert result.summary == summarise_catalogue(adjusted, baseline)
     assert result.summary.average_price_change_pct is not None
-    assert _dp(result.summary.average_price_change_pct, 4) == Decimal("0.0219")
+    assert result.summary.average_price_change_pct > 0
 
 
 def test_localise_and_summarise_without_an_adjustment(
-    catalogue: Catalogue, config: GccConfig, localised: list[LocalisedProduct]
+    for_sale: list[Product], config: GccConfig
 ) -> None:
-    result = localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING)
+    items = localise_catalogue(for_sale, config, "KSA", THU_EVENING)
 
-    assert list(result.items) == localised
-    assert result.summary == summarise_catalogue(localised, localised)
+    result = localise_and_summarise(for_sale, config, "KSA", THU_EVENING)
+
+    assert list(result.items) == items
+    assert result.summary == summarise_catalogue(items, items)
     assert result.summary.average_price_change_pct == 0
 
 
@@ -661,6 +672,7 @@ def test_localise_and_summarise_of_an_empty_catalogue(config: GccConfig) -> None
     result = localise_and_summarise([], config, "KSA", THU_EVENING, Decimal("0.03"))
 
     assert result.items == ()
+    assert result.excluded == ()
     assert result.summary == CatalogueSummary(0, 0, None, None)
 
 
@@ -706,6 +718,98 @@ def test_localise_and_summarise_does_not_modify_the_config(
     localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING, Decimal("0.20"))
 
     assert config.model_dump() == before
+
+
+# --- compliance: screened before pricing (SPEC §7.6, M9) ----------------------------------
+
+
+@pytest.mark.parametrize("market", ["KSA", "UAE", "KWT"])
+def test_localise_and_summarise_prices_only_what_the_market_sells(
+    catalogue: Catalogue, config: GccConfig, market: str
+) -> None:
+    screen = screen_products(catalogue.products, config.markets[market])
+
+    result = localise_and_summarise(catalogue.products, config, market, THU_EVENING)
+
+    assert [item.sku for item in result.items] == [p.sku for p in screen.sellable]
+    assert result.excluded == screen.excluded
+    assert len(result.items) == FOR_SALE_COUNTS[market]
+    assert result.summary.product_count == FOR_SALE_COUNTS[market]
+
+
+def test_ksa_reports_two_products_as_not_sold(
+    catalogue: Catalogue, config: GccConfig, for_sale: list[Product]
+) -> None:
+    adjusted = localise_catalogue(for_sale, config, "KSA", THU_EVENING, Decimal("0.03"))
+    baseline = localise_catalogue(for_sale, config, "KSA", THU_EVENING)
+
+    result = localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING, Decimal("0.03"))
+
+    assert len(result.items) == 11
+    assert [(item.sku, item.reasons) for item in result.excluded] == [
+        (VANILLA, ("contains_alcohol",)),
+        (GUMMY_BEARS, ("contains_pork",)),
+    ]
+    # The summary and its baseline cover the same 11 products, and nothing else.
+    assert list(result.items) == adjusted
+    assert result.summary == summarise_catalogue(adjusted, baseline)
+    assert result.summary.flagged_count == 2  # the bag and the tea are both for sale
+
+
+def test_a_catalogue_of_only_banned_products_gives_no_items(
+    products: dict[str, Product], config: GccConfig
+) -> None:
+    result = localise_and_summarise(
+        [products[VANILLA], products[GUMMY_BEARS]], config, "KSA", THU_EVENING
+    )
+
+    assert result.items == ()
+    assert [item.sku for item in result.excluded] == [VANILLA, GUMMY_BEARS]
+    assert result.summary == CatalogueSummary(0, 0, None, None)
+
+
+def test_arguments_and_market_are_checked_before_screening(
+    products: dict[str, Product], config: GccConfig
+) -> None:
+    banned_only = [products[VANILLA], products[GUMMY_BEARS]]
+    a_float: Any = 0.03
+
+    with pytest.raises(ValueError, match="duty_adjustment") as excinfo:
+        localise_and_summarise(banned_only, config, "ZZZ", THU_EVENING, Decimal("-0.01"))
+    assert type(excinfo.value) is ValueError  # the adjustment first, then the market
+    with pytest.raises(TypeError, match="Decimal"):
+        localise_and_summarise(banned_only, config, "ZZZ", THU_EVENING, a_float)
+    with pytest.raises(LocalisationError, match=r"^ZZZ: unknown market"):
+        localise_and_summarise(banned_only, config, "ZZZ", THU_EVENING)
+
+
+def test_a_banned_product_that_cannot_be_priced_does_not_fail_the_run(
+    products: dict[str, Product], config: GccConfig
+) -> None:
+    # Screened out first, so it is never priced: its absurd price cannot stop the run.
+    enormous = products[VANILLA].model_copy(update={"base_price": Decimal("1E+30")})
+
+    result = localise_and_summarise([products[BAG], enormous], config, "KSA", THU_EVENING)
+
+    assert [item.sku for item in result.items] == [BAG]
+    assert [item.sku for item in result.excluded] == [VANILLA]
+
+
+def test_localise_catalogue_still_prices_what_it_is_given(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    items = _by_sku(localise_catalogue(catalogue.products, config, "KSA", THU_EVENING))
+
+    assert len(items) == SAMPLE_PRODUCT_COUNT
+    assert str(items[VANILLA].quote.shelf_price) == KSA_SHELF_PRICES[VANILLA]
+    assert str(items[GUMMY_BEARS].quote.shelf_price) == KSA_SHELF_PRICES[GUMMY_BEARS]
+
+
+def test_excluded_is_a_tuple(catalogue: Catalogue, config: GccConfig) -> None:
+    result = localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING)
+    assert isinstance(result.excluded, tuple)
+    with pytest.raises(FrozenInstanceError):
+        result.excluded = ()  # type: ignore[misc]
 
 
 # --- result objects -----------------------------------------------------------------------

@@ -8,6 +8,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
+from souqsort.compliance import ExcludedProduct
+from souqsort.models import AttributeName
 from souqsort.pipeline import (
     MISSING_ARABIC_NAME,
     CatalogueSummary,
@@ -20,6 +22,13 @@ _NO_VALUE = "-"
 
 # What a grid shows for each flag. A flag with no label here is shown as its code.
 _FLAG_LABELS = {MISSING_ARABIC_NAME: "No Arabic name"}
+
+# What the dashboard shows for each reason a product is not sold. The CLI keeps the codes.
+ATTRIBUTE_LABELS: dict[AttributeName, str] = {
+    "contains_alcohol": "Contains alcohol",
+    "contains_pork": "Contains pork",
+    "contains_lithium_battery": "Contains lithium battery",
+}
 
 
 @dataclass(frozen=True)
@@ -56,6 +65,19 @@ class GridRow:
     margin_percent: Decimal
     delivery_date: str
     flags: str
+
+
+@dataclass(frozen=True)
+class ExcludedGridRow:
+    """A product the market does not sell, for a grid.
+
+    ``reasons`` is one string of labels for a person to read (``"Contains pork"``), in the
+    order the market lists them.
+    """
+
+    sku: str
+    name_en: str
+    reasons: str
 
 
 @dataclass(frozen=True)
@@ -119,6 +141,18 @@ def grid_rows(items: Sequence[LocalisedProduct]) -> list[GridRow]:
             flags=", ".join(_FLAG_LABELS.get(flag, flag) for flag in row.flags),
         )
         for row in display_rows(items)
+    ]
+
+
+def excluded_grid_rows(excluded: Sequence[ExcludedProduct]) -> list[ExcludedGridRow]:
+    """One grid row per product not sold, in the same order, with its reasons as labels."""
+    return [
+        ExcludedGridRow(
+            sku=item.sku,
+            name_en=item.name_en,
+            reasons=", ".join(ATTRIBUTE_LABELS[reason] for reason in item.reasons),
+        )
+        for item in excluded
     ]
 
 

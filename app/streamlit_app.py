@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from souqsort.display import display_summary, grid_rows, search_products
+from souqsort.display import display_summary, excluded_grid_rows, grid_rows, search_products
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
 from souqsort.logistics.calendar import in_market_time, to_market_time
 from souqsort.pipeline import (
@@ -100,6 +100,7 @@ try:
     summary = localised.summary
     headline = display_summary(summary)
     rows = grid_rows(search_products(localised.items, query))
+    not_sold = excluded_grid_rows(localised.excluded)
 except LocalisationError as exc:
     st.error(str(exc))
     st.stop()
@@ -114,11 +115,14 @@ st.caption(
     "All market data is illustrative"
 )
 
-margin_metric, flagged_metric, change_metric = st.columns(3)
+margin_metric, flagged_metric, change_metric, not_sold_metric = st.columns(4)
 margin_metric.metric("Average margin", headline.average_margin)
 flagged_metric.metric("Flagged products", headline.flagged_products)
 change_metric.metric("Average price change vs 0 pp", headline.average_price_change)
-st.caption(f"All {summary.product_count} products in {market.code}; search filters the table only")
+not_sold_metric.metric(f"Not sold in {market.code}", str(len(localised.excluded)))
+st.caption(
+    f"All {summary.product_count} products for sale in {market.code}; search filters the table only"
+)
 
 price_column = f"Shelf price ({market.currency.code})"
 margin_column = "Margin %"
@@ -144,7 +148,23 @@ st.dataframe(
     },
 )
 
-if summary.product_count == 0:
+if summary.product_count == 0 and not localised.excluded:
     st.info("The catalogue has no products.")
+elif summary.product_count == 0:
+    st.info(f"No product in the catalogue can be sold in {market.code}.")
 elif not rows:
     st.info("No product matches the search.")
+
+# Products the market does not allow: reported with their reasons, never silently dropped.
+if not_sold:
+    st.subheader(f"Not sold in {market.code}")
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "SKU": [row.sku for row in not_sold],
+                "Name": [row.name_en for row in not_sold],
+                "Reason": [row.reasons for row in not_sold],
+            }
+        ),
+        hide_index=True,
+    )

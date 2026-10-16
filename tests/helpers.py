@@ -6,6 +6,9 @@ from souqsort.models import ProductAttributes
 
 SAMPLE_PRODUCT_COUNT = 13  # products in data/raw/global_products.json
 
+# Sample products each market sells after compliance screening (SPEC §7.6).
+FOR_SALE_COUNTS = {"KSA": 11, "UAE": 12, "KWT": 11}
+
 # Attributes for a product built in a test, when none of them matters.
 NO_ATTRIBUTES = ProductAttributes(
     contains_alcohol=False, contains_pork=False, contains_lithium_battery=False
