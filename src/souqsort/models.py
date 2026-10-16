@@ -55,6 +55,8 @@ CategoryName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
 AttributeName = Literal["contains_alcohol", "contains_pork", "contains_lithium_battery"]
 # How an order travels: a scenario parameter, like the duty adjustment; the config never stores it.
 ShippingModel = Literal["consolidated", "parcel"]
+# Whether a CIF equal to the de minimis threshold still qualifies ("at_or_below") or not.
+DeMinimisApplies = Literal["below", "at_or_below"]
 
 
 class _Model(BaseModel):
@@ -167,7 +169,7 @@ class DeMinimisRule(_Model):
     """
 
     threshold: PositiveDecimal
-    applies: Literal["below", "at_or_below"]
+    applies: DeMinimisApplies
     excluded_attributes: tuple[AttributeName, ...]
     source: NonEmptyStr
 

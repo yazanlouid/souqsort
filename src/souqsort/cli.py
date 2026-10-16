@@ -12,7 +12,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import get_args
 
 from souqsort.compliance import ExcludedProduct
 from souqsort.display import DisplayRow, display_rows, duty_text
@@ -26,6 +25,7 @@ from souqsort.pipeline import (
     find_market,
     localise_and_summarise,
 )
+from souqsort.pricing.customs import SHIPPING_MODELS
 
 DEFAULT_CATALOGUE = Path("data/raw/global_products.json")
 DEFAULT_CONFIG = Path("data/raw/gcc_config.json")
@@ -104,12 +104,12 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
     )
     price.add_argument(
         "--shipping",
-        choices=get_args(ShippingModel),
+        choices=SHIPPING_MODELS,
         default="consolidated",
         help=(
             "shipping model: consolidated (one commercial import, no de minimis) or parcel "
             "(each order cleared on its own, duty-free under the market's de minimis "
-            "threshold, dearer freight) (default: consolidated)"
+            "threshold, dearer freight) (default: %(default)s)"
         ),
     )
     price.add_argument(

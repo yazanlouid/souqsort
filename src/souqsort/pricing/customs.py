@@ -1,20 +1,12 @@
 """Customs duty: the rate a product pays, and when de minimis waives it."""
 
-import operator
-from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import get_args
+from typing import assert_never, get_args
 
 from souqsort.models import DeMinimisRule, MarketConfig, Product, ProductAttributes, ShippingModel
 
 SHIPPING_MODELS: tuple[ShippingModel, ...] = get_args(ShippingModel)
-
-# How CIF is compared with the threshold, for each value of DeMinimisRule.applies.
-_UNDER_THRESHOLD: dict[str, Callable[[Decimal, Decimal], bool]] = {
-    "below": operator.lt,
-    "at_or_below": operator.le,
-}
 
 
 @dataclass(frozen=True)
@@ -47,7 +39,14 @@ def de_minimis_applies(
         return False
     if any(attributes.has(name) for name in rule.excluded_attributes):
         return False
-    return _UNDER_THRESHOLD[rule.applies](cif, rule.threshold)
+    # A match, not a dict: mypy fails here if DeMinimisApplies gains a value with no case.
+    match rule.applies:
+        case "below":
+            return cif < rule.threshold
+        case "at_or_below":
+            return cif <= rule.threshold
+        case unknown:
+            assert_never(unknown)
 
 
 def assess_duty(

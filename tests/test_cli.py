@@ -1158,6 +1158,7 @@ def test_price_help_lists_every_option(run: Callable[..., Result]) -> None:
     for option in options:
         assert option in result.out
     assert "{consolidated,parcel}" in result.out
+    assert "(default: consolidated)" in " ".join(result.out.split())  # help may wrap lines
 
 
 def test_python_dash_m_souqsort_runs_the_cli() -> None:
