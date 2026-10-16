@@ -2,7 +2,14 @@
 
 from decimal import Decimal
 
+from souqsort.models import ProductAttributes
+
 SAMPLE_PRODUCT_COUNT = 13  # products in data/raw/global_products.json
+
+# Attributes for a product built in a test, when none of them matters.
+NO_ATTRIBUTES = ProductAttributes(
+    contains_alcohol=False, contains_pork=False, contains_lithium_battery=False
+)
 
 
 def decimal_places(value: Decimal) -> int:

@@ -40,7 +40,7 @@ def raw_config(config_path: Path) -> dict[str, Any]:
 
 # Loaded once per session so Hypothesis tests can use them (it rejects function-scoped
 # fixtures). They are shared, and Pydantic's ``frozen`` is shallow: the dicts inside
-# (``per_usd``, ``category_overrides``, ``attributes``, ``markets``) can still be mutated.
+# (``per_usd``, ``category_overrides``, ``markets``) can still be mutated.
 # Never mutate these or anything reached through them. A test that needs a modified config
 # builds a copy with ``model_copy(update=...)``, passing new dicts for any nested dict it
 # changes (``model_copy`` is shallow too), or starts from ``raw_config`` / ``raw_catalogue``.

@@ -49,6 +49,10 @@ CurrencyCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
 HsCode = Annotated[str, StringConstraints(pattern=r"^\d{6,10}$")]
 HhMm = Annotated[dt.time, BeforeValidator(_parse_hhmm)]
 Weekday = Literal["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+# Lowercase only, so a category can never miss its duty override over a capital (issue #1).
+CategoryName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
+# The fields of ProductAttributes; a test keeps the two in step.
+AttributeName = Literal["contains_alcohol", "contains_pork", "contains_lithium_battery"]
 
 
 class _Model(BaseModel):
@@ -63,16 +67,29 @@ class ProductName(_Model):
     ar: str | None
 
 
+class ProductAttributes(_Model):
+    """A fixed set of flags, so a misspelt name fails when the data loads."""
+
+    contains_alcohol: StrictBool
+    contains_pork: StrictBool
+    contains_lithium_battery: StrictBool
+
+    def has(self, name: AttributeName) -> bool:
+        """Whether the attribute called ``name`` is true."""
+        value: bool = getattr(self, name)
+        return value
+
+
 class Product(_Model):
     sku: NonEmptyStr
     name: ProductName
-    category: NonEmptyStr
+    category: CategoryName
     hs_code: HsCode
     base_price: PositiveDecimal
     currency: Literal["USD", "GBP"]
     unit_cost: PositiveDecimal
     weight_kg: NonNegativeDecimal
-    attributes: dict[str, StrictBool]
+    attributes: ProductAttributes
 
 
 class Catalogue(_Model):
@@ -132,7 +149,7 @@ class TaxConfig(_Model):
 
 class CustomsConfig(_Model):
     default_duty_rate: NonNegativeDecimal
-    category_overrides: dict[str, NonNegativeDecimal]
+    category_overrides: dict[CategoryName, NonNegativeDecimal]
 
 
 class Holiday(_Model):
