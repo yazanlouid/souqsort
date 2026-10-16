@@ -64,6 +64,12 @@ def zero_vat_config() -> GccConfig:
     return load_gcc_config(FIXTURES_DIR / "zero_vat_config.json")
 
 
+@pytest.fixture(scope="session")
+def de_minimis_boundary_config() -> GccConfig:
+    """Test-only config for SPEC §7.8 H: TEST-BELOW and TEST-AT-OR-BELOW, CIF = 4 x USD price."""
+    return load_gcc_config(FIXTURES_DIR / "de_minimis_boundary_config.json")
+
+
 @pytest.fixture
 def write_json(tmp_path: Path) -> Callable[[Any], Path]:
     """Write an object as JSON into a temp file and return its path."""

@@ -211,7 +211,9 @@ def test_json_number_in_product_decimal_field_rejected(
     [
         (("tax", "vat_rate"), 0.15),
         (("customs", "default_duty_rate"), 0.05),
+        (("customs", "de_minimis", "threshold"), 1000),
         (("logistics", "freight_per_kg_usd"), 4.5),
+        (("logistics", "parcel_freight_per_kg_usd"), 9.0),
     ],
 )
 def test_json_number_in_market_rate_rejected(
@@ -297,7 +299,9 @@ def test_non_positive_fx_rate_rejected(write_json: WriteJson, raw_config: Raw) -
         ("tax", "vat_rate"),
         ("customs", "default_duty_rate"),
         ("customs", "category_overrides", "fashion"),
+        ("customs", "de_minimis", "threshold"),
         ("logistics", "freight_per_kg_usd"),
+        ("logistics", "parcel_freight_per_kg_usd"),
         ("currency", "charm_ending"),
     ],
 )
@@ -457,6 +461,132 @@ def test_empty_compliance_source_rejected(write_json: WriteJson, raw_config: Raw
 def test_nothing_banned_accepted(write_json: WriteJson, raw_config: Raw) -> None:
     _ksa(raw_config)["compliance"]["banned_attributes"] = []
     assert _load_config(write_json, raw_config).markets["KSA"].compliance.banned_attributes == ()
+
+
+# --- DeMinimisRule and parcel freight (SPEC §6.2, M10) ------------------------------------
+
+
+def test_sample_markets_have_the_de_minimis_rules_in_the_spec(config_path: Path) -> None:
+    markets = load_gcc_config(config_path).markets
+    rules = {code: market.customs.de_minimis for code, market in markets.items()}
+
+    ksa, uae = rules["KSA"], rules["UAE"]
+    assert ksa is not None
+    assert (ksa.threshold, ksa.applies, ksa.excluded_attributes) == (
+        Decimal("1000.00"),
+        "below",
+        (),
+    )
+    assert ksa.source.startswith("illustrative, modelled on ZATCA")
+    assert uae is not None
+    assert (uae.threshold, uae.applies, uae.excluded_attributes) == (
+        Decimal("1000.00"),
+        "at_or_below",
+        ("contains_alcohol",),
+    )
+    assert uae.source.startswith("illustrative, modelled on Dubai Customs")
+    assert rules["KWT"] is None  # Kuwait has no de minimis
+
+
+def test_sample_markets_have_the_parcel_freight_in_the_spec(config_path: Path) -> None:
+    markets = load_gcc_config(config_path).markets
+    assert {
+        code: market.logistics.parcel_freight_per_kg_usd for code, market in markets.items()
+    } == {
+        "KSA": Decimal("9.00"),
+        "UAE": Decimal("8.00"),
+        "KWT": Decimal("10.00"),
+    }
+
+
+def test_market_without_de_minimis_key_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    del _ksa(raw_config)["customs"]["de_minimis"]
+    _reject_config(write_json, raw_config, "de_minimis", "Field required")
+
+
+def test_null_de_minimis_accepted(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["customs"]["de_minimis"] = None
+    assert _load_config(write_json, raw_config).markets["KSA"].customs.de_minimis is None
+
+
+def test_zero_de_minimis_threshold_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["customs"]["de_minimis"]["threshold"] = "0"
+    _reject_config(write_json, raw_config, "threshold", "greater than 0")
+
+
+@pytest.mark.parametrize("applies", ["under", "BELOW", "at_or_above", ""])
+def test_unknown_de_minimis_applies_rejected(
+    write_json: WriteJson, raw_config: Raw, applies: str
+) -> None:
+    _ksa(raw_config)["customs"]["de_minimis"]["applies"] = applies
+    _reject_config(write_json, raw_config, "applies", "'below' or 'at_or_below'")
+
+
+def test_unknown_excluded_attribute_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["customs"]["de_minimis"]["excluded_attributes"] = ["contains_alcohl"]
+    _reject_config(write_json, raw_config, "excluded_attributes", "contains_alcohl")
+
+
+def test_duplicate_excluded_attribute_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    excluded = ["contains_alcohol", "contains_alcohol"]
+    _ksa(raw_config)["customs"]["de_minimis"]["excluded_attributes"] = excluded
+    _reject_config(write_json, raw_config, "duplicate excluded attribute", "contains_alcohol")
+
+
+def test_empty_de_minimis_source_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["customs"]["de_minimis"]["source"] = ""
+    _reject_config(write_json, raw_config, "de_minimis.source")
+
+
+def test_unknown_de_minimis_key_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["customs"]["de_minimis"]["currency"] = "SAR"
+    _reject_config(write_json, raw_config, "de_minimis.currency")
+
+
+def test_excluded_attributes_may_be_empty(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["customs"]["de_minimis"]["excluded_attributes"] = []
+    rule = _load_config(write_json, raw_config).markets["KSA"].customs.de_minimis
+    assert rule is not None
+    assert rule.excluded_attributes == ()
+
+
+def test_market_without_parcel_freight_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    del _ksa(raw_config)["logistics"]["parcel_freight_per_kg_usd"]
+    _reject_config(write_json, raw_config, "parcel_freight_per_kg_usd", "Field required")
+
+
+def test_zero_parcel_freight_accepted(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["logistics"]["parcel_freight_per_kg_usd"] = "0"
+    ksa = _load_config(write_json, raw_config).markets["KSA"]
+    assert ksa.logistics.parcel_freight_per_kg_usd == 0
+
+
+def test_de_minimis_boundary_fixture_loads(de_minimis_boundary_config: GccConfig) -> None:
+    markets = de_minimis_boundary_config.markets
+    assert list(markets) == ["TEST-BELOW", "TEST-AT-OR-BELOW"]
+    assert de_minimis_boundary_config.fx.per_usd["XTS"] == Decimal("4.0000")
+    for code, applies in (("TEST-BELOW", "below"), ("TEST-AT-OR-BELOW", "at_or_below")):
+        market = markets[code]
+        rule = market.customs.de_minimis
+        assert rule is not None
+        assert (rule.threshold, rule.applies, rule.excluded_attributes) == (
+            Decimal("1000.00"),
+            applies,
+            (),
+        )
+        assert (market.currency.code, market.currency.minor_units) == ("XTS", 2)
+        assert market.currency.charm_ending is None
+        assert market.tax.vat_rate == 0
+        assert market.customs.default_duty_rate == Decimal("0.05")
+        assert market.compliance.banned_attributes == ()
+        assert market.logistics.freight_per_kg_usd == 0
+        assert market.logistics.parcel_freight_per_kg_usd == 0
+
+
+def test_zero_vat_fixture_has_no_de_minimis(zero_vat_config: GccConfig) -> None:
+    market = zero_vat_config.markets["TEST-KWD"]
+    assert market.customs.de_minimis is None
+    assert market.logistics.parcel_freight_per_kg_usd == Decimal("9.00")
 
 
 @pytest.mark.parametrize("key", ["Fashion", "FASHION", "fashion wear"])

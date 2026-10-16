@@ -147,9 +147,42 @@ class TaxConfig(_Model):
     effective_from: dt.date
 
 
+def _reject_duplicate_attributes(
+    value: tuple[AttributeName, ...], kind: str
+) -> tuple[AttributeName, ...]:
+    """``value`` unchanged, or a ``ValueError`` naming each attribute listed twice."""
+    duplicates = sorted(name for name, n in Counter(value).items() if n > 1)
+    if duplicates:
+        raise ValueError(f"duplicate {kind} attribute: {', '.join(duplicates)}")
+    return value
+
+
+class DeMinimisRule(_Model):
+    """A threshold, in the market currency, under which a direct parcel pays no duty.
+
+    ``applies`` says whether a CIF equal to the threshold still qualifies. A product with a
+    true attribute listed in ``excluded_attributes`` never qualifies.
+    """
+
+    threshold: PositiveDecimal
+    applies: Literal["below", "at_or_below"]
+    excluded_attributes: tuple[AttributeName, ...]
+    source: NonEmptyStr
+
+    @field_validator("excluded_attributes")
+    @classmethod
+    def _no_duplicate_attributes(
+        cls, value: tuple[AttributeName, ...]
+    ) -> tuple[AttributeName, ...]:
+        return _reject_duplicate_attributes(value, "excluded")
+
+
 class CustomsConfig(_Model):
+    """Duty rates and the de minimis rule; ``de_minimis`` is required and ``None`` means none."""
+
     default_duty_rate: NonNegativeDecimal
     category_overrides: dict[CategoryName, NonNegativeDecimal]
+    de_minimis: DeMinimisRule | None
 
 
 class ComplianceConfig(_Model):
@@ -163,10 +196,7 @@ class ComplianceConfig(_Model):
     def _no_duplicate_attributes(
         cls, value: tuple[AttributeName, ...]
     ) -> tuple[AttributeName, ...]:
-        duplicates = sorted(name for name, n in Counter(value).items() if n > 1)
-        if duplicates:
-            raise ValueError(f"duplicate banned attribute: {', '.join(duplicates)}")
-        return value
+        return _reject_duplicate_attributes(value, "banned")
 
 
 class Holiday(_Model):
@@ -207,7 +237,10 @@ class CalendarConfig(_Model):
 
 
 class LogisticsConfig(_Model):
+    """Freight per kg for a consolidated import and for a direct parcel, and transit days."""
+
     freight_per_kg_usd: NonNegativeDecimal
+    parcel_freight_per_kg_usd: NonNegativeDecimal
     linehaul_business_days: NonNegativeInt
     last_mile_business_days: NonNegativeInt
 
