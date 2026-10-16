@@ -109,7 +109,7 @@ def _quote(
 
 
 def localise_catalogue(
-    products: list[Product],
+    products: Sequence[Product],
     config: GccConfig,
     market_code: str,
     ordered_at: datetime,
@@ -225,7 +225,7 @@ class LocalisedCatalogue:
 
 
 def localise_and_summarise(
-    products: list[Product],
+    products: Sequence[Product],
     config: GccConfig,
     market_code: str,
     ordered_at: datetime,
@@ -246,10 +246,9 @@ def localise_and_summarise(
     _require_duty_adjustment(duty_adjustment)
     market = find_market(config, market_code)
     screen = screen_products(products, market)
-    for_sale = list(screen.sellable)
 
-    items = localise_catalogue(for_sale, config, market.code, ordered_at, duty_adjustment)
-    baseline = localise_catalogue(for_sale, config, market.code, ordered_at)
+    items = localise_catalogue(screen.sellable, config, market.code, ordered_at, duty_adjustment)
+    baseline = localise_catalogue(screen.sellable, config, market.code, ordered_at)
     return LocalisedCatalogue(
         items=tuple(items),
         excluded=screen.excluded,

@@ -805,6 +805,17 @@ def test_localise_catalogue_still_prices_what_it_is_given(
     assert str(items[GUMMY_BEARS].quote.shelf_price) == KSA_SHELF_PRICES[GUMMY_BEARS]
 
 
+def test_products_can_be_any_sequence(catalogue: Catalogue, config: GccConfig) -> None:
+    as_tuple = tuple(catalogue.products)
+
+    assert localise_catalogue(as_tuple, config, "KSA", THU_EVENING) == localise_catalogue(
+        catalogue.products, config, "KSA", THU_EVENING
+    )
+    assert localise_and_summarise(as_tuple, config, "KSA", THU_EVENING) == (
+        localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING)
+    )
+
+
 def test_excluded_is_a_tuple(catalogue: Catalogue, config: GccConfig) -> None:
     result = localise_and_summarise(catalogue.products, config, "KSA", THU_EVENING)
     assert isinstance(result.excluded, tuple)
