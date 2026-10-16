@@ -6,7 +6,13 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from souqsort.display import display_summary, excluded_grid_rows, grid_rows, search_products
+from souqsort.display import (
+    SHIPPING_LABELS,
+    display_summary,
+    excluded_grid_rows,
+    grid_rows,
+    search_products,
+)
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
 from souqsort.logistics.calendar import in_market_time, to_market_time
 from souqsort.pipeline import (
@@ -50,6 +56,18 @@ with st.sidebar:
     )
     market = find_market(config, market_code)
     timezone = market.calendar.timezone
+
+    shipping = st.radio(
+        "Shipping model",
+        options=list(SHIPPING_LABELS),
+        format_func=SHIPPING_LABELS.__getitem__,
+        help=(
+            "Consolidated: orders travel as one commercial import, so de minimis never applies. "
+            "Direct parcel: each order is cleared on its own; under the market's threshold it "
+            "pays no duty, but parcel freight costs more per kg."
+        ),
+        key="shipping",
+    )
 
     # The pickers hold a local date and time, read on the selected market's clock, as the CLI
     # reads --ordered-at without an offset. They start once per session at the opening moment
@@ -96,6 +114,7 @@ try:
         market.code,
         ordered_at,
         duty_adjustment_from_points(duty_points),
+        shipping,
     )
     summary = localised.summary
     headline = display_summary(summary)
@@ -112,6 +131,7 @@ st.caption(
     f"Market: {market.code} ({market.name}) | "
     f"Ordered at: {ordered_at:%a %Y-%m-%d %H:%M} {timezone} | "
     f"Duty adjustment: +{duty_points} pp | "
+    f"Shipping: {SHIPPING_LABELS[shipping]} | "
     "All market data is illustrative"
 )
 
@@ -135,6 +155,7 @@ st.dataframe(
             "Name": [row.name_en for row in rows],
             price_column: [row.shelf_price for row in rows],
             margin_column: [row.margin_percent for row in rows],
+            "Duty": [row.duty for row in rows],
             "Delivery": [row.delivery_date for row in rows],
             "Flags": [row.flags for row in rows],
         }

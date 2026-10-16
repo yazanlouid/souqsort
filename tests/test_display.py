@@ -11,17 +11,19 @@ from helpers import SAMPLE_PRODUCT_COUNT, decimal_places
 from souqsort.compliance import ExcludedProduct
 from souqsort.display import (
     ATTRIBUTE_LABELS,
+    SHIPPING_LABELS,
     DisplayRow,
     DisplaySummary,
     ExcludedGridRow,
     GridRow,
     display_rows,
     display_summary,
+    duty_text,
     excluded_grid_rows,
     grid_rows,
     search_products,
 )
-from souqsort.models import AttributeName, Catalogue, GccConfig
+from souqsort.models import AttributeName, Catalogue, GccConfig, ShippingModel
 from souqsort.pipeline import (
     CatalogueSummary,
     LocalisationError,
@@ -87,6 +89,8 @@ def test_worked_example_rows(localised: list[LocalisedProduct]) -> None:
         currency="SAR",
         shelf_price="686.95",
         margin_percent="58.7",
+        duty_percent="5.0",
+        duty_waived=False,
         delivery_date="2026-10-25",
         flags=(),
     )
@@ -96,16 +100,21 @@ def test_worked_example_rows(localised: list[LocalisedProduct]) -> None:
         currency="SAR",
         shelf_price="594.95",
         margin_percent="64.6",
+        duty_percent="12.0",
+        duty_waived=False,
         delivery_date="2026-10-25",
         flags=("missing_arabic_name",),
     )
 
 
-def test_every_value_is_text_except_the_flags(localised: list[LocalisedProduct]) -> None:
+def test_every_value_is_text_except_the_flags_and_duty_waived(
+    localised: list[LocalisedProduct],
+) -> None:
+    kinds = {"flags": tuple, "duty_waived": bool}
     for row in display_rows(localised):
         for field in fields(row):
             value = getattr(row, field.name)
-            assert isinstance(value, tuple if field.name == "flags" else str), field.name
+            assert isinstance(value, kinds.get(field.name, str)), field.name
 
 
 def test_empty_list_gives_no_rows() -> None:
@@ -157,6 +166,60 @@ def test_margin_too_large_to_display_names_the_sku(headphones: LocalisedProduct)
     assert isinstance(excinfo.value.__cause__, ArithmeticError)
 
 
+# --- duty (SPEC §7.1 and §9.1, M10) -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sku", "points", "shipping", "percent", "waived", "cell"),
+    [
+        (HEADPHONES, "0", "consolidated", "5.0", False, "5.0%"),
+        (BAG, "0.03", "consolidated", "15.0", False, "15.0%"),  # fashion 12% + 3 pp
+        (LICENCE, "0", "consolidated", "0.0", False, "0.0%"),  # duty-free, but not waived
+        (HEADPHONES, "0", "parcel", "0.0", True, "waived"),  # SPEC §7.8 E
+        (HEADPHONES, "0.20", "parcel", "0.0", True, "waived"),  # whatever the adjustment
+        (BAG, "0.03", "parcel", "0.0", True, "waived"),
+        (ESPRESSO, "0.03", "parcel", "8.0", False, "8.0%"),  # above the threshold
+        (LICENCE, "0", "parcel", "0.0", True, "waived"),  # SPEC §7.9.2: waived though 0%
+    ],
+)
+def test_duty_cells(
+    catalogue: Catalogue,
+    config: GccConfig,
+    sku: str,
+    points: str,
+    shipping: ShippingModel,
+    percent: str,
+    waived: bool,
+    cell: str,
+) -> None:
+    items = localise_catalogue(
+        catalogue.products, config, "KSA", THU_EVENING, Decimal(points), shipping
+    )
+    item = next(item for item in items if item.sku == sku)
+
+    (row,) = display_rows([item])
+    (grid_row,) = grid_rows([item])
+
+    assert (row.duty_percent, row.duty_waived) == (percent, waived)
+    assert duty_text(row) == cell
+    assert grid_row.duty == cell
+
+
+def test_duty_rate_too_large_to_display_names_the_sku(headphones: LocalisedProduct) -> None:
+    absurd = replace(headphones, quote=replace(headphones.quote, duty_rate=Decimal("1E+27")))
+
+    with pytest.raises(LocalisationError) as excinfo:
+        display_rows([absurd])
+
+    assert str(excinfo.value).startswith(f"{HEADPHONES}: duty rate")
+    assert isinstance(excinfo.value.__cause__, ArithmeticError)
+
+
+def test_shipping_labels_cover_every_shipping_model() -> None:
+    assert list(SHIPPING_LABELS) == list(get_args(ShippingModel))
+    assert SHIPPING_LABELS == {"consolidated": "Consolidated import", "parcel": "Direct parcel"}
+
+
 # --- grid rows: display rows whose price and margin are numbers ---------------------------
 
 
@@ -175,6 +238,7 @@ def test_grid_rows_show_what_the_display_rows_show(localised: list[LocalisedProd
         # str() of a Decimal keeps its digits, so this is the same text the CLI prints.
         assert str(row.shelf_price) == text.shelf_price
         assert str(row.margin_percent) == text.margin_percent
+        assert row.duty == duty_text(text)  # the same Duty cell as the CLI table
 
     # Flags are the one difference: the CLI prints their codes, the grid their labels.
     assert {row.flags for row in rows} == {"", "No Arabic name"}
@@ -188,6 +252,7 @@ def test_worked_example_grid_rows(localised: list[LocalisedProduct]) -> None:
         name_en="Wireless Noise-Cancelling Headphones",
         shelf_price=Decimal("686.95"),
         margin_percent=Decimal("58.7"),
+        duty="5.0%",
         delivery_date="2026-10-25",
         flags="",
     )
@@ -196,6 +261,7 @@ def test_worked_example_grid_rows(localised: list[LocalisedProduct]) -> None:
         name_en="Leather Crossbody Bag",
         shelf_price=Decimal("594.95"),
         margin_percent=Decimal("64.6"),
+        duty="12.0%",
         delivery_date="2026-10-25",
         flags="No Arabic name",
     )

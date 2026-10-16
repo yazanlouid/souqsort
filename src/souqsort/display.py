@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from souqsort.compliance import ExcludedProduct
-from souqsort.models import AttributeName
+from souqsort.models import AttributeName, ShippingModel
 from souqsort.pipeline import (
     MISSING_ARABIC_NAME,
     CatalogueSummary,
@@ -19,6 +19,15 @@ from souqsort.pipeline import (
 from souqsort.pricing.money import format_money
 
 _NO_VALUE = "-"
+
+# What the Duty column shows for a product whose duty de minimis waived.
+WAIVED = "waived"
+
+# What the dashboard calls each shipping model. The CLI keeps the codes.
+SHIPPING_LABELS: dict[ShippingModel, str] = {
+    "consolidated": "Consolidated import",
+    "parcel": "Direct parcel",
+}
 
 # What a grid shows for each flag. A flag with no label here is shown as its code.
 _FLAG_LABELS = {MISSING_ARABIC_NAME: "No Arabic name"}
@@ -36,7 +45,8 @@ class DisplayRow:
     """One localised product as text.
 
     ``shelf_price`` has exactly the currency's minor units, as the engine rounded it.
-    ``margin_percent`` is a percentage with one decimal and no ``%`` sign (``"58.7"``).
+    ``margin_percent`` is a percentage with one decimal and no ``%`` sign (``"58.7"``), and so
+    is ``duty_percent``, the duty rate applied (``"5.0"``; ``"0.0"`` when ``duty_waived``).
     ``delivery_date`` is an ISO date.
     """
 
@@ -45,6 +55,8 @@ class DisplayRow:
     currency: str
     shelf_price: str
     margin_percent: str
+    duty_percent: str
+    duty_waived: bool
     delivery_date: str
     flags: tuple[str, ...]
 
@@ -55,14 +67,16 @@ class GridRow:
 
     The same values as a ``DisplayRow``, but ``shelf_price`` and ``margin_percent`` are
     numbers, so a grid sorts them by value: as text, ``"111.95"`` comes before ``"16.95"``.
-    Each keeps the decimals of its text. ``flags`` is one string of labels for a person to
-    read (``"No Arabic name"``), empty when there are none; a ``DisplayRow`` keeps the codes.
+    Each keeps the decimals of its text. ``duty`` is the Duty cell (``"5.0%"`` or
+    ``"waived"``). ``flags`` is one string of labels for a person to read
+    (``"No Arabic name"``), empty when there are none; a ``DisplayRow`` keeps the codes.
     """
 
     sku: str
     name_en: str
     shelf_price: Decimal
     margin_percent: Decimal
+    duty: str
     delivery_date: str
     flags: str
 
@@ -105,10 +119,23 @@ def _margin_percent(item: LocalisedProduct) -> str:
         raise LocalisationError(f"{item.sku}: margin is too large to display") from exc
 
 
+def _duty_percent(item: LocalisedProduct) -> str:
+    try:
+        return _percent(item.quote.duty_rate)
+    except ArithmeticError as exc:
+        raise LocalisationError(f"{item.sku}: duty rate is too large to display") from exc
+
+
+def duty_text(row: DisplayRow) -> str:
+    """The Duty cell of a row: ``"waived"`` if de minimis applied, otherwise ``"5.0%"``."""
+    return WAIVED if row.duty_waived else f"{row.duty_percent}%"
+
+
 def display_rows(items: Sequence[LocalisedProduct]) -> list[DisplayRow]:
     """One row per localised product, in the same order.
 
-    Raises ``LocalisationError`` naming the SKU if a margin is too large to display.
+    Raises ``LocalisationError`` naming the SKU if a margin or duty rate is too large to
+    display.
     """
     return [
         DisplayRow(
@@ -117,6 +144,8 @@ def display_rows(items: Sequence[LocalisedProduct]) -> list[DisplayRow]:
             currency=item.quote.currency,
             shelf_price=f"{item.quote.shelf_price:f}",
             margin_percent=_margin_percent(item),
+            duty_percent=_duty_percent(item),
+            duty_waived=item.quote.duty_waived,
             delivery_date=item.delivery.delivery_date.isoformat(),
             flags=item.flags,
         )
@@ -137,6 +166,7 @@ def grid_rows(items: Sequence[LocalisedProduct]) -> list[GridRow]:
             # The text is already rounded; Decimal(text) keeps its digits, trailing zeros too.
             shelf_price=Decimal(row.shelf_price),
             margin_percent=Decimal(row.margin_percent),
+            duty=duty_text(row),
             delivery_date=row.delivery_date,
             flags=", ".join(_FLAG_LABELS.get(flag, flag) for flag in row.flags),
         )
