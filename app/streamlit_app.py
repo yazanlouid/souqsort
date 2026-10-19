@@ -161,6 +161,8 @@ st.dataframe(
         }
     ),
     hide_index=True,
+    # As tall as its rows: the default height scrolls after about ten and hides the rest.
+    height="content",
     column_config={
         price_column: st.column_config.NumberColumn(format=f"%.{market.currency.minor_units}f"),
         margin_column: st.column_config.NumberColumn(format="%.1f%%"),
