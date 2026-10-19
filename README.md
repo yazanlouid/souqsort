@@ -167,7 +167,7 @@ The full rules, with worked examples, are in [SPEC.md](SPEC.md).
 
 **v0.2.0: three markets, compliance and de minimis.** KSA, the UAE and Kuwait; banned product
 attributes reported as not sold; a consolidated-import or direct-parcel shipping model, with de
-minimis thresholds; the duty rate, or "waived", in the CLI, the CSV and the dashboard.
+minimis thresholds; the duty rate and any de minimis waiver in the CLI, the CSV and the dashboard.
 
 **v0.1.0:** KSA end to end: catalogue and config validation, landed-cost pricing with margins,
 delivery estimates, the CLI and the dashboard.
