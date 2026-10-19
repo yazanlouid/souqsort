@@ -1,4 +1,4 @@
-"""M5: the `price` command-line interface (SPEC §10)."""
+"""M5: the `price` command-line interface (SPEC §10); M11: the `report` command (§9.6)."""
 
 import ast
 import csv
@@ -17,11 +17,12 @@ from typing import Any
 import pytest
 
 import souqsort
-from helpers import FOR_SALE_COUNTS
+from helpers import FOR_SALE_COUNTS, REPORT_ORDERED_AT
 from souqsort.cli import _csv_cell, main
 from souqsort.models import Catalogue, GccConfig
 from souqsort.pipeline import localise_and_summarise
 from souqsort.pricing.money import format_money
+from souqsort.report import build_report, render_report
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = Path(souqsort.__file__).resolve().parent
@@ -1175,3 +1176,232 @@ def test_python_dash_m_souqsort_runs_the_cli() -> None:
     assert header == TABLE_HEADER
     assert rows[HEADPHONES][PRICE] == "686.95"
     assert len(rows) == KSA_FOR_SALE
+
+
+# --- report (M11, SPEC §9.6) --------------------------------------------------------------
+
+REPORT_ORDER = ("--ordered-at", "2026-10-15T09:00Z")
+NO_OFFSET_MESSAGE = (
+    "argument --ordered-at: the report covers every market, so give a UTC offset, "
+    "e.g. 2026-10-15T09:00Z"
+)
+
+
+def _report(
+    *options: str, catalogue: Path = CATALOGUE_PATH, config: Path = CONFIG_PATH
+) -> tuple[str, ...]:
+    """Arguments for `report` with explicit data files, so tests do not depend on the cwd."""
+    return ("report", "--catalogue", str(catalogue), "--config", str(config), *options)
+
+
+def _expected_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) -> bytes:
+    return render_report(build_report(catalogue, config, ordered_at)).encode("utf-8")
+
+
+def test_report_is_written_to_outputs_by_default(
+    run: Callable[..., Result],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    catalogue: Catalogue,
+    config: GccConfig,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = run(*_report(*REPORT_ORDER))
+
+    assert result.code == 0, result.err
+    written = tmp_path / "outputs" / "GCC_EXPANSION_REPORT.md"
+    assert written.read_bytes() == _expected_report(catalogue, config, REPORT_ORDERED_AT)
+    assert result.out == "Wrote the expansion report to outputs/GCC_EXPANSION_REPORT.md\n"
+
+
+def test_report_out_creates_its_folder_and_prints_the_path_as_given(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    out = tmp_path / "new" / "deeper" / "report.md"
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(out)))
+
+    assert result.code == 0, result.err
+    assert out.read_bytes().startswith(b"# GCC expansion report\n")
+    assert result.out == f"Wrote the expansion report to {out}\n"
+
+
+def test_report_has_unix_line_endings_on_every_os(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    out = tmp_path / "report.md"
+
+    run(*_report(*REPORT_ORDER, "--out", str(out)))
+
+    raw = out.read_bytes()
+    assert b"\r" not in raw
+    assert raw.endswith(b"\n")
+    assert not raw.endswith(b"\n\n")
+
+
+def test_report_overwrites_an_existing_file(run: Callable[..., Result], tmp_path: Path) -> None:
+    out = tmp_path / "report.md"
+    out.write_text("old", encoding="utf-8")
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(out)))
+
+    assert result.code == 0
+    assert out.read_bytes().startswith(b"# GCC expansion report\n")
+
+
+def test_report_ordered_at_with_an_offset_is_that_instant(
+    run: Callable[..., Result], tmp_path: Path, catalogue: Catalogue, config: GccConfig
+) -> None:
+    out = tmp_path / "report.md"
+
+    run(*_report("--ordered-at", "2026-10-15T12:00+03:00", "--out", str(out)))
+
+    assert out.read_bytes() == _expected_report(catalogue, config, REPORT_ORDERED_AT)
+
+
+@pytest.mark.parametrize("value", ["2026-10-15T09:00", "2026-10-15 12:00"])
+def test_report_ordered_at_without_an_offset_is_a_usage_error(
+    run: Callable[..., Result], tmp_path: Path, value: str
+) -> None:
+    out = tmp_path / "report.md"
+
+    result = run(*_report("--ordered-at", value, "--out", str(out)))
+
+    assert result.code == 2
+    assert NO_OFFSET_MESSAGE in result.err
+    assert result.out == ""
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("value", ["2026-10-15", "yesterday", "2026-10-15T25:00Z"])
+def test_report_unparseable_ordered_at_is_a_usage_error(
+    run: Callable[..., Result], value: str
+) -> None:
+    result = run(*_report("--ordered-at", value))
+
+    assert result.code == 2
+    assert "--ordered-at" in result.err
+
+
+def test_report_ordered_at_defaults_to_now(
+    run: Callable[..., Result], tmp_path: Path, catalogue: Catalogue, config: GccConfig
+) -> None:
+    out = tmp_path / "report.md"
+
+    result = run(*_report("--out", str(out)), now=lambda: REPORT_ORDERED_AT)
+
+    assert result.code == 0
+    assert out.read_bytes() == _expected_report(catalogue, config, REPORT_ORDERED_AT)
+
+
+def test_report_does_not_read_the_clock_when_ordered_at_is_given(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    result = run(*_report(*REPORT_ORDER, "--out", str(tmp_path / "r.md")))
+
+    assert result.code == 0  # the fixture's clock raises if it is read
+
+
+@pytest.mark.parametrize("option", ["--catalogue", "--config"])
+def test_report_refuses_to_overwrite_an_input_file(
+    run: Callable[..., Result], tmp_path: Path, option: str
+) -> None:
+    catalogue = Path(shutil.copyfile(CATALOGUE_PATH, tmp_path / "catalogue.json"))
+    config = Path(shutil.copyfile(CONFIG_PATH, tmp_path / "config.json"))
+    target = catalogue if option == "--catalogue" else config
+    original = target.read_bytes()
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(target), catalogue=catalogue, config=config))
+
+    assert result.code == 2
+    assert "--out" in result.err
+    assert option in result.err
+    assert target.read_bytes() == original
+    assert result.out == ""
+
+
+def test_report_with_a_missing_data_file_exits_one(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    missing = tmp_path / "no_such_config.json"
+    out = tmp_path / "report.md"
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(out), config=missing))
+
+    assert result.code == 1
+    assert "no_such_config.json" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+    assert not out.exists()
+
+
+def test_report_with_an_invalid_catalogue_exits_one(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path
+) -> None:
+    raw_catalogue["products"][0]["base_price"] = 149.99
+    bad = _write_json(tmp_path / "float_price.json", raw_catalogue)
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(tmp_path / "r.md"), catalogue=bad))
+
+    assert result.code == 1
+    assert "float_price.json" in result.err
+    assert "Traceback" not in result.err
+
+
+def test_report_order_time_beyond_the_calendar_exits_one(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    out = tmp_path / "report.md"
+
+    result = run(*_report("--ordered-at", "9999-12-31T23:00Z", "--out", str(out)))
+
+    assert result.code == 1
+    assert "KSA" in result.err
+    assert "Traceback" not in result.err
+    assert not out.exists()
+
+
+def test_report_that_cannot_be_written_exits_one(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    result = run(*_report(*REPORT_ORDER, "--out", str(tmp_path)))  # a folder, not a file
+
+    assert result.code == 1
+    assert tmp_path.name in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+
+
+def test_report_help_lists_every_option(run: Callable[..., Result]) -> None:
+    result = run("report", "--help")
+
+    assert result.code == 0
+    for option in ("--ordered-at", "--out", "--catalogue", "--config"):
+        assert option in result.out
+    assert "outputs/GCC_EXPANSION_REPORT.md" in result.out
+
+
+def test_top_level_help_lists_both_commands(run: Callable[..., Result]) -> None:
+    result = run("--help")
+
+    assert result.code == 0
+    assert "price" in result.out
+    assert "report" in result.out
+
+
+def test_report_figure_too_large_to_display_exits_one(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path
+) -> None:
+    for product in raw_catalogue["products"]:
+        product["base_price"] = product["unit_cost"] = "1E-26"
+    tiny = _write_json(tmp_path / "tiny_prices.json", raw_catalogue)
+    out = tmp_path / "report.md"
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(out), catalogue=tiny))
+
+    assert result.code == 1
+    assert "average above catalogue price is too large to display" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+    assert not out.exists()

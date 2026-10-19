@@ -1,15 +1,22 @@
-"""M7: guard rails for two non-negotiables, floats and market codes (SPEC §3 rules 1 and 4)."""
+"""Guard rails for the non-negotiables.
+
+M7: no floats and no market codes in the code (SPEC §3 rules 1 and 4). M11: the report's
+templates only place text (§3 rule 8, §9.4.1).
+"""
 
 import ast
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
+from jinja2 import Environment, nodes
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
 APP_DIR = REPO_ROOT / "app"
+TEMPLATES_DIR = SRC_DIR / "souqsort" / "report" / "templates"
 
 Found = list[tuple[int, str]]  # (line number, what was found)
 
@@ -143,3 +150,105 @@ def test_src_and_app_have_no_market_code_literals(raw_config: dict[str, Any]) ->
         return _market_code_literals(source, codes)
 
     assert _violations(_python_files(SRC_DIR, APP_DIR), find) == []
+
+
+# --- report templates ---------------------------------------------------------------------
+
+# Filters that would turn a value into a number or format one inside the template (§9.4.1).
+_NUMBER_FILTERS = frozenset({"float", "int", "round", "sum", "abs", "format"})
+_ARITHMETIC = (
+    nodes.Add,
+    nodes.Sub,
+    nodes.Mul,
+    nodes.Div,
+    nodes.FloorDiv,
+    nodes.Mod,
+    nodes.Pow,
+    nodes.Neg,
+    nodes.Pos,
+)
+
+
+def _template_problems(source: str, codes: frozenset[str]) -> Found:
+    """Number filters, arithmetic, ``.format`` calls and market or currency codes as words."""
+    found: Found = []
+    tree = Environment().parse(source)
+    for node in tree.find_all((nodes.Filter, nodes.Getattr, *_ARITHMETIC)):
+        if isinstance(node, nodes.Filter):
+            if node.name in _NUMBER_FILTERS:
+                found.append((node.lineno, f"filter {node.name}"))
+        elif isinstance(node, nodes.Getattr):
+            if node.attr == "format":
+                found.append((node.lineno, ".format"))
+        else:
+            found.append((node.lineno, f"arithmetic {type(node).__name__}"))
+    if codes:
+        word = re.compile(r"\b(" + "|".join(map(re.escape, sorted(codes))) + r")\b")
+        for number, line in enumerate(source.splitlines(), start=1):
+            found += [(number, match) for match in word.findall(line)]
+    return sorted(found)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("{{ price | round(2) }}", ["filter round"]),
+        ("{{ price|float }}", ["filter float"]),
+        ("{{ count | int }}", ["filter int"]),
+        ("{{ prices | sum }}", ["filter sum"]),
+        ("{{ change | abs }}", ["filter abs"]),
+        ('{{ "%.2f" | format(price) }}', ["filter format"]),
+        ("{% filter round %}{{ price }}{% endfilter %}", ["filter round"]),
+        ("{{ a + b }}", ["arithmetic Add"]),
+        ("{{ a - b }}", ["arithmetic Sub"]),
+        ("{{ a * 100 }}", ["arithmetic Mul"]),
+        ("{{ a / b }}", ["arithmetic Div"]),
+        ('{{ "%.2f" % price }}', ["arithmetic Mod"]),
+        ("{{ -change }}", ["arithmetic Neg"]),
+        ('{{ "{:.2f}".format(price) }}', [".format"]),
+        ("## KSA (Saudi Arabia)", ["KSA"]),
+        ("| Consolidated (SAR) |", ["SAR"]),
+        ("{% if market == 'UAE' %}x{% endif %}", ["UAE"]),
+        ("KSAX and ksa", []),  # whole words, exact case
+        ("{{ row.market }} | {{ rows | join(', ') }} ~ {{ a ~ b }}", []),
+        ("{% if rows and not other %}{{ row.market }}{% endif %}", []),
+    ],
+    ids=[
+        "round",
+        "float",
+        "int",
+        "sum",
+        "abs",
+        "format-filter",
+        "filter-block",
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "percent-format",
+        "neg",
+        "format-method",
+        "market-code",
+        "currency-code",
+        "market-in-test",
+        "not-a-word",
+        "plain-text",
+        "logic",
+    ],
+)
+def test_template_guard_recognises_problems(source: str, expected: list[str]) -> None:
+    found = _template_problems(source, frozenset({"KSA", "UAE", "SAR"}))
+
+    assert [text for _, text in found] == expected
+
+
+def test_report_templates_only_place_text(raw_config: dict[str, Any]) -> None:
+    codes = frozenset(raw_config["markets"]) | frozenset(raw_config["fx"]["per_usd"])
+    codes |= {market["currency"]["code"] for market in raw_config["markets"].values()}
+    templates = sorted(TEMPLATES_DIR.rglob("*.j2"))
+    assert templates, f"no templates under {TEMPLATES_DIR}"
+
+    def find(source: str) -> Found:
+        return _template_problems(source, codes)
+
+    assert _violations(templates, find) == []

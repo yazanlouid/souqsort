@@ -1,14 +1,14 @@
-# SouqSort — Specification (v0.2)
+# SouqSort — Specification (v0.3)
 
 > The single source of truth for building SouqSort with Claude Code.
-> Work one milestone at a time (M0 → M10). Each milestone lists its acceptance tests.
-> v0.1 (M0–M6) is done and tagged `v0.1.0`. v0.2 (**M7 → Fix #2 → M8 → M9 → M10 → Release**) is done and tagged `v0.2.0`. Each step had its own branch and reached `main` through a pull request with green CI.
+> Work one milestone at a time (M0 → M14). Each milestone lists its acceptance tests.
+> v0.1 (M0–M6) is done and tagged `v0.1.0`. v0.2 (**M7 → Fix #2 → M8 → M9 → M10 → Release**) is done and tagged `v0.2.0`. v0.3 runs **M11 → M12 → M13 → M14 → Release**. Each step has its own branch and reaches `main` through a pull request with green CI.
 
 ## 1. What SouqSort is
 
-SouqSort is a localisation and pricing engine for a UK-based retailer launching its catalogue in three GCC markets: Saudi Arabia (KSA), the UAE and Kuwait. It turns a global catalogue priced in USD/GBP into market-ready shelf prices and delivery promises, and shows the result in a Streamlit dashboard. v0.2 adds the UAE and Kuwait, compliance rules and de minimis. Later versions add a `GCC_EXPANSION_REPORT.md` generator and a data pipeline.
+SouqSort is a localisation and pricing engine for a UK-based retailer launching its catalogue in three GCC markets: Saudi Arabia (KSA), the UAE and Kuwait. It turns a global catalogue priced in USD/GBP into market-ready shelf prices and delivery promises, and shows the result in a Streamlit dashboard. v0.2 added the UAE and Kuwait, compliance rules and de minimis. v0.3 adds `GCC_EXPANSION_REPORT.md`, which puts every market and both shipping models side by side for one order. Later versions add a data pipeline.
 
-**Demo user:** an expansion director who picks a market and a shipping model, adjusts tariffs and sees what happens to prices, margins and delivery dates.
+**Demo user:** an expansion director who picks a market and a shipping model, adjusts tariffs and sees what happens to prices, margins and delivery dates, then downloads a report that compares the markets.
 
 ## 2. Scope
 
@@ -26,11 +26,17 @@ SouqSort is a localisation and pricing engine for a UK-based retailer launching 
 - **GitHub issues:** #1 lowercase categories (M9), #2 CSV formula injection (Fix #2), #3 order-time pickers on a market switch (M8).
 - **Claude Code, one new feature per milestone:** GitHub Actions and a `/verify` skill (M7), an `/add-market` skill with arguments (M8), a format-on-edit hook (M9), a `money-reviewer` subagent (M10), `gh release` (Release).
 
-### Later (do NOT build in v0.2)
-- **v0.3:** a simple `GCC_EXPANSION_REPORT.md` from a template, with a download button.
+### v0.3: the expansion report
+- **`GCC_EXPANSION_REPORT.md`** (§9): one order, every market in the config, both shipping models, today's duty rates plus three tariff rises. Six sections, each opening with sentences computed from its figures, and a summary of those sentences at the top: markets side by side, consolidated or parcel, tariff exposure, how a price is built, pricing risks, and what is not sold.
+- **Two ways to get it:** a `report` CLI command and a download button in the dashboard.
+- **Reproducible:** the same catalogue, config and order time give the same bytes on every OS. A sample for a fixed order lives in `docs/`, and a test keeps it current.
+- **Claude Code:** a `/release` skill that turns the release steps into one command, used to ship v0.3.0.
+
+### Later (do NOT build in v0.3)
 - **Pricing refinements:** per-parcel fees and minimum charges (for example ZATCA's SAR 15 declaration fee on e-store shipments up to SAR 1,000); different transit times for parcels; orders of several items (a threshold applies to a whole order, while v0.2 prices each product as a one-item order); VAT relief for low-value imports; tobacco and nicotine attributes; insurance in CIF; a price ladder for KWD (§7.9.4).
-- **Mid-project upgrades:** calculation traces and a price waterfall; data pipeline (catalogue generator, DuckDB bronze/silver/gold tables, quarantine, run manifest, reconciliation check); decision-led report (tariff pass-through slider, breakeven, sensitivity, market scorecard).
-- **Late:** FastAPI adapter, deployment, README polish, ADRs.
+- **Mid-project upgrades:** calculation traces (`PriceStep`) and a price waterfall in the dashboard; data pipeline (catalogue generator, DuckDB bronze/silver/gold tables, quarantine, run manifest, reconciliation check); a tariff pass-through slider and breakeven analysis. (v0.3's report covers tariff sensitivity and a market scorecard.)
+- **An AI-written summary** for the report, as its own milestone: written only from the report's figures, with a check that rejects any number that is not among them.
+- **Late:** FastAPI adapter, deployment and a live demo, README polish, ADRs.
 
 ## 3. Non-negotiables (also in CLAUDE.md)
 
@@ -41,17 +47,18 @@ SouqSort is a localisation and pricing engine for a UK-based retailer launching 
 5. No code in `src/` reads the clock except the CLI entry point in `cli.py`, which defaults `--ordered-at` to now through an injectable `now` callable. Everything else is passed a timezone-aware `ordered_at`.
 6. Engine functions return result objects (e.g. `PriceQuote`), not bare numbers.
 7. A product that a market does not allow is never priced for that market and never silently dropped. It is reported as not sold, with the reason.
+8. The expansion report is a pure function of the catalogue, the config and the order time: the same inputs give the same bytes on every OS. Its template only places text; every number is formatted in Python, from `Decimal`.
 
 ## 4. Tech stack
 
 - Python 3.12, managed with **uv** (src layout, package name `souqsort`).
-- Runtime dependencies: `pydantic` (v2), `pandas`, `streamlit`, `tzdata`.
+- Runtime dependencies: `pydantic` (v2), `pandas`, `streamlit`, `tzdata`, and from M11 `jinja2` (the report's template).
   - `tzdata` is required on Windows, which has no system timezone database for `zoneinfo`.
 - Dev dependencies: `pytest`, `hypothesis`, `ruff`, `mypy`.
 - Standard library: `decimal`, `zoneinfo`, `datetime`, `argparse`, `json`, `dataclasses`.
-- CI (from M7): GitHub Actions on Ubuntu and Windows (`.github/workflows/ci.yml`). v0.2 adds no dependencies.
+- CI (from M7): GitHub Actions on Ubuntu and Windows (`.github/workflows/ci.yml`). v0.2 added no dependencies. v0.3 makes `jinja2` a direct one; Streamlit already installs it, so `uv.lock` gains no package.
 
-## 5. Project structure (v0.2)
+## 5. Project structure (v0.3)
 
 ```
 souqsort/
@@ -72,9 +79,14 @@ souqsort/
 │   │   └── format_python.py  # M9
 │   ├── skills/
 │   │   ├── verify/SKILL.md   # M7
-│   │   └── add-market/SKILL.md  # M8
+│   │   ├── add-market/SKILL.md  # M8
+│   │   └── release/SKILL.md  # M14
 │   └── agents/
-│       └── money-reviewer.md # M10
+│       └── money-reviewer.md # M10; widened to the report in M11
+├── docs/
+│   ├── dashboard.png         # the README screenshot
+│   └── GCC_EXPANSION_REPORT.md  # M13: the sample report (§9.5)
+├── outputs/                  # gitignored; where the report command writes by default
 ├── data/
 │   └── raw/
 │       ├── global_products.json
@@ -97,7 +109,13 @@ souqsort/
 │       │   └── calendar.py   # business days, delivery estimate
 │       ├── pipeline.py       # localise_catalogue(), localise_and_summarise()
 │       ├── display.py        # display rows shared by the CLI and the dashboard
-│       └── cli.py
+│       ├── report/           # M11–M13: the expansion report (§9)
+│       │   ├── __init__.py   # build_report(), render_report()
+│       │   ├── figures.py    # ExpansionReport and its parts, all Decimal
+│       │   ├── text.py       # formatting, sentences, render_report()
+│       │   └── templates/
+│       │       └── expansion_report.md.j2
+│       └── cli.py            # the price and report commands
 ├── app/
 │   └── streamlit_app.py
 └── tests/
@@ -114,11 +132,14 @@ souqsort/
     ├── test_display.py
     ├── test_cli.py
     ├── test_app.py           # the dashboard, run headlessly with Streamlit's AppTest
-    ├── test_architecture.py  # M7: no floats in src/; no market codes in src/ or app/
+    ├── test_architecture.py  # M7: no floats in src/; no market codes in src/ or app/; M11: templates
     ├── test_markets.py       # M8: per-market worked examples, price lists, delivery rows
     ├── test_compliance.py    # M9
     ├── test_format_hook.py   # M9
-    └── test_customs.py       # M10
+    ├── test_customs.py       # M10
+    ├── test_report_figures.py  # M11–M13
+    ├── test_report_text.py   # M11–M13: formatting, sentences, the template context
+    └── test_report_sample.py # M13: docs/GCC_EXPANSION_REPORT.md stays current
 ```
 
 ## 6. Data inputs
@@ -508,7 +529,7 @@ Light, valuable items get cheaper as parcels (headphones in KSA: 686.95 → 660.
 
 #### 7.9.4 Kuwait's charm ending
 
-One dinar is about 3.26 USD, so ending every KWD price in `.950` can add almost a whole dinar. Lip balm: 1.157 → 1.950 (+69%), with a 0.844 margin against 0.741 in KSA. This is kept on purpose (§11) as a finding for the v0.3 report: KWD needs a finer price ladder for cheap items.
+One dinar is about 3.26 USD, so ending every KWD price in `.950` can add almost a whole dinar. Lip balm: 1.157 → 1.950 (+69%), with a 0.844 margin against 0.741 in KSA. This is kept on purpose (§12) as a finding for the v0.3 report: KWD needs a finer price ladder for cheap items.
 
 ## 8. Delivery rules (destination calendar only)
 
@@ -547,7 +568,146 @@ The same moment in all three markets. Each cell: local order time → dispatch �
 
 The second row's KSA cell is §8.1's third row, unchanged.
 
-## 9. Interfaces (suggested)
+## 9. The expansion report (v0.3)
+
+`GCC_EXPANSION_REPORT.md` answers the demo user's real question: which market, which shipping model, and what goes wrong with prices. It puts every market and both shipping models side by side for one order. Appendix A is the report for the sample data, exactly.
+
+### 9.1 Scope
+- **One input:** `ordered_at`, a timezone-aware instant. The report prices the catalogue for that order in every market in the config, in config order, under both shipping models (§7.7.1).
+- **Duty rates:** today's (no duty adjustment), plus the rises in `TARIFF_RISES_POINTS = (5, 10, 20)` percentage points as stress tests (§9.2.3). The dashboard's slider, shipping model and search never change the report.
+- **One source of numbers:** every market view comes from `localise_and_summarise`, so the report, the CLI and the dashboard always agree, and products a market does not allow are never priced (§3 rule 7).
+- **Provenance:** the report names the data it was built from (`config_version`, `fx.as_of`, `catalogue_version`), not the SouqSort version, so a release does not change it.
+- **Format:** Markdown, UTF-8, `\n` line endings on every OS, ending with a single newline. No timestamp other than the order's.
+
+### 9.2 Figures
+
+All figures stay `Decimal` until they are formatted (§9.3). Averages are unweighted means over the products a market sells. A market that sells nothing has no averages (`None`, shown as `-`).
+
+#### 9.2.1 Markets side by side (M11)
+Per market, with consolidated imports and today's rates:
+- **products for sale and not sold** (§7.6);
+- **average margin:** `summary.average_margin_pct`;
+- **above catalogue price:** the mean of `shelf_price / goods − 1`. `goods` is the catalogue price converted to the market currency (§7.1 step 1), so the ratio is free of currency and markets compare directly. It includes freight, duty, VAT and the price ending. Base prices are > 0, so `goods` is never 0.
+- **VAT rate, the order's local time, the cut-off and the delivery date.** The delivery comes from `estimate_delivery(ordered_at, market)` (§8), which needs no product, so a market that sells nothing still has one. Delivery is the same in both shipping models (§8).
+
+| Market | For sale | Not sold | Average margin | Above catalogue price | Ordered (local) | Delivered |
+|---|---|---|---|---|---|---|
+| KSA | 11 | 2 | 64.6% | +41.2% | Thu 12:00, cut-off 14:00 | Thu 2026-10-22 |
+| UAE | 12 | 1 | 64.9% | +24.7% | Thu 13:00, cut-off 15:00 | Wed 2026-10-21 |
+| KWT | 11 | 2 | 66.6% | +33.1% | Thu 12:00, cut-off 13:00 | Thu 2026-10-22 |
+
+(Order at 2026-10-15 09:00 UTC, before every cut-off. The delivery dates are those of §8.2's first row.)
+
+#### 9.2.2 Consolidated or parcel (M12)
+- Per market, for each product for sale in catalogue order: the consolidated and the parcel shelf prices, the change `parcel / consolidated − 1`, and the parcel quote's `duty_rate` and `duty_waived`.
+- A product is **cheaper**, **dearer** or **unchanged** by comparing the two shelf prices themselves, never the rounded change.
+- Per market: the three counts, and how many parcel quotes have `duty_waived`.
+
+| Market | Cheaper | Dearer | Unchanged | Duty waived |
+|---|---|---|---|---|
+| KSA | 6 | 4 | 1 | 10 of 11 |
+| UAE | 5 | 5 | 2 | 10 of 12 |
+| KWT | 0 | 6 | 5 | 0 of 11 |
+
+Every price in this section is in §7.9.1 (consolidated) or §7.9.2 (parcel).
+
+#### 9.2.3 Tariff exposure (M12)
+- Per market and shipping model, for each rise in `TARIFF_RISES_POINTS`: `summary.average_price_change_pct` of `localise_and_summarise(..., duty_adjustment_from_points(rise), shipping)`. That figure already compares each product with its price at 0 pp in the same model (§11.1, M6).
+- `HEADLINE_TARIFF_RISE_POINTS = 10` is the rise the opening sentence quotes. It must be one of `TARIFF_RISES_POINTS`.
+- Parcels in KSA and the UAE barely move, because de minimis waives duty at any adjustment (§7.4).
+- Kuwait has no VAT and no de minimis, so before the price ending both of its models rise by exactly the same amount: 4.78%, 9.57% and 19.13% on average. The gaps in the table come only from KWD prices stepping in whole dinars (§7.9.4). The price ending absorbs some rises and turns others into a jump of a whole dinar.
+
+| Market | Shipping | +5 pp | +10 pp | +20 pp |
+|---|---|---|---|---|
+| KSA | consolidated | +4.6% | +9.0% | +18.6% |
+| KSA | parcel | +0.4% | +0.9% | +1.7% |
+| UAE | consolidated | +4.9% | +9.3% | +19.2% |
+| UAE | parcel | +0.8% | +1.5% | +3.2% |
+| KWT | consolidated | +3.8% | +7.6% | +16.0% |
+| KWT | parcel | +6.3% | +9.4% | +17.7% |
+
+#### 9.2.4 How a price is built (M13)
+- **The sample product** is the first product in catalogue order that every market sells. In the sample data that is `ELEC-HP-001`, the headphones of worked examples A, C, D and E. If no product is sold everywhere, the section has no tables.
+- Per market: the sample product's consolidated and parcel quotes, shown as goods ("Catalogue price, converted"), freight, duty, VAT, a "Rounding and price ending" line and the shelf price.
+- Each component is rounded for display (§7.1, display rule). The rounding line is `shelf_price` minus the sum of the four displayed components, so every column adds up exactly to the shelf price. In KSA's parcel column it is 660.95 − (562.46 + 11.81 + 0.00 + 86.14) = **0.54**, although `shelf_price − gross` is 0.53375. The report's method notes say so. When the rounded gross already has the price ending, the line can be a minor unit or two below zero (`-0.01`); it is shown as it is.
+- A waived duty shows as `0.00 (waived)`.
+
+| Market (headphones) | Consolidated: freight, duty, VAT, rounding → shelf | Parcel: freight, duty, VAT, rounding → shelf |
+|---|---|---|
+| KSA | 5.91, 28.42, 89.52, 0.64 → **686.95** | 11.81, 0.00 (waived), 86.14, 0.54 → **660.95** |
+| UAE | 5.14, 27.80, 29.19, 0.02 → **612.99** | 10.28, 0.00 (waived), 28.06, 0.81 → **589.99** |
+| KWT | 0.537, 2.329, 0.000, 0.037 → **48.950** | 1.075, 2.356, 0.000, 0.472 → **49.950** |
+
+Goods: 562.46 SAR, 550.84 AED, 46.047 KWD.
+
+#### 9.2.5 Pricing risks (M13)
+- A product for sale is a **pricing risk** in a market when its consolidated `shelf_price / gross − 1` is greater than `PRICE_ENDING_ALERT = Decimal("0.10")`: rounding and the price ending (§7.1 steps 7 and 8) added more than 10% to it. Exactly 10% is not a risk.
+- Listed in market order, then catalogue order.
+- The sample data has two, both in Kuwait (§7.9.4): `BEAU-LIP-040` 1.157 → 1.950 (+68.5%) and `GROC-TEA-060` 2.458 → 2.950 (+20.0%). The next highest are Kuwait's charger (+5.8%) and kettle (+5.1%). In KSA and the UAE the largest is the lip balm, at +4.6% and +3.7%.
+
+#### 9.2.6 Not sold (M11)
+Every market's excluded products (§7.6), in market order then catalogue order, with their reasons as labels ("Contains alcohol"). Sample data: KSA and Kuwait exclude `GROC-VAN-061` and `GROC-GUM-062`; the UAE excludes `GROC-GUM-062`.
+
+### 9.3 Text
+
+#### 9.3.1 Formatting
+- **Money:** the currency's minor units, `ROUND_HALF_UP`, with commas between thousands: `4,144.95`, `312.950`. Formatted from `Decimal` with `round_minor` and `f"{amount:,f}"`, never through `float`.
+- **Percentages:** one decimal, `ROUND_HALF_UP`. A change, and the figure above the catalogue price, take a `+` when they are positive after rounding (`+41.2%`, `-3.8%`, `0.0%`); nothing ever shows as `-0.0%`. Rates (VAT, duty, the 10% alert) and margins have no sign (`15.0%`, `64.6%`).
+- **Dates and times:** `Thu 2026-10-22`; a local order time `Thu 2026-10-15 12:00`; a cut-off `14:00`. The header gives the order in UTC.
+- **Markets:** the code in sentences and in most tables (`KSA`); code and name in per-market headings and in the first column of the markets table (`KSA (Saudi Arabia)`); code and currency in the build-up headings (`KSA (SAR)`).
+- **Lists in a sentence** join with commas and a final "and": "6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT". Clauses that already contain "and" join with semicolons and a final "; and".
+- **Counts:** "1 product", otherwise "products".
+- **Table cells** that come from the data escape `|` as `\|` and turn line breaks into spaces.
+- **Shipping models** in tables use the dashboard labels: "Consolidated import", "Direct parcel".
+
+#### 9.3.2 Sentences
+Each section opens with its sentences. The summary at the top repeats them all as bullets, in section order. With the sample data:
+
+1. **Markets side by side**, two sentences:
+   - "On average, shelf prices sit 24.7% above the catalogue price in UAE, 33.1% in KWT and 41.2% in KSA." Lowest first, comparing the full-precision averages; exact ties keep config order; markets that sell nothing are left out. If none sells anything: "No market has products for sale."
+   - "For this order, delivery is on Thu 2026-10-22 in KSA, Wed 2026-10-21 in UAE and Thu 2026-10-22 in KWT." Every market, config order.
+2. **Consolidated or parcel:** "Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT." Config order; markets that sell nothing are left out; none: "No market has products for sale."
+   - Each market's subsection opens with its rule: "No duty on a parcel whose CIF is below 1,000.00 SAR." / "No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol." / "No de minimis rule, so every parcel pays duty." Excluded attributes read as "alcohol", "pork" and "a lithium battery", several joined with "or".
+   - Then "Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1." and, only when the market has a rule, "Duty is waived on 10 of them." A market that sells nothing: "No products are for sale." and no table.
+3. **Tariff exposure:** "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT." Config order; markets that sell nothing are left out; none: "No market has products for sale."
+4. **How a price is built:** "Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT." None sold everywhere: "No product is sold in every market, so there is no price to break down."
+5. **Pricing risks:** "The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) and GROC-TEA-060 in KWT (+20.0%)." None: "No price ending adds more than 10.0% to any product."
+6. **Not sold:** "Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2." Every market, config order. Nothing excluded anywhere: "Every market can sell every product."
+
+### 9.4 Layout
+Appendix A shows the layout exactly. In order:
+1. `# GCC expansion report`, the scenario sentence (the order in UTC and the data it was built from) and the illustrative-data warning as a quote.
+2. `## Summary`: the sentences of §9.3.2 as bullets.
+3. `## Markets side by side`: the sentences, then one row per market: Market, Currency, VAT, For sale, Not sold, Above catalogue price, Average margin, Ordered (local time), Cut-off, Delivered.
+4. `## Consolidated or parcel`: the sentence, then per market `### KSA (Saudi Arabia)`, its rule and counts, and SKU, Product, Consolidated (SAR), Direct parcel (SAR), Change, Parcel duty ("waived" or the rate).
+5. `## Tariff exposure`: the sentence, then Market, Shipping model and one column per rise (`+5 pp` …), two rows per market.
+6. `## How a price is built`: the sentence, then per market `### KSA (SAR)` and a table of Step, Consolidated import, Direct parcel. The shelf price row is bold.
+7. `## Pricing risks`: the sentence, then Market, SKU, Product, Before the price ending, Shelf price, Added. No table when there are none.
+8. `## Not sold`: the sentence, then Market, SKU, Product, Reasons. No table when nothing is excluded.
+9. `## How these figures are made`: the method notes, as bullets.
+
+Number columns are right-aligned. There is exactly one blank line between blocks, and no trailing spaces.
+
+#### 9.4.1 Template rules
+- `src/souqsort/report/templates/expansion_report.md.j2`, loaded with `jinja2.PackageLoader("souqsort.report", "templates")` into an `Environment` with `undefined=StrictUndefined`, `autoescape=False` (Markdown, not HTML: cells are escaped as §9.3.1 says), `trim_blocks=True`, `lstrip_blocks=True` and `keep_trailing_newline=True`.
+- **The template only places text.** `render_report` passes it strings, and lists and dicts of strings, nothing else; a test walks the whole context to prove it. Every number is formatted in Python first.
+- The template has no arithmetic and uses none of the filters `float`, `int`, `round`, `sum`, `abs` or `format`. It names no market code and no currency code: `tests/test_architecture.py` checks both, as it checks `src/` and `app/` for market codes (§3 rule 4).
+
+### 9.5 The sample report (M13)
+- `docs/GCC_EXPANSION_REPORT.md` is the report for `ordered_at = 2026-10-15T09:00Z` over the sample data: 12:00 in Riyadh and Kuwait, 13:00 in Dubai, before every cut-off. It is Appendix A exactly, and the README links to it.
+- `tests/test_report_sample.py` builds the same report and compares it with the file byte for byte. On a mismatch it says how to regenerate the file: `uv run python -m souqsort report --ordered-at 2026-10-15T09:00Z --out docs/GCC_EXPANSION_REPORT.md`.
+- Every figure in Appendix A was checked while writing this spec against an independent re-implementation of §7 and §8 that does not import `souqsort`.
+
+### 9.6 CLI and dashboard
+- **CLI:** `uv run python -m souqsort report [--ordered-at ISO] [--out PATH] [--catalogue PATH] [--config PATH]`.
+  - `--ordered-at` parses as for `price`, but must carry an offset (`Z` or `±HH:MM`): without one, `price` reads the time on the market's clock, and the report has no single market. Without an offset it exits 2 with `argument --ordered-at: the report covers every market, so give a UTC offset, e.g. 2026-10-15T09:00Z`. Default: now, from the injectable `now`.
+  - `--out` defaults to `outputs/GCC_EXPANSION_REPORT.md` (`outputs/` is gitignored). Its folder is created if needed. It refuses to overwrite the `--catalogue` or `--config` file, as `--csv` does. The file is written as UTF-8 with `\n` line endings.
+  - Prints one line, `Wrote the expansion report to outputs/GCC_EXPANSION_REPORT.md` (the path as given). A data file that cannot be read, or a report that cannot be written, exits 1 with a message, as `price` does.
+- **Dashboard:** in the sidebar, under the search box, a "Download expansion report" button (`st.download_button`), file name `GCC_EXPANSION_REPORT.md`, MIME type `text/markdown`, with the help text "Every market and both shipping models for the order date and time above, at today's duty rates. The duty slider, shipping model and search don't change it."
+  - It uses the same `ordered_at` as the page: the pickers on the selected market's clock (issue #3). Thu 2026-10-15 12:00 picked in KSA therefore downloads exactly the sample report.
+  - Building and rendering the report takes about 20 ms on the sample data, so it runs on every rerun without caching.
+
+## 10. Interfaces (suggested)
 
 Adjust these if there is a good reason, and say why.
 
@@ -613,7 +773,7 @@ def localise_catalogue(products: list[Product], config: GccConfig, market_code: 
                        duty_adjustment: Decimal = Decimal("0")) -> list[LocalisedProduct]: ...
 ```
 
-### 9.1 v0.2 changes
+### 10.1 v0.2 changes
 
 ```python
 # models.py
@@ -701,7 +861,7 @@ def excluded_grid_rows(excluded: Sequence[ExcludedProduct]) -> list[ExcludedGrid
 SHIPPING_LABELS: dict[ShippingModel, str] # {"consolidated": "Consolidated import", "parcel": "Direct parcel"}
 ```
 
-### 9.2 CLI and dashboard text (v0.2; the tests check it)
+### 10.2 CLI and dashboard text (v0.2; the tests check it)
 - CLI summary line ends with `   Shipping: consolidated` (or `parcel`). The table columns are SKU, Name, Shelf price (CODE), Margin %, Duty, Delivery, Flags. After the table, when something is not sold: a blank line, `Not sold in KSA (2):`, then SKU, Name and the reason codes, joined with commas.
 - CSV (products for sale only): `sku,name_en,currency,shelf_price,margin_percent,duty_percent,duty_waived,delivery_date,flags`, with `duty_waived` as `true`/`false`.
 - `--shipping {consolidated,parcel}`, default `consolidated`; any other value exits with code 2.
@@ -709,11 +869,112 @@ SHIPPING_LABELS: dict[ShippingModel, str] # {"consolidated": "Consolidated impor
 - Dashboard main area: the caption adds "Shipping: Consolidated import"; the metrics are Average margin, Flagged products, Average price change vs 0 pp, and Not sold in CODE; the scope caption is "All 11 products for sale in KSA; search filters the table only"; under the grid, "Not sold in KSA" with a table of SKU, Name and Reason. Search filters the main grid only.
 - Messages under the grid: "The catalogue has no products." / "No product in the catalogue can be sold in KSA." / "No product matches the search."
 
-## 10. Milestones
+### 10.3 v0.3 changes
+
+```python
+# report/figures.py: everything Decimal, nothing formatted
+TARIFF_RISES_POINTS: tuple[int, ...] = (5, 10, 20)   # M12
+HEADLINE_TARIFF_RISE_POINTS = 10                     # M12; must be in TARIFF_RISES_POINTS
+PRICE_ENDING_ALERT = Decimal("0.10")                 # M13
+
+@dataclass(frozen=True)
+class MarketOverview:                     # M11, §9.2.1 and §9.2.6
+    code: str
+    name: str
+    currency: str
+    vat_rate: Decimal
+    for_sale: int
+    not_sold: tuple[ExcludedProduct, ...]
+    average_margin_pct: Decimal | None
+    average_above_catalogue_pct: Decimal | None
+    cutoff: time
+    delivery: DeliveryEstimate
+
+@dataclass(frozen=True)
+class ProductComparison:                  # M12, §9.2.2
+    sku: str
+    name_en: str
+    consolidated_price: Decimal
+    parcel_price: Decimal
+    change_pct: Decimal
+    parcel_duty_rate: Decimal
+    parcel_duty_waived: bool
+
+@dataclass(frozen=True)
+class ShippingComparison:                 # M12
+    code: str
+    name: str
+    currency: str
+    minor_units: int
+    de_minimis: DeMinimisRule | None
+    products: tuple[ProductComparison, ...]
+    # properties: cheaper, dearer, unchanged, waived (counts)
+
+@dataclass(frozen=True)
+class TariffExposure:                     # M12, §9.2.3
+    code: str
+    shipping: ShippingModel
+    average_change_pct: tuple[Decimal | None, ...]   # one per TARIFF_RISES_POINTS
+
+@dataclass(frozen=True)
+class PriceBuildUp:                       # M13, §9.2.4
+    code: str
+    currency: str
+    minor_units: int
+    consolidated: PriceQuote
+    parcel: PriceQuote
+
+@dataclass(frozen=True)
+class PricingRisk:                        # M13, §9.2.5
+    code: str
+    sku: str
+    name_en: str
+    minor_units: int
+    gross: Decimal
+    shelf_price: Decimal
+    added_pct: Decimal
+
+@dataclass(frozen=True)
+class SampleProduct:                      # M13: the first product every market sells
+    sku: str
+    name_en: str
+
+@dataclass(frozen=True)
+class ExpansionReport:
+    ordered_at: datetime
+    config_version: str
+    fx_as_of: date
+    catalogue_version: str
+    product_count: int
+    markets: tuple[MarketOverview, ...]       # M11, config order
+    shipping: tuple[ShippingComparison, ...]  # M12
+    tariffs: tuple[TariffExposure, ...]       # M12, market then shipping model
+    sample_product: SampleProduct | None      # M13, §9.2.4
+    build_ups: tuple[PriceBuildUp, ...]       # M13
+    pricing_risks: tuple[PricingRisk, ...]    # M13
+
+def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) -> ExpansionReport: ...
+# ValueError for a naive ordered_at; LocalisationError as localise_and_summarise raises it.
+def price_ending_added(quote: PriceQuote) -> Decimal: ...   # M13: shelf_price / gross - 1
+
+# report/text.py: formatting, sentences and the template context; strings only
+type ContextValue = str | Sequence[ContextValue] | Mapping[str, ContextValue]
+def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]: ...
+# The template's context: strings only (§9.4.1), so mypy checks the rule as well as the test.
+# Sequence and Mapping rather than list and dict, so that list[dict[str, str]] rows type-check.
+def render_report(report: ExpansionReport) -> str: ...      # the Markdown of §9.3 and §9.4
+
+# report/__init__.py re-exports build_report and render_report.
+
+# cli.py: a second subcommand
+#   report [--ordered-at ISO] [--out PATH] [--catalogue PATH] [--config PATH]   (§9.6)
+```
+
+## 11. Milestones
 
 For every milestone: tests first, then code. Done means `uv run pytest`, `uv run ruff check .` and `uv run mypy src` all pass, then commit. From M7, done also means `uv run ruff format --check .` passes (`/verify` runs all four) and both CI jobs are green on the pull request. Every commit leaves the suite green.
 
-### 10.1 v0.1 (done, tag `v0.1.0`)
+### 11.1 v0.1 (done, tag `v0.1.0`)
 
 #### M0: Skeleton
 - uv project (src layout, Python 3.12) with the dependencies in §4.
@@ -778,7 +1039,7 @@ For every milestone: tests first, then code. Done means `uv run pytest`, `uv run
 - AppTest does not render a browser. One manual look confirms that clicking the price header sorts by value and that prices show the currency's minor units.
 - Then tag `v0.1.0`.
 
-### 10.2 v0.2
+### 11.2 v0.2 (done, tag `v0.2.0`)
 
 Every step uses the same flow: `git switch -c <branch>` → plan mode → commits → `git push -u origin <branch>` → `gh pr create --fill` → `gh pr checks --watch` → `gh pr merge --merge --delete-branch` → `git switch main && git pull`.
 
@@ -828,9 +1089,9 @@ Other tests: the config loads three markets; worked examples C and D exactly, wi
 #### M9: compliance, typed attributes, format hook
 Branch `feat/m9-compliance`. Commits, in order:
 1. `chore: format Python files after each edit with a Claude Code hook`: `.claude/settings.json` and `.claude/hooks/format_python.py`, `tests/test_format_hook.py`, and a line for the hook under "Project tools" in CLAUDE.md. The hook test checks that it formats a messy `.py` file in a temporary project, leaves a `.md` file and a file outside the project alone, exits 2 with ruff's message on a syntax error, and ignores input that is not JSON. Then restart Claude Code and try it once: ask Claude to write `scratch.py` containing `x=1`, check it now says `x = 1`, delete it.
-2. `feat: validate product attributes and category names`, with `Fixes #1`: `ProductAttributes`, `AttributeName` and `CategoryName` (§9.1).
+2. `feat: validate product attributes and category names`, with `Fixes #1`: `ProductAttributes`, `AttributeName` and `CategoryName` (§10.1).
    - **Tests:** a missing, unknown or non-boolean attribute is rejected; `"Fashion"` is rejected as a category and as an override key; `AttributeName` lists exactly the fields of `ProductAttributes`. Tests that build products with `attributes={}` switch to a shared `NO_ATTRIBUTES` helper.
-3. `feat: screen products against each market's compliance rules`: the `compliance` blocks and fixtures (§6.2), `compliance.py`, `localise_and_summarise` screening first and returning `excluded`, the CLI moving to `localise_and_summarise` and printing what is not sold, and the dashboard metric and table (§7.6, §9.2).
+3. `feat: screen products against each market's compliance rules`: the `compliance` blocks and fixtures (§6.2), `compliance.py`, `localise_and_summarise` screening first and returning `excluded`, the CLI moving to `localise_and_summarise` and printing what is not sold, and the dashboard metric and table (§7.6, §10.2).
    - **Config tests:** `compliance` missing → rejected; an unknown or duplicate banned attribute → rejected; an empty list → accepted.
    - **`screen_products`:** KSA excludes VAN (`contains_alcohol`) and GUM (`contains_pork`); the UAE excludes GUM only; KWT both. Both lists keep catalogue order. A product with two banned attributes lists both, in the market's order. An empty list excludes nothing.
    - **Pipeline:** for KSA, `localise_and_summarise` returns 11 items and 2 excluded, with the summary and the baseline over the same 11. An unknown market or a bad `duty_adjustment` fails exactly as before. `localise_catalogue` still prices what it is given.
@@ -842,8 +1103,8 @@ Branch `feat/m9-compliance`. Commits, in order:
 Branch `feat/m10-de-minimis`. Commits, in order:
 1. `chore: add the money-reviewer subagent`: `.claude/agents/money-reviewer.md`, and a line for it under "Project tools" in CLAUDE.md.
 2. `feat: add parcel freight and de minimis rules to the market config`: models, data and fixtures (§6.2), and `tests/fixtures/de_minimis_boundary_config.json` (§7.8, example H). No price changes yet: apart from the new config-validation tests, the suite passes unchanged.
-3. `feat: price direct parcels with de minimis`: `ShippingModel`, `pricing/customs.py`, `price_product(..., shipping)`, the new `PriceQuote` fields and `shipping` through the pipeline (§7.1, §7.7, §9.1).
-4. `feat: show duty and the shipping model in the CLI and dashboard`: `--shipping`, the radio, the Duty column, the two CSV columns and the captions (§9.2).
+3. `feat: price direct parcels with de minimis`: `ShippingModel`, `pricing/customs.py`, `price_product(..., shipping)`, the new `PriceQuote` fields and `shipping` through the pipeline (§7.1, §7.7, §10.1).
+4. `feat: show duty and the shipping model in the CLI and dashboard`: `--shipping`, the radio, the Duty column, the two CSV columns and the captions (§10.2).
 
 Before opening the pull request: "Use the money-reviewer subagent to review this branch against main". Fix what it finds, then run `/code-review`.
 
@@ -856,7 +1117,7 @@ Before opening the pull request: "Use the money-reviewer subagent to review this
   - a waived product has the same shelf price at 0 and at 20 pp;
   - an unknown `shipping` raises `ValueError`;
   - Hypothesis: consolidated quotes never depend on the de minimis rule (any rule, or none, gives the same quote), and a higher duty adjustment never lowers a price in parcel mode either.
-- **Display and CLI:** Duty shows "5.0%", "15.0%" (KSA fashion at +3 pp) and "waived"; `--shipping parcel` changes prices and the summary line ends with "Shipping: parcel"; `--shipping bulk` exits with code 2; the CSV header is as in §9.2.
+- **Display and CLI:** Duty shows "5.0%", "15.0%" (KSA fashion at +3 pp) and "waived"; `--shipping parcel` changes prices and the summary line ends with "Shipping: parcel"; `--shipping bulk` exits with code 2; the CSV header is as in §10.2.
 - **Dashboard:** the radio switches prices; the Duty column shows "waived"; the price-change metric still compares against 0 pp in the same shipping model; the caption names the model.
 - **Accept:** CI green; the money-reviewer's and `/code-review`'s findings resolved; every number in §7.8 and §7.9 holds.
 
@@ -868,7 +1129,98 @@ Branch `chore/release-0.2.0`.
 - After the merge: `git tag -a v0.2.0 -m "v0.2.0: UAE, Kuwait, compliance, de minimis"` and `git push origin v0.2.0`.
 - Releases: `gh release create v0.1.0 --title "v0.1.0: KSA end to end" --notes "..."` (deferred from v0.1), then `gh release create v0.2.0 --title "v0.2.0: three markets, compliance, de minimis" --generate-notes`, which writes the notes from the merged pull requests.
 
-## 11. Decisions log (turn into ADRs later)
+### 11.3 v0.3
+
+The flow of §11.2 again: a branch per step, plan mode, commits, a pull request, both CI jobs green, merge. Before each pull request of M11, M12 and M13: "Use the money-reviewer subagent to review this branch against main", fix what it finds, then `/code-review`. M14: `/code-review` only.
+
+Each milestone ends with a report that runs. Its sections must match Appendix A exactly, apart from the summary, which only lists the sections built so far.
+
+#### M11: the report's foundation
+Branch `feat/m11-report`. Commits, in order:
+1. `docs: add the v0.3 spec`: this SPEC.md and the v0.3 CLAUDE.md.
+2. `chore: point the money-reviewer at the report`: the two changes to `.claude/agents/money-reviewer.md` in Appendix B.
+3. `feat: add the expansion report with markets side by side and what is not sold`:
+   - `uv add jinja2`, which adds it to `pyproject.toml`; Streamlit already installs it, so the lock gains no package;
+   - the `report` package (§10.3) with `MarketOverview` and `build_report`, the formatting and sentence rules of §9.3, and the template with the header, the summary, "Markets side by side", "Not sold" and the method notes;
+   - the `report` CLI command (§9.6);
+   - the template checks in `tests/test_architecture.py` (§9.4.1).
+- **Figures:** for 2026-10-15 09:00 UTC, the three rows of §9.2.1 and the not-sold lists of §9.2.6. Markets come in config order. A naive `ordered_at` raises `ValueError`.
+- **Text:**
+  - money with thousands separators (`4144.95` → `4,144.95`, `312.95` with 3 minor units → `312.950`);
+  - signs (`0.4124` → `+41.2%`; `-0.00049` → `0.0%`, never `-0.0%`);
+  - list joins with 1, 2 and 3 items, "1 product" against "2 products", and `|` and line breaks in a product name;
+  - both sentences of §9.3.2 item 1, and item 6, for the sample data and for each edge case: a market that sells nothing (left out of the price sentence, `-` in its row), no market selling anything, and nothing excluded anywhere.
+- **Template:** the context holds only strings (walk it); a template that mentions `KSA` or `SAR`, or uses `|round`, fails the architecture test (test the guard on small samples, as the market-code guard is tested).
+- **CLI:**
+  - writes `outputs/GCC_EXPANSION_REPORT.md` by default and `--out` anywhere, creating the folder;
+  - the file has `\n` line endings and no `\r`, on Windows too;
+  - prints `Wrote the expansion report to <path>`;
+  - an `--ordered-at` without an offset exits 2 with the message of §9.6;
+  - `--out` pointing at the catalogue or config exits 2 and leaves the file alone;
+  - an unreadable data file exits 1;
+  - without `--ordered-at` it uses the injected `now`.
+- **Accept:** CI green; `uv run python -m souqsort report --ordered-at 2026-10-15T09:00Z` writes a report whose "Markets side by side" and "Not sold" sections are Appendix A's, character for character.
+
+#### M12: consolidated or parcel, and tariff exposure
+Branch `feat/m12-parcels-tariffs`. Commits, in order:
+1. `feat: compare consolidated imports with direct parcels in the report`: `ShippingComparison`, its section and its sentences.
+2. `feat: show each market's tariff exposure in the report`: `TariffExposure`, its section and its sentence.
+- **Figures:**
+  - the 34 product rows: every price equals §7.9.1 (consolidated) and §7.9.2 (parcel), and every "waived" equals a `w` there;
+  - the counts of §9.2.2;
+  - the 18 cells of §9.2.3.
+- **Text:**
+  - the three rule sentences of §9.3.2 item 2: `below`, `at_or_below` with an exclusion, and none;
+  - a rule excluding two attributes reads "except products containing alcohol or pork";
+  - "Duty is waived on …" appears only for a market with a rule;
+  - the tariff sentence with its semicolons.
+- **Hypothesis:** for any market and model, the average change is never negative and never smaller for a bigger rise.
+- **Accept:** CI green; the two sections are Appendix A's.
+
+#### M13: how a price is built, pricing risks, the sample
+Branch `feat/m13-build-up-risks`. Commits, in order:
+1. `feat: show how one price is built in each market`: `SampleProduct`, `PriceBuildUp` and its section.
+2. `feat: flag price endings that add more than 10%`: `price_ending_added`, `PricingRisk` and its section.
+3. `docs: add the sample expansion report`: `docs/GCC_EXPANSION_REPORT.md`, written by the CLI for `2026-10-15T09:00Z`, and `tests/test_report_sample.py` (§9.5).
+- **Build-up:**
+  - the six columns of §9.2.4, with KSA's parcel rounding line 0.54;
+  - "(waived)" exactly when `duty_waived`;
+  - a property over every product, market and model: the four displayed components plus the rounding line equal the shelf price;
+  - with no product sold everywhere, the sentence of §9.3.2 item 4 and no tables.
+- **Risks:**
+  - the two rows of §9.2.5;
+  - `price_ending_added` on hand-built quotes: gross `1.00` with shelf `1.10` is exactly 10% and not a risk, `1.11` is;
+  - with no risks, the "No price ending …" sentence and no table.
+- **Accept:** CI green; `docs/GCC_EXPANSION_REPORT.md` is identical to Appendix A (extract the block and `diff` it once); the sample test passes on both CI jobs.
+
+#### M14: dashboard download, README, `/release`
+Branch `feat/m14-report-download`. Commits, in order:
+1. `feat: download the expansion report from the dashboard`: the sidebar button of §9.6.
+2. `docs: add the expansion report to the README`:
+   - a section after "Sample run" with what the report covers, the `report` command, a link to `docs/GCC_EXPANSION_REPORT.md` and three of its findings (parcels in KSA, the 10 pp tariff rise, Kuwait's lip balm);
+   - a retaken `docs/dashboard.png` with the v0.2 scenario (UAE, Direct parcel, +3 pp, 2026/10/15, 14:59), so the screenshot shows the button.
+   - Status and the roadmap wait for the release.
+3. `chore: add the /release skill`: `.claude/skills/release/SKILL.md` from Appendix B, and its line under "Project tools" in CLAUDE.md (Appendix B). Every file in Appendix B now exists, so delete that appendix in the same commit. Restart Claude Code afterwards so the skill loads.
+- **AppTest:**
+  - the sidebar has the button with its label, file name and help text;
+  - Thu 2026-10-15 12:00 picked in KSA offers exactly the sample report. If AppTest cannot read the button's data, check instead that the app builds the report for 2026-10-15 09:00 UTC;
+  - moving the slider, switching the shipping model or searching does not change the report;
+  - switching to the UAE at the same picker time offers the report for 08:00 UTC (12:00 in Dubai);
+  - the button is still there when the search matches nothing.
+- **Accept:** CI green; the downloaded file opens as the sample report; `/release` is listed when typing `/` in a new session.
+
+#### Release v0.3.0
+In a fresh Claude Code session on an up-to-date `main`: `/release 0.3.0 "the expansion report"`. The skill:
+1. makes the branch `chore/release-0.3.0`, bumps the version and runs `uv lock`;
+2. marks v0.3 done in this spec's header and §2, and updates the README's Status and roadmap, then waits for your OK;
+3. opens the pull request "Release v0.3.0" and waits for CI, then for your OK to merge;
+4. merges, tags `v0.3.0` with the message "v0.3.0: the expansion report", and creates the GitHub release with notes generated from the pull requests merged since `v0.2.0`.
+
+The sample report does not change: it names the data, not the version (§9.1).
+
+- **Accept:** the release page lists the pull requests for M11 to M14 and the release; `v0.3.0` is an annotated tag on the merge commit.
+
+## 12. Decisions log (turn into ADRs later)
 
 ### v0.1
 - Decimal everywhere; strings in JSON.
@@ -900,7 +1252,24 @@ Branch `chore/release-0.2.0`.
 - The dashboard's Duty column is text, so one column can show a rate or "waived". It therefore sorts as text ("12.0%" before "5.0%"); price and margin still sort by value, and the CSV keeps the rate and the waiver in separate columns. Rejected alternative: a number column plus a waived column, which would be unticked for every product in the default consolidated mode.
 - Market rules are a snapshot, not dated: every order is priced under the current config, whatever its date. VAT's `effective_from` is a record, not a switch, and an order dated before 2026-08-03 still gets the UAE waiver.
 
-## 12. Sources (v0.2 market rules)
+### v0.3
+- The report covers every market and both shipping models for one order, at today's duty rates plus fixed tariff rises. The dashboard's slider, shipping model and search never change it, so a downloaded report never depends on how the page was left.
+- It names its data (config version, FX date, catalogue version), not the SouqSort version, so a release leaves the sample unchanged.
+- `report --ordered-at` needs a UTC offset. For `price`, a time without one is read on the market's clock, and the report has no single market.
+- Numbers are formatted in Python and the template only places text. A template filter can never turn a `Decimal` into a `float`, and the no-market-codes rule extends to the template.
+- Jinja2 becomes a direct dependency in M11. Streamlit already installs it, so the lock gains no package.
+- "Above catalogue price" compares with `goods`, the catalogue price converted to the market currency, so it is free of currency and the markets compare directly. It includes VAT, so KSA's 15% shows.
+- Markets side by side uses consolidated imports, the default. Parcels get their own section, with counts rather than an average. A mean over products would say KSA's parcels sit further above the catalogue price (+51.3% against +41.2%), because the kettlebell rises 47.5%, although parcels are cheaper for 6 of 11 products.
+- The price build-up is in the report only, made from `PriceQuote`'s components. `PriceStep` traces and a dashboard waterfall stay in "Later".
+- The build-up's rounding line absorbs display rounding so that every column adds up, and the method notes say so.
+- Pricing risks flag a price ending that adds more than 10%, a named constant. With the sample data only Kuwait is flagged: the finding v0.2 kept for this report (§7.9.4).
+- No AI summary in v0.3. The report's value is exact, reproducible figures. If a summary comes, it gets its own milestone, writing only from the report's figures and checked against them.
+- No live demo in v0.3.
+- Reports go to `outputs/` (gitignored) by default. `docs/GCC_EXPANSION_REPORT.md` is the one committed report, and a test keeps it current.
+- Four milestones, split by report section, so each ends with a report that runs and a pull request small enough for both reviewers.
+- `/release` turns the steps of Release v0.2.0 into one command. It stops for an OK before the merge, never pushes to `main` and never moves a tag.
+
+## 13. Sources
 
 Market data stays illustrative. These are the rules it is modelled on:
 - ZATCA, customs for e-store customers (duty exemption under SAR 1,000, including shipping and insurance; VAT still due): https://zatca.gov.sa/en/RulesRegulations/Taxes/Pages/customs_individual/e-stores-customers.aspx
@@ -909,4 +1278,236 @@ Market data stays illustrative. These are the rules it is modelled on:
 - Gulf Today, the same announcement: https://www.gulftoday.ae/news/2026/08/05/dubai-customs-exempts-e-commerce-shipments-up-to-dhs1000-from-customs-duties
 - Goods Across Borders, Kuwait (no duty-free threshold for commercial parcels; 5% GCC common tariff): https://www.goodsacrossborders.com/importing/into/kuwait
 - VATupdate, Kuwait leaves VAT out of its 2026–2030 fiscal plan: https://www.vatupdate.com/2026/07/24/kuwait-keeps-vat-off-the-table-no-adoption-in-the-2026-2030-fiscal-plan/
+
+Tools:
 - Claude Code docs: skills https://code.claude.com/docs/en/skills, hooks https://code.claude.com/docs/en/hooks, hooks guide https://code.claude.com/docs/en/hooks-guide, subagents https://code.claude.com/docs/en/sub-agents
+- Jinja template designer documentation (whitespace control, filters): https://jinja.palletsprojects.com/templates
+- Streamlit `st.download_button`: https://docs.streamlit.io/develop/api-reference/widgets/st.download_button
+
+## Appendix A: the sample report
+
+`docs/GCC_EXPANSION_REPORT.md` for `ordered_at = 2026-10-15T09:00Z` over the sample data (§9.5). Everything between the fences, exactly; the file ends with a single newline after the last line.
+
+````markdown
+# GCC expansion report
+
+An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-10-01, FX rates as of 2026-10-01 and catalogue 2026-10-01.
+
+> All market data is illustrative. Do not use it to quote real prices or delivery dates.
+
+## Summary
+
+- On average, shelf prices sit 24.7% above the catalogue price in UAE, 33.1% in KWT and 41.2% in KSA.
+- For this order, delivery is on Thu 2026-10-22 in KSA, Wed 2026-10-21 in UAE and Thu 2026-10-22 in KWT.
+- Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
+- A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT.
+- Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT.
+- The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) and GROC-TEA-060 in KWT (+20.0%).
+- Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2.
+
+## Markets side by side
+
+On average, shelf prices sit 24.7% above the catalogue price in UAE, 33.1% in KWT and 41.2% in KSA. For this order, delivery is on Thu 2026-10-22 in KSA, Wed 2026-10-21 in UAE and Thu 2026-10-22 in KWT.
+
+| Market | Currency | VAT | For sale | Not sold | Above catalogue price | Average margin | Ordered (local time) | Cut-off | Delivered |
+|---|---|---:|---:|---:|---:|---:|---|---|---|
+| KSA (Saudi Arabia) | SAR | 15.0% | 11 | 2 | +41.2% | 64.6% | Thu 2026-10-15 12:00 | 14:00 | Thu 2026-10-22 |
+| UAE (United Arab Emirates) | AED | 5.0% | 12 | 1 | +24.7% | 64.9% | Thu 2026-10-15 13:00 | 15:00 | Wed 2026-10-21 |
+| KWT (Kuwait) | KWD | 0.0% | 11 | 2 | +33.1% | 66.6% | Thu 2026-10-15 12:00 | 13:00 | Thu 2026-10-22 |
+
+## Consolidated or parcel
+
+Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
+
+### KSA (Saudi Arabia)
+
+No duty on a parcel whose CIF is below 1,000.00 SAR. Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1. Duty is waived on 10 of them.
+
+| SKU | Product | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel duty |
+|---|---|---:|---:|---:|---|
+| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 686.95 | 660.95 | -3.8% | waived |
+| ELEC-CHG-002 | 65W USB-C Charger | 184.95 | 179.95 | -2.7% | waived |
+| FASH-BAG-014 | Leather Crossbody Bag | 594.95 | 546.95 | -8.1% | waived |
+| FASH-SCF-015 | Silk Scarf | 293.95 | 264.95 | -9.9% | waived |
+| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 593.95 | 875.95 | +47.5% | waived |
+| HOME-KTL-030 | Electric Kettle 1.7 L | 237.95 | 249.95 | +5.0% | waived |
+| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 4,144.95 | 4,344.95 | +4.8% | 5.0% |
+| BEAU-LIP-040 | Lip Balm | 16.95 | 15.95 | -5.9% | waived |
+| BEAU-SRM-041 | Vitamin C Serum 30 ml | 111.95 | 108.95 | -2.7% | waived |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 340.95 | 340.95 | 0.0% | waived |
+| GROC-TEA-060 | English Breakfast Tea, 80 bags | 34.95 | 37.95 | +8.6% | waived |
+
+### UAE (United Arab Emirates)
+
+No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol. Parcels are cheaper for 5 of 12 products, dearer for 5 and unchanged for 2. Duty is waived on 10 of them.
+
+| SKU | Product | Consolidated (AED) | Direct parcel (AED) | Change | Parcel duty |
+|---|---|---:|---:|---:|---|
+| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 612.99 | 589.99 | -3.8% | waived |
+| ELEC-CHG-002 | 65W USB-C Charger | 164.99 | 159.99 | -3.0% | waived |
+| FASH-BAG-014 | Leather Crossbody Bag | 496.99 | 485.99 | -2.2% | waived |
+| FASH-SCF-015 | Silk Scarf | 246.99 | 236.99 | -4.0% | waived |
+| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 498.99 | 721.99 | +44.7% | waived |
+| HOME-KTL-030 | Electric Kettle 1.7 L | 209.99 | 218.99 | +4.3% | waived |
+| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 3,685.99 | 3,844.99 | +4.3% | 5.0% |
+| BEAU-LIP-040 | Lip Balm | 14.99 | 14.99 | 0.0% | waived |
+| BEAU-SRM-041 | Vitamin C Serum 30 ml | 99.99 | 96.99 | -3.0% | waived |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 304.99 | 304.99 | 0.0% | waived |
+| GROC-TEA-060 | English Breakfast Tea, 80 bags | 29.99 | 32.99 | +10.0% | waived |
+| GROC-VAN-061 | Pure Vanilla Extract | 55.99 | 57.99 | +3.6% | 5.0% |
+
+### KWT (Kuwait)
+
+No de minimis rule, so every parcel pays duty. Parcels are cheaper for 0 of 11 products, dearer for 6 and unchanged for 5.
+
+| SKU | Product | Consolidated (KWD) | Direct parcel (KWD) | Change | Parcel duty |
+|---|---|---:|---:|---:|---|
+| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 48.950 | 49.950 | +2.0% | 5.0% |
+| ELEC-CHG-002 | 65W USB-C Charger | 13.950 | 13.950 | 0.0% | 5.0% |
+| FASH-BAG-014 | Leather Crossbody Bag | 39.950 | 41.950 | +5.0% | 5.0% |
+| FASH-SCF-015 | Silk Scarf | 19.950 | 19.950 | 0.0% | 5.0% |
+| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 44.950 | 70.950 | +57.8% | 5.0% |
+| HOME-KTL-030 | Electric Kettle 1.7 L | 17.950 | 19.950 | +11.1% | 5.0% |
+| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 296.950 | 312.950 | +5.4% | 5.0% |
+| BEAU-LIP-040 | Lip Balm | 1.950 | 1.950 | 0.0% | 5.0% |
+| BEAU-SRM-041 | Vitamin C Serum 30 ml | 7.950 | 8.950 | +12.6% | 5.0% |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 24.950 | 24.950 | 0.0% | 0.0% |
+| GROC-TEA-060 | English Breakfast Tea, 80 bags | 2.950 | 2.950 | 0.0% | 5.0% |
+
+## Tariff exposure
+
+A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT.
+
+| Market | Shipping model | +5 pp | +10 pp | +20 pp |
+|---|---|---:|---:|---:|
+| KSA | Consolidated import | +4.6% | +9.0% | +18.6% |
+| KSA | Direct parcel | +0.4% | +0.9% | +1.7% |
+| UAE | Consolidated import | +4.9% | +9.3% | +19.2% |
+| UAE | Direct parcel | +0.8% | +1.5% | +3.2% |
+| KWT | Consolidated import | +3.8% | +7.6% | +16.0% |
+| KWT | Direct parcel | +6.3% | +9.4% | +17.7% |
+
+## How a price is built
+
+Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT.
+
+### KSA (SAR)
+
+| Step | Consolidated import | Direct parcel |
+|---|---:|---:|
+| Catalogue price, converted | 562.46 | 562.46 |
+| Freight | 5.91 | 11.81 |
+| Duty | 28.42 | 0.00 (waived) |
+| VAT | 89.52 | 86.14 |
+| Rounding and price ending | 0.64 | 0.54 |
+| **Shelf price** | **686.95** | **660.95** |
+
+### UAE (AED)
+
+| Step | Consolidated import | Direct parcel |
+|---|---:|---:|
+| Catalogue price, converted | 550.84 | 550.84 |
+| Freight | 5.14 | 10.28 |
+| Duty | 27.80 | 0.00 (waived) |
+| VAT | 29.19 | 28.06 |
+| Rounding and price ending | 0.02 | 0.81 |
+| **Shelf price** | **612.99** | **589.99** |
+
+### KWT (KWD)
+
+| Step | Consolidated import | Direct parcel |
+|---|---:|---:|
+| Catalogue price, converted | 46.047 | 46.047 |
+| Freight | 0.537 | 1.075 |
+| Duty | 2.329 | 2.356 |
+| VAT | 0.000 | 0.000 |
+| Rounding and price ending | 0.037 | 0.472 |
+| **Shelf price** | **48.950** | **49.950** |
+
+## Pricing risks
+
+The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) and GROC-TEA-060 in KWT (+20.0%).
+
+| Market | SKU | Product | Before the price ending | Shelf price | Added |
+|---|---|---|---:|---:|---:|
+| KWT | BEAU-LIP-040 | Lip Balm | 1.157 | 1.950 | +68.5% |
+| KWT | GROC-TEA-060 | English Breakfast Tea, 80 bags | 2.458 | 2.950 | +20.0% |
+
+## Not sold
+
+Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2.
+
+| Market | SKU | Product | Reasons |
+|---|---|---|---|
+| KSA | GROC-VAN-061 | Pure Vanilla Extract | Contains alcohol |
+| KSA | GROC-GUM-062 | Gummy Bears (pork gelatine) | Contains pork |
+| UAE | GROC-GUM-062 | Gummy Bears (pork gelatine) | Contains pork |
+| KWT | GROC-VAN-061 | Pure Vanilla Extract | Contains alcohol |
+| KWT | GROC-GUM-062 | Gummy Bears (pork gelatine) | Contains pork |
+
+## How these figures are made
+
+- Each product is priced as a one-item order, and every cost is passed on to the customer.
+- Prices use today's duty rates. A tariff rise adds percentage points to every duty rate.
+- Above catalogue price compares the shelf price with the catalogue price converted at the config's FX rates, so it includes freight, duty, VAT and the price ending.
+- Averages are unweighted means over the products a market sells.
+- Price components are rounded for display, and the rounding line makes each column add up to the shelf price, which is exact.
+- Markets side by side and pricing risks use consolidated imports, the default shipping model.
+- Delivery dates are the same for both shipping models.
+````
+
+## Appendix B: files for v0.3
+
+Copy these exactly, in the milestone each one names. Once a file exists it is its own source of truth, so M14 deletes this appendix once the last of them exists.
+
+### `.claude/agents/money-reviewer.md` (M11): two changes
+
+The `description` line becomes:
+
+```yaml
+description: Reviews SouqSort changes that touch money, pricing, FX, customs, de minimis, compliance, market data or the expansion report's figures against the project's money rules. Use after changing src/souqsort/pricing/, src/souqsort/report/, compliance.py, pipeline.py or data/raw/*.json, before /code-review.
+```
+
+"Read SPEC.md §3 and §7 first." becomes "Read SPEC.md §3 and §7 first, and §9 when the report changes." A tenth rule follows the ninth:
+
+```markdown
+10. The expansion report computes its figures from engine results in Decimal and rounds only when it formats them. Its template receives text only: no float, no arithmetic and no number formatting in the template. The same inputs give the same bytes.
+```
+
+### `.claude/skills/release/SKILL.md` (M14)
+
+```markdown
+---
+name: release
+description: Release a new SouqSort version through a release pull request, then tag it and publish the GitHub release. Runs only when invoked as /release.
+argument-hint: "[VERSION] [title]"
+disable-model-invocation: true
+allowed-tools: Read Grep Glob Edit Bash(git *) Bash(gh *) Bash(uv *)
+---
+
+Release SouqSort `$0` as "v$0: $1".
+
+Rules:
+- `$0` is a version such as `0.3.0`, higher than the latest tag. If it is not, or `$1` is empty, stop and tell me.
+- Never push to `main`, and never move or delete a tag. Everything reaches `main` through the release pull request.
+- Wait for my OK wherever a step says so.
+
+Steps:
+1. Check that the working tree is clean, then `git switch main` and `git pull --ff-only`. Find the previous tag with `git describe --tags --abbrev=0` and show it.
+2. `git switch -c chore/release-$0`.
+3. Set `version = "$0"` in `pyproject.toml` and run `uv lock`. Check that `git diff uv.lock` changes only SouqSort's own version.
+4. In SPEC.md, mark this version done and tagged `v$0`, in the header and in §2. In the README, update Status and the roadmap for this version. Show me both diffs and wait for my OK.
+5. Run `uv run --locked ruff format --check .`, `uv run --locked ruff check .`, `uv run --locked mypy src` and `uv run --locked pytest -q`. If one fails, stop and show it.
+6. Commit `chore: release $0`, push with `git push -u origin chore/release-$0`, and open a pull request titled "Release v$0" with `gh pr create`.
+7. Run `gh pr checks --watch`. When both CI jobs pass, show the pull request link and wait for my OK to merge.
+8. `gh pr merge --merge --delete-branch`, then `git switch main` and `git pull --ff-only`.
+9. `git tag -a v$0 -m "v$0: $1"`, then `git push origin v$0`.
+10. `gh release create v$0 --verify-tag --title "v$0: $1" --generate-notes --notes-start-tag <the previous tag from step 1>`.
+11. Show the release URL and the commit the tag points to.
+```
+
+### CLAUDE.md, under "Project tools" (M14)
+
+```markdown
+- `/release VERSION "title"` releases a version: a release pull request (version, `uv.lock`, SPEC.md and README), then, after CI and your OK, the merge, an annotated tag and the GitHub release. Only you can start it; Claude never runs it on its own.
+```

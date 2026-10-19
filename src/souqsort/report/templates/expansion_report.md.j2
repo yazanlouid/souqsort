@@ -1,0 +1,43 @@
+# GCC expansion report
+
+An order placed on {{ order.date }} at {{ order.time }} UTC, priced in every market in the config with both shipping models. Built from market config {{ data.config_version }}, FX rates as of {{ data.fx_as_of }} and catalogue {{ data.catalogue_version }}.
+
+> All market data is illustrative. Do not use it to quote real prices or delivery dates.
+
+## Summary
+
+{% for sentence in summary %}
+- {{ sentence }}
+{% endfor %}
+
+## Markets side by side
+
+{{ markets.sentences }}
+
+| Market | Currency | VAT | For sale | Not sold | Above catalogue price | Average margin | Ordered (local time) | Cut-off | Delivered |
+|---|---|---:|---:|---:|---:|---:|---|---|---|
+{% for row in markets.rows %}
+| {{ row.market }} | {{ row.currency }} | {{ row.vat }} | {{ row.for_sale }} | {{ row.not_sold }} | {{ row.above_catalogue }} | {{ row.average_margin }} | {{ row.ordered }} | {{ row.cutoff }} | {{ row.delivered }} |
+{% endfor %}
+
+## Not sold
+
+{{ not_sold.sentence }}
+
+{% if not_sold.rows %}
+| Market | SKU | Product | Reasons |
+|---|---|---|---|
+{% for row in not_sold.rows %}
+| {{ row.market }} | {{ row.sku }} | {{ row.product }} | {{ row.reasons }} |
+{% endfor %}
+
+{% endif %}
+## How these figures are made
+
+- Each product is priced as a one-item order, and every cost is passed on to the customer.
+- Prices use today's duty rates. A tariff rise adds percentage points to every duty rate.
+- Above catalogue price compares the shelf price with the catalogue price converted at the config's FX rates, so it includes freight, duty, VAT and the price ending.
+- Averages are unweighted means over the products a market sells.
+- Price components are rounded for display, and the rounding line makes each column add up to the shelf price, which is exact.
+- Markets side by side and pricing risks use consolidated imports, the default shipping model.
+- Delivery dates are the same for both shipping models.

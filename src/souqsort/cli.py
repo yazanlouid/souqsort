@@ -1,4 +1,4 @@
-"""Command-line interface.
+"""Command-line interface: the ``price`` and ``report`` commands.
 
 ``main`` is the only place in ``src/`` that reads the clock: ``--ordered-at`` defaults to the
 current time, taken from an injectable ``now`` callable. The engine is always handed the time.
@@ -17,7 +17,7 @@ from souqsort.compliance import ExcludedProduct
 from souqsort.display import DisplayRow, display_rows, duty_text
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
 from souqsort.logistics.calendar import in_market_time, to_market_time
-from souqsort.models import MarketConfig, ShippingModel
+from souqsort.models import Catalogue, GccConfig, MarketConfig, ShippingModel
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     LocalisationError,
@@ -26,9 +26,12 @@ from souqsort.pipeline import (
     localise_and_summarise,
 )
 from souqsort.pricing.customs import SHIPPING_MODELS
+from souqsort.report import build_report, render_report
 
 DEFAULT_CATALOGUE = Path("data/raw/global_products.json")
 DEFAULT_CONFIG = Path("data/raw/gcc_config.json")
+# A string, not a Path, so the path is printed as given on every OS.
+DEFAULT_REPORT = "outputs/GCC_EXPANSION_REPORT.md"
 
 # CSV column names, each with the cell it takes from a row.
 _CSV_COLUMNS: tuple[tuple[str, Callable[[DisplayRow], str]], ...] = (
@@ -86,8 +89,40 @@ def _iso_datetime(text: str) -> datetime:
         raise problem from None
 
 
-def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
-    """The top-level parser and the ``price`` parser, which reports that command's errors."""
+def _iso_instant(text: str) -> datetime:
+    """An ``--ordered-at`` for the report, which must say its offset: it covers every market."""
+    moment = _iso_datetime(text)
+    if moment.utcoffset() is None:
+        raise argparse.ArgumentTypeError(
+            "the report covers every market, so give a UTC offset, e.g. 2026-10-15T09:00Z"
+        )
+    return moment
+
+
+def _add_data_file_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--catalogue",
+        type=Path,
+        default=DEFAULT_CATALOGUE,
+        metavar="PATH",
+        help=f"catalogue JSON file (default: {DEFAULT_CATALOGUE.as_posix()})",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG,
+        metavar="PATH",
+        help=f"market config JSON file (default: {DEFAULT_CONFIG.as_posix()})",
+    )
+
+
+def _build_parser() -> tuple[
+    argparse.ArgumentParser, argparse.ArgumentParser, argparse.ArgumentParser
+]:
+    """The top-level parser, then the ``price`` and ``report`` parsers.
+
+    Each command's parser reports that command's errors.
+    """
     parser = argparse.ArgumentParser(
         prog="python -m souqsort",
         description="SouqSort: GCC localisation and pricing engine.",
@@ -138,21 +173,30 @@ def _build_parser() -> tuple[argparse.ArgumentParser, argparse.ArgumentParser]:
         metavar="PATH",
         help="also write the rows to a CSV file, creating its folder if needed",
     )
-    price.add_argument(
-        "--catalogue",
-        type=Path,
-        default=DEFAULT_CATALOGUE,
-        metavar="PATH",
-        help=f"catalogue JSON file (default: {DEFAULT_CATALOGUE.as_posix()})",
+    _add_data_file_options(price)
+
+    report = commands.add_parser(
+        "report",
+        help="write the GCC expansion report",
+        description=(
+            "Write the expansion report: every market in the config for one order, "
+            "side by side, as Markdown."
+        ),
     )
-    price.add_argument(
-        "--config",
-        type=Path,
-        default=DEFAULT_CONFIG,
-        metavar="PATH",
-        help=f"market config JSON file (default: {DEFAULT_CONFIG.as_posix()})",
+    report.add_argument(
+        "--ordered-at",
+        type=_iso_instant,
+        metavar="ISO",
+        help="order date and time with a UTC offset, e.g. 2026-10-15T09:00Z (default: now)",
     )
-    return parser, price
+    report.add_argument(
+        "--out",
+        default=DEFAULT_REPORT,
+        metavar="PATH",
+        help=f"Markdown file to write, creating its folder if needed (default: {DEFAULT_REPORT})",
+    )
+    _add_data_file_options(report)
+    return parser, price, report
 
 
 def _same_file(path: Path, other: Path) -> bool:
@@ -160,6 +204,17 @@ def _same_file(path: Path, other: Path) -> bool:
         return path.samefile(other)
     except OSError:  # one of them does not exist, so they cannot be the same file
         return False
+
+
+def _refuse_input_files(
+    parser: argparse.ArgumentParser, option: str, path: Path, args: argparse.Namespace
+) -> None:
+    """Exit with a usage error if ``path`` is the catalogue or the config file."""
+    for source_option, source in (("--catalogue", args.catalogue), ("--config", args.config)):
+        if _same_file(path, source):
+            parser.error(
+                f"argument {option}: {path} is the {source_option} file and would be overwritten"
+            )
 
 
 # --- output -------------------------------------------------------------------------------
@@ -261,6 +316,16 @@ def _fail(message: str) -> int:
     return 1
 
 
+def _load_data(args: argparse.Namespace) -> tuple[GccConfig, Catalogue] | str:
+    """The config and the catalogue, or the message to fail with."""
+    try:
+        return load_gcc_config(args.config), load_catalogue(args.catalogue)
+    except DataFileError as exc:
+        return str(exc)
+    except OSError as exc:
+        return f"cannot read data file: {exc}"
+
+
 # --- entry point --------------------------------------------------------------------------
 
 
@@ -269,29 +334,31 @@ def main(argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = _ut
 
     ``now`` supplies the order time when ``--ordered-at`` is not given, and is not called
     otherwise. Usage errors, including an unknown market, exit with code 2 through argparse.
-    A data file that cannot be read, a catalogue that cannot be localised or a CSV that cannot
-    be written returns 1 with a message. Any other exception is a bug and is left to raise.
+    A data file that cannot be read, a catalogue that cannot be localised, or a CSV or report
+    that cannot be written returns 1 with a message. Any other exception is a bug and is left
+    to raise.
     """
-    parser, price_parser = _build_parser()
+    parser, price_parser, report_parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.command == "report":
+        return _report(args, report_parser, now)
+    return _price(args, price_parser, now)
+
+
+def _price(
+    args: argparse.Namespace, price_parser: argparse.ArgumentParser, now: Callable[[], datetime]
+) -> int:
     duty_points: int = args.duty_adjust
     shipping: ShippingModel = args.shipping
     csv_path: Path | None = args.csv_path
 
     if csv_path is not None:
-        for option, source in (("--catalogue", args.catalogue), ("--config", args.config)):
-            if _same_file(csv_path, source):
-                price_parser.error(
-                    f"argument --csv: {csv_path} is the {option} file and would be overwritten"
-                )
+        _refuse_input_files(price_parser, "--csv", csv_path, args)
 
-    try:
-        config = load_gcc_config(args.config)
-        catalogue = load_catalogue(args.catalogue)
-    except DataFileError as exc:
-        return _fail(str(exc))
-    except OSError as exc:
-        return _fail(f"cannot read data file: {exc}")
+    data = _load_data(args)
+    if isinstance(data, str):
+        return _fail(data)
+    config, catalogue = data
 
     try:
         market = find_market(config, args.market)
@@ -333,4 +400,32 @@ def main(argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = _ut
         _print()
         _print(f"Wrote {len(rows)} rows to {csv_path}")
 
+    return 0
+
+
+def _report(
+    args: argparse.Namespace, report_parser: argparse.ArgumentParser, now: Callable[[], datetime]
+) -> int:
+    out_text: str = args.out
+    out = Path(out_text)
+    _refuse_input_files(report_parser, "--out", out, args)
+
+    data = _load_data(args)
+    if isinstance(data, str):
+        return _fail(data)
+    config, catalogue = data
+
+    ordered_at = now() if args.ordered_at is None else args.ordered_at
+    try:
+        text = render_report(build_report(catalogue, config, ordered_at))
+    except LocalisationError as exc:
+        return _fail(str(exc))
+
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(text.encode("utf-8"))  # bytes, so Windows does not write \r\n
+    except OSError as exc:
+        return _fail(f"cannot write {out_text}: {exc.strerror or exc}")
+
+    _print(f"Wrote the expansion report to {out_text}")
     return 0
