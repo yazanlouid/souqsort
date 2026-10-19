@@ -1388,3 +1388,20 @@ def test_top_level_help_lists_both_commands(run: Callable[..., Result]) -> None:
     assert result.code == 0
     assert "price" in result.out
     assert "report" in result.out
+
+
+def test_report_figure_too_large_to_display_exits_one(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path
+) -> None:
+    for product in raw_catalogue["products"]:
+        product["base_price"] = product["unit_cost"] = "1E-26"
+    tiny = _write_json(tmp_path / "tiny_prices.json", raw_catalogue)
+    out = tmp_path / "report.md"
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(out), catalogue=tiny))
+
+    assert result.code == 1
+    assert "average above catalogue price is too large to display" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+    assert not out.exists()

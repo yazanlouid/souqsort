@@ -1,8 +1,9 @@
 """M11: the expansion report's text (SPEC §9.3 and §9.4): formatting, sentences, the template."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -16,6 +17,7 @@ from helpers import (
 from souqsort.compliance import ExcludedProduct
 from souqsort.logistics.calendar import DeliveryEstimate
 from souqsort.models import Catalogue, GccConfig
+from souqsort.pipeline import LocalisationError
 from souqsort.report import build_report, render_report
 from souqsort.report.figures import ExpansionReport, MarketOverview
 from souqsort.report.text import (
@@ -27,6 +29,7 @@ from souqsort.report.text import (
     markets_sentences,
     money_text,
     not_sold_sentence,
+    one_line,
     percent_text,
     report_context,
     signed_percent_text,
@@ -157,7 +160,7 @@ def _overview(
 def test_money_has_minor_units_and_thousands_separators(
     amount: str, minor_units: int, expected: str
 ) -> None:
-    assert money_text(Decimal(amount), minor_units) == expected
+    assert money_text(Decimal(amount), minor_units, figure="price") == expected
 
 
 @pytest.mark.parametrize(
@@ -174,7 +177,7 @@ def test_money_has_minor_units_and_thousands_separators(
     ],
 )
 def test_signed_percent(fraction: str, expected: str) -> None:
-    assert signed_percent_text(Decimal(fraction)) == expected
+    assert signed_percent_text(Decimal(fraction), figure="change") == expected
 
 
 @pytest.mark.parametrize(
@@ -182,7 +185,22 @@ def test_signed_percent(fraction: str, expected: str) -> None:
     [("0.15", "15.0%"), ("0.05", "5.0%"), ("0", "0.0%"), ("0.6455", "64.6%"), ("-0.0004", "0.0%")],
 )
 def test_rates_and_margins_have_no_sign(fraction: str, expected: str) -> None:
-    assert percent_text(Decimal(fraction)) == expected
+    assert percent_text(Decimal(fraction), figure="rate") == expected
+
+
+@pytest.mark.parametrize(
+    "show",
+    [
+        lambda value: money_text(value, 2, figure="KSA: average margin"),
+        lambda value: percent_text(value, figure="KSA: average margin"),
+        lambda value: signed_percent_text(value, figure="KSA: average margin"),
+    ],
+    ids=["money", "percent", "signed-percent"],
+)
+@pytest.mark.parametrize("value", ["1E+27", "-1E+27", "1E+999999"], ids=["big", "negative", "huge"])
+def test_a_figure_too_large_to_display_is_named(show: Callable[[Decimal], str], value: str) -> None:
+    with pytest.raises(LocalisationError, match=r"^KSA: average margin is too large to display$"):
+        show(Decimal(value))
 
 
 def test_dates_and_times() -> None:
@@ -238,6 +256,19 @@ def test_counts(count: int, expected: str) -> None:
 )
 def test_table_cells_escape_pipes_and_line_breaks(text: str, expected: str) -> None:
     assert table_cell(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("2026-10-01", "2026-10-01"),
+        ("2026-10-01\nrev2", "2026-10-01 rev2"),
+        ("a\r\nb\rc", "a b c"),
+        ("a|b", "a|b"),  # only a table cell escapes |
+    ],
+)
+def test_one_line_turns_line_breaks_into_spaces(text: str, expected: str) -> None:
+    assert one_line(text) == expected
 
 
 # --- sentences (§9.3.2 items 1 and 6) -----------------------------------------------------
@@ -479,3 +510,48 @@ def test_the_report_is_the_same_for_the_same_instant(
     same_instant = REPORT_ORDERED_AT.astimezone(timezone(timedelta(hours=3)))
 
     assert render_report(build_report(catalogue, config, same_instant)) == rendered
+
+
+# --- data that would break the text ------------------------------------------------------
+
+
+def test_a_figure_too_large_to_display_fails_naming_the_market_and_figure(
+    raw_catalogue: dict[str, Any], config: GccConfig
+) -> None:
+    # Tiny catalogue prices put shelf prices about 1E+26 times above them: the average is
+    # computed in full, but has too many digits to round to one decimal for display.
+    for product in raw_catalogue["products"]:
+        product["base_price"] = product["unit_cost"] = "1E-26"
+    report = build_report(Catalogue.model_validate(raw_catalogue), config, REPORT_ORDERED_AT)
+
+    with pytest.raises(
+        LocalisationError, match=r"^[A-Z]+: average above catalogue price is too large to display$"
+    ):
+        render_report(report)
+
+
+def test_line_breaks_in_the_data_versions_stay_on_one_line(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    report = build_report(
+        catalogue.model_copy(update={"catalogue_version": "2026-10-01\r\nb"}),
+        config.model_copy(update={"config_version": "2026-10-01\nrev2"}),
+        REPORT_ORDERED_AT,
+    )
+    text = render_report(report)
+
+    assert (
+        "Built from market config 2026-10-01 rev2, FX rates as of 2026-10-01 "
+        "and catalogue 2026-10-01 b.\n"
+    ) in text
+    assert "\n\n\n" not in text
+
+
+def test_line_breaks_in_a_market_code_stay_on_one_line() -> None:
+    markets = [_overview("A\nB", above="0.1", not_sold=1), _overview("C", above="0.2")]
+
+    assert markets_sentences(markets) == [
+        "On average, shelf prices sit 10.0% above the catalogue price in A B and 20.0% in C.",
+        "For this order, delivery is on Thu 2026-10-22 in A B and Thu 2026-10-22 in C.",
+    ]
+    assert not_sold_sentence(2, markets) == "Out of 2 products, A B cannot sell 1 and C 0."
