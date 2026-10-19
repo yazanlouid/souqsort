@@ -1,6 +1,6 @@
 [project]
 name = "souqsort"
-version = "0.1.0"
+version = "0.2.0"
 description = "GCC e-commerce localisation and pricing engine with a Streamlit dashboard."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

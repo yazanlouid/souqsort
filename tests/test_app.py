@@ -15,6 +15,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
+import streamlit
 from streamlit.testing.v1 import AppTest
 
 from helpers import FOR_SALE_COUNTS, decimal_places
@@ -460,6 +461,25 @@ def test_flags_column_has_a_fixed_width(app: AppTest) -> None:
     settings = json.loads(grid.proto.columns)
 
     assert settings[FLAGS]["width"] in {"medium", "large"}  # 200 px or 400 px
+
+
+def test_grid_is_as_tall_as_its_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Left at its default height, the grid scrolls after about ten rows and hides the rest.
+    # AppTest does not keep an element's height, so this records what the app asks for.
+    asked: list[dict[str, Any]] = []
+    show = streamlit.dataframe
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        asked.append(kwargs)
+        return show(*args, **kwargs)
+
+    monkeypatch.setattr(streamlit, "dataframe", recording)
+    at = _new_app()
+    at.session_state["opened_at"] = OPENED_AT
+    at.run()
+
+    assert len(_grid(at)) == KSA_FOR_SALE  # more rows than the default height shows
+    assert asked[0].get("height") == "content"
 
 
 # --- search filters rows ------------------------------------------------------------------

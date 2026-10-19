@@ -4,62 +4,97 @@
 
 SouqSort is a localisation and pricing engine for a UK-based retailer launching its catalogue in the
 GCC. It turns a global catalogue priced in USD/GBP into market-ready shelf prices (FX, freight,
-duty, VAT, rounding and charm endings), margins and delivery dates. It is built for an expansion
-director who picks a market, moves a tariff slider and sees what happens to prices, margins and
-delivery promises, in a Streamlit dashboard or from the command line. Saudi Arabia (KSA) is live
-today; the UAE and Kuwait come next.
+duty, VAT, rounding and charm endings), margins and delivery dates for three markets: Saudi Arabia
+(KSA), the UAE and Kuwait. It is built for an expansion director who picks a market and a shipping
+model, moves a tariff slider and sees what happens to prices, margins and delivery promises, in a
+Streamlit dashboard or from the command line. Products a market does not allow are reported as not
+sold, with the reason.
 
 > [!IMPORTANT]
-> **All market data is illustrative.** FX rates, VAT and duty rates, freight costs, holidays and the
-> product catalogue are sample values written for this demo. Do not use them to quote real prices or
-> delivery dates.
+> **All market data is illustrative.** FX rates, VAT and duty rates, de minimis thresholds, freight
+> costs, holidays, compliance rules and the product catalogue are sample values written for this
+> demo. Do not use them to quote real prices or delivery dates.
 
-![SouqSort dashboard: KSA prices, margins and delivery dates with a +3 pp duty adjustment](docs/dashboard.png)
+![SouqSort dashboard: UAE direct-parcel prices with a +3 pp duty adjustment, duty waived for most products, and the gummy bears listed as not sold](docs/dashboard.png)
 
 ## Sample run
 
-The same scenario as the screenshot: KSA, duty up 3 percentage points, ordered on Thursday
-15 October 2026 at 13:59 Riyadh time.
+The same scenario as the screenshot: the UAE, shipped as direct parcels, duty up 3 percentage
+points, ordered on Thursday 15 October 2026 at 14:59 Dubai time.
 
 ```console
-$ uv run python -m souqsort price --market KSA --duty-adjust 3 --ordered-at 2026-10-15T13:59+03:00
-Market: KSA (Saudi Arabia)   Ordered at: 2026-10-15 13:59 Asia/Riyadh   Duty adjustment: +3 pp
+$ uv run python -m souqsort price --market UAE --shipping parcel --duty-adjust 3 --ordered-at 2026-10-15T14:59+04:00
+Market: UAE (United Arab Emirates)   Ordered at: 2026-10-15 14:59 Asia/Dubai   Duty adjustment: +3 pp   Shipping: parcel
 
-SKU           Name                                         Shelf price (SAR)  Margin %  Delivery    Flags
-------------  -------------------------------------------  -----------------  --------  ----------  -------------------
-ELEC-HP-001   Wireless Noise-Cancelling Headphones                    705.95     58.7%  2026-10-22  -
-ELEC-CHG-002  65W USB-C Charger                                       190.95     64.7%  2026-10-22  -
-FASH-BAG-014  Leather Crossbody Bag                                   610.95     64.7%  2026-10-22  missing_arabic_name
-FASH-SCF-015  Silk Scarf                                              301.95     73.3%  2026-10-22  -
-SPRT-KTB-020  Cast Iron Kettlebell 16 kg                              610.95     64.5%  2026-10-22  -
-HOME-KTL-030  Electric Kettle 1.7 L                                   243.95     61.7%  2026-10-22  -
-BEAU-LIP-040  Lip Balm                                                 16.95     73.3%  2026-10-22  -
-BEAU-SRM-041  Vitamin C Serum 30 ml                                   114.95     71.8%  2026-10-22  -
-DIGI-LIC-050  Photo Editor Pro Licence (digital download)             350.95     70.0%  2026-10-22  -
-GROC-TEA-060  English Breakfast Tea, 80 bags                           34.95     66.3%  2026-10-22  missing_arabic_name
-GROC-VAN-061  Pure Vanilla Extract                                     63.95     68.6%  2026-10-22  -
-GROC-GUM-062  Gummy Bears (pork gelatine)                              22.95     71.7%  2026-10-22  -
+SKU           Name                                         Shelf price (AED)  Margin %    Duty  Delivery    Flags
+------------  -------------------------------------------  -----------------  --------  ------  ----------  -------------------
+ELEC-HP-001   Wireless Noise-Cancelling Headphones                    589.99     58.7%  waived  2026-10-21  -
+ELEC-CHG-002  65W USB-C Charger                                       159.99     64.5%  waived  2026-10-21  -
+FASH-BAG-014  Leather Crossbody Bag                                   485.99     64.7%  waived  2026-10-21  missing_arabic_name
+FASH-SCF-015  Silk Scarf                                              236.99     73.4%  waived  2026-10-21  -
+SPRT-KTB-020  Cast Iron Kettlebell 16 kg                              721.99     64.5%  waived  2026-10-21  -
+HOME-KTL-030  Electric Kettle 1.7 L                                   218.99     61.9%  waived  2026-10-21  -
+HOME-ESP-031  Bean-to-Cup Espresso Machine                           3954.99     40.1%    8.0%  2026-10-21  -
+BEAU-LIP-040  Lip Balm                                                 14.99     74.5%  waived  2026-10-21  -
+BEAU-SRM-041  Vitamin C Serum 30 ml                                    96.99     71.9%  waived  2026-10-21  -
+DIGI-LIC-050  Photo Editor Pro Licence (digital download)             304.99     70.0%  waived  2026-10-21  -
+GROC-TEA-060  English Breakfast Tea, 80 bags                           32.99     67.2%  waived  2026-10-21  missing_arabic_name
+GROC-VAN-061  Pure Vanilla Extract                                     59.99     69.0%    8.0%  2026-10-21  -
+
+Not sold in UAE (1):
+SKU           Name                         Reasons
+------------  ---------------------------  -------------
+GROC-GUM-062  Gummy Bears (pork gelatine)  contains_pork
 ```
 
-The order lands one minute before the 14:00 cut-off, so it ships the same day and arrives five
-business days later, skipping the Friday–Saturday weekend. `--ordered-at` is fixed here so the
+Each direct parcel is cleared on its own, and the UAE charges no customs duty on one whose CIF
+(goods + freight) is AED 1,000 or less. So most products pay no duty, and the +3 pp slider leaves
+their prices exactly where they were at 0 pp. Only two products pay duty, at 5% + 3 pp = 8%:
+
+- **The espresso machine** is over the threshold: its CIF is about AED 3,487.19.
+- **The vanilla extract** is well under it (CIF AED 52.11), but the UAE excludes alcohol from de
+  minimis, including food preparations containing alcohol, and vanilla extract contains alcohol.
+
+These two are the only prices the slider moves: 3844.99 → 3954.99 and 57.99 → 59.99, which is why
+the dashboard's average price change is only +0.5%.
+
+**The gummy bears are not sold** because they contain pork gelatine, and the UAE bans
+`contains_pork`. They are screened out before pricing, so they are never priced, and they are listed
+with the reason instead of silently disappearing.
+
+The order lands one minute before the UAE's 15:00 cut-off, so it ships the same day and arrives four
+business days later, skipping the Saturday–Sunday weekend. `--ordered-at` is fixed here so the
 output is reproducible; without it the CLI uses the current time.
+
+The shipping model is a real trade-off. Parcel freight costs twice as much per kg, so light,
+valuable items get cheaper as parcels and heavy or cheap ones get dearer. In KSA, the headphones go
+from 686.95 to 660.95 SAR, but the 16 kg kettlebell goes from 593.95 to 875.95. Kuwait has no de
+minimis, so a parcel there is never cheaper.
 
 ## What makes it tricky
 
 - **Money.** `Decimal` throughout, rounded once with `ROUND_HALF_UP`: 0.0005 at 3 decimals gives
   0.001, where banker's rounding would give 0.000. Charm endings never lower a price
   (686.96 becomes 687.95, not 686.95). KWD uses 3 decimals, not 2.
-- **Tax order.** Duty is charged on CIF (goods + freight); VAT is charged on CIF + duty.
+- **Tax order.** Duty is charged on CIF (goods + freight); VAT is charged on CIF + duty, and still on
+  CIF when de minimis waives the duty.
 - **FX order.** Multiply before dividing. Dividing first turned an exact 0.075 into 0.07499…97,
   which rounds to 0.07 instead of 0.08.
+- **De minimis.** The threshold is compared with the unrounded CIF in the market currency, including
+  the dearer parcel freight. KSA waives duty *below* SAR 1,000 and the UAE *at or below* AED 1,000,
+  so a CIF of exactly 1,000.00 pays duty in one and not the other. The duty slider never changes
+  whether a product is waived, and a waived product pays nothing at any adjustment.
+- **Compliance.** Each market lists the product attributes it does not allow. A banned product is
+  never priced for that market and never silently dropped: it is reported as not sold, with its
+  reasons. KSA and Kuwait sell 11 of the 13 products, the UAE 12.
 - **Delivery.** Orders are converted to market time first: Thursday 22:30 UTC is already Friday,
-  the weekend, in Riyadh. The cut-off is compared as a moment in time, so a clock change can't make
-  a later order arrive earlier.
+  the weekend, in Riyadh, but a working day in Dubai. The cut-off is compared as a moment in time,
+  so a clock change can't make a later order arrive earlier.
 - **Errors.** A product that can't be priced fails with a message naming its SKU; unexpected bugs
   keep their traceback.
-- **Tests.** 600+ tests, including Hypothesis property tests, headless dashboard tests (Streamlit's
-  `AppTest`) and architecture tests that keep the clock and pandas out of the engine.
+- **Tests.** 1,000+ tests, including every worked example and price list in the spec, Hypothesis
+  property tests, headless dashboard tests (Streamlit's `AppTest`) and architecture tests that keep
+  floats, market codes, the clock and pandas out of the engine.
 
 ## Install and run
 
@@ -74,18 +109,20 @@ uv sync
 | To | Run |
 |---|---|
 | Price a market from the CLI | `uv run python -m souqsort price --market KSA` |
+| Price UAE direct parcels | `uv run python -m souqsort price --market UAE --shipping parcel` |
 | Open the dashboard | `uv run streamlit run app/streamlit_app.py` |
 | Run the tests | `uv run pytest` |
-| Lint and type-check | `uv run ruff check .` and `uv run mypy src` |
+| Format, lint and type-check | `uv run ruff format --check .`, `uv run ruff check .` and `uv run mypy src` |
 
 CLI options for `price`:
 
 | Option | Meaning |
 |---|---|
-| `--market CODE` | Market code from the config (required). |
+| `--market CODE` | Market code from the config: `KSA`, `UAE` or `KWT` (required). |
+| `--shipping MODEL` | `consolidated` (one commercial import, de minimis never applies) or `parcel` (each order cleared on its own, duty-free under the market's de minimis threshold, dearer freight). Default `consolidated`. |
 | `--duty-adjust POINTS` | Whole percentage points added to every duty rate, 0 to 20. Default 0. |
 | `--ordered-at ISO` | Order date and time, e.g. `2026-10-15T20:59Z`. Without an offset it is read as local time in the market. Default: now. |
-| `--csv PATH` | Also write the rows to a CSV file. |
+| `--csv PATH` | Also write the rows for the products for sale to a CSV file. |
 
 ## Design rules
 
@@ -94,7 +131,10 @@ CLI options for `price`:
 - **Round once.** Every step keeps full precision. The only rounding is at the shelf price, with
   `ROUND_HALF_UP` to the currency's minor units; the charm ending then only ever moves a price up.
 - **Markets as config.** A market is an entry in `data/raw/gcc_config.json`: currency, VAT, duty
-  rates, weekend, holidays, cut-off, freight. No code branches on a market code.
+  rates, de minimis rule, banned attributes, weekend, holidays, cut-off, freight and parcel freight.
+  The UAE and Kuwait were added without changing any code, and no code branches on a market code.
+- **Not sold, never dropped.** A product a market does not allow is never priced for it, and is
+  always reported with the reason.
 - **No clock in the engine.** The engine never reads the current time; it is always passed a
   timezone-aware `ordered_at`. Only the entry points read the clock: the CLI, through an injectable
   `now` callable, and the dashboard, for its picker defaults. Every result is reproducible and
@@ -107,19 +147,34 @@ The full rules, with worked examples, are in [SPEC.md](SPEC.md).
 - **Spec first.** [SPEC.md](SPEC.md) set the rules, worked examples and acceptance tests before any
   code.
 - **Test-first milestones.** Each milestone was planned and built test-first with
-  [Claude Code](https://claude.com/claude-code).
-- **Independent review.** The work was reviewed by an independent AI code review. I triaged every
-  finding; deferred items are tracked as
+  [Claude Code](https://claude.com/claude-code), on its own branch, and reached `main` through a
+  pull request.
+- **CI.** GitHub Actions runs the format check, lint, type check and tests on Ubuntu and Windows
+  for every pull request and every push to `main`, and fails on a stale `uv.lock`.
+- **Project tools for Claude Code**, in `.claude/`:
+  - `/verify` runs the same four checks as CI and ends with `verify: PASS` or `verify: FAIL`.
+  - `/add-market CODE "Name"` adds a market as config data plus its tests, without touching code.
+    The UAE and Kuwait were added with it.
+  - A format hook runs `ruff format` on every Python file Claude edits.
+  - The `money-reviewer` subagent checks a branch against the money rules (Decimal only, one
+    rounding, duty and VAT bases, de minimis, compliance) before code review.
+- **Independent review.** The work was reviewed by an independent AI code review, and the de minimis
+  milestone by the money-reviewer as well. I triaged every finding; decisions are recorded in the
+  spec, and deferred items are tracked as
   [GitHub issues](https://github.com/yazanlouid/souqsort/issues).
 
 ## Status
 
-**v0.1.0: Saudi Arabia (KSA) end to end.** Catalogue and config validation, landed-cost pricing with
-margins, delivery estimates, the CLI and the dashboard.
+**v0.2.0: three markets, compliance and de minimis.** KSA, the UAE and Kuwait; banned product
+attributes reported as not sold; a consolidated-import or direct-parcel shipping model, with de
+minimis thresholds; the duty rate and any de minimis waiver in the CLI, the CSV and the dashboard.
+
+**v0.1.0:** KSA end to end: catalogue and config validation, landed-cost pricing with margins,
+delivery estimates, the CLI and the dashboard.
 
 Roadmap:
 
-- **v0.2:** the UAE and Kuwait, added through config only; compliance rules (banned product
-  attributes); de minimis thresholds.
 - **v0.3:** a `GCC_EXPANSION_REPORT.md` generated from a template, with a download button in the
-  dashboard.
+  dashboard, building on the consolidated-versus-parcel comparison.
+- **Later:** pricing refinements (per-parcel fees, orders of several items, a finer price ladder for
+  KWD), calculation traces, and a data pipeline. See [SPEC.md](SPEC.md) §2.
