@@ -943,3 +943,10 @@ def test_a_market_that_sells_nothing_shows_dashes_for_tariffs(
         section
     )
     assert "in UAE.\n" in section
+
+
+def test_tariff_sentence_names_a_market_missing_a_shipping_model() -> None:
+    exposures = [*_exposures("A", "0.09", "0.009"), _exposures("B", "0.1", "0.02")[0]]
+
+    with pytest.raises(LocalisationError, match=r"^B: no parcel figure for the tariff sentence$"):
+        tariff_sentence(exposures)

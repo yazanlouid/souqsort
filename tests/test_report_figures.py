@@ -453,3 +453,27 @@ def test_a_bigger_tariff_rise_never_lowers_the_average_change(
         assert len(figures) == len(TARIFF_RISES_POINTS)
         assert all(change >= 0 for change in figures)
         assert figures == sorted(figures)
+
+
+def test_the_headline_rise_must_be_one_of_the_rises() -> None:
+    figures._require_headline_rise(10, (5, 10, 20))
+    with pytest.raises(
+        ValueError,
+        match=r"^HEADLINE_TARIFF_RISE_POINTS \(15\) must be one of "
+        r"TARIFF_RISES_POINTS \(5, 10, 20\)$",
+    ):
+        figures._require_headline_rise(15, (5, 10, 20))
+
+
+def test_figures_do_not_depend_on_the_order_shipping_models_are_declared(
+    catalogue: Catalogue,
+    config: GccConfig,
+    report: ExpansionReport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(figures, "SHIPPING_MODELS", ("parcel", "consolidated"))
+    reordered = build_report(catalogue, config, REPORT_ORDERED_AT)
+
+    assert reordered.markets == report.markets
+    assert reordered.shipping == report.shipping
+    assert sorted(reordered.tariffs, key=str) == sorted(report.tariffs, key=str)

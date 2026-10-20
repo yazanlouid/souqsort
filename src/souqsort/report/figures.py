@@ -27,6 +27,18 @@ TARIFF_RISES_POINTS: tuple[int, ...] = (5, 10, 20)
 HEADLINE_TARIFF_RISE_POINTS = 10
 
 
+def _require_headline_rise(headline: int, rises: tuple[int, ...]) -> None:
+    """Raise ``ValueError`` naming both constants unless ``headline`` is one of ``rises``."""
+    if headline not in rises:
+        raise ValueError(
+            f"HEADLINE_TARIFF_RISE_POINTS ({headline}) must be one of TARIFF_RISES_POINTS {rises}"
+        )
+
+
+# Checked on import, so a mismatch fails at once rather than on every render.
+_require_headline_rise(HEADLINE_TARIFF_RISE_POINTS, TARIFF_RISES_POINTS)
+
+
 @dataclass(frozen=True)
 class MarketOverview:
     """One market for the order, with consolidated imports and today's duty rates.
@@ -191,10 +203,16 @@ def _shipping(
 def _localise(
     products: list[Product], config: GccConfig, market: MarketConfig, ordered_at: datetime
 ) -> tuple[MarketOverview, ShippingComparison]:
-    """One market's figures, each shipping model localised once at today's duty rates."""
-    consolidated, parcel = (
-        localise_and_summarise(products, config, market.code, ordered_at, Decimal("0"), model)
-        for model in SHIPPING_MODELS
+    """One market's figures, each shipping model localised once at today's duty rates.
+
+    The models are named, not taken from ``SHIPPING_MODELS``, so the markets table always
+    shows consolidated imports whatever order the models are declared in.
+    """
+    consolidated = localise_and_summarise(
+        products, config, market.code, ordered_at, Decimal("0"), "consolidated"
+    )
+    parcel = localise_and_summarise(
+        products, config, market.code, ordered_at, Decimal("0"), "parcel"
     )
     return _overview(market, consolidated, ordered_at), _shipping(market, consolidated, parcel)
 

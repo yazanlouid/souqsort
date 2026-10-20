@@ -33,6 +33,10 @@ _NO_VALUE = "-"
 _PERCENT = Decimal(100)
 _NOTHING_FOR_SALE = "No market has products for sale."
 
+# The tariff sentence's two figures per market, in its order: "9.0% for consolidated imports
+# and 0.9% for direct parcels".
+_SENTENCE_MODELS: tuple[ShippingModel, ShippingModel] = ("consolidated", "parcel")
+
 # How a de minimis rule reads: "a parcel whose CIF is below 1,000.00 SAR".
 _APPLIES: dict[DeMinimisApplies, str] = {"below": "below", "at_or_below": "at or below"}
 
@@ -249,7 +253,8 @@ def tariff_sentence(tariffs: Sequence[TariffExposure]) -> str:
     """The sentence of "Tariff exposure", at ``HEADLINE_TARIFF_RISE_POINTS``.
 
     Markets in config order, both shipping models each; a market that sells nothing has no
-    averages and is left out.
+    averages and is left out. Raises ``LocalisationError`` naming the market and model if a
+    market has figures for one shipping model but not the other.
     """
     headline = TARIFF_RISES_POINTS.index(HEADLINE_TARIFF_RISE_POINTS)
     by_market: dict[str, dict[ShippingModel, Decimal]] = {}
@@ -262,12 +267,15 @@ def tariff_sentence(tariffs: Sequence[TariffExposure]) -> str:
 
     clauses = []
     for position, (code, changes) in enumerate(by_market.items()):
+        for model in _SENTENCE_MODELS:
+            if model not in changes:
+                raise LocalisationError(f"{code}: no {model} figure for the tariff sentence")
         consolidated, parcel = (
             percent_text(
                 changes[model],
                 figure=f"{code}: {HEADLINE_TARIFF_RISE_POINTS} pp {model} price change",
             )
-            for model in ("consolidated", "parcel")
+            for model in _SENTENCE_MODELS
         )
         clauses.append(
             f"{consolidated} and {parcel} in {one_line(code)}"
