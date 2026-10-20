@@ -300,7 +300,7 @@ Rules:
 - Weekend days use `MON` … `SUN`.
 - Validation must reject unknown currency codes, negative rates, an invalid timezone, a malformed cutoff time and a config with no markets.
 - `compliance` is required in every market (M9). `banned_attributes` may be empty; each name must be an attribute from §6.1, with no duplicates. `source` is not empty.
-- `customs.de_minimis` is required in every market (M10) and may be `null`, meaning no de minimis. When set: `threshold` > 0, in the market currency; `applies` is `"below"` or `"at_or_below"`; `excluded_attributes` follows the rule for `banned_attributes`; `source` is not empty.
+- `customs.de_minimis` is required in every market (M10) and may be `null`, meaning no de minimis. When set: `threshold` > 0, in the market currency, with no more decimals than the currency's minor units; `applies` is `"below"` or `"at_or_below"`; `excluded_attributes` follows the rule for `banned_attributes`; `source` is not empty.
 - `logistics.parcel_freight_per_kg_usd` is required (M10) and ≥ 0.
 - These fields are required rather than defaulted, so a market cannot end up with "nothing banned" or "no de minimis" because a field was left out.
 - Test fixtures get the same fields. `tests/fixtures/zero_vat_config.json`: an empty banned list (M9), `"de_minimis": null` and parcel freight `9.00` (M10).
@@ -668,7 +668,7 @@ Each section opens with its sentences. The summary at the top repeats them all a
    - "For this order, delivery is on Thu 2026-10-22 in KSA, Wed 2026-10-21 in UAE and Thu 2026-10-22 in KWT." Every market, config order.
 2. **Consolidated or parcel:** "Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT." Config order; markets that sell nothing are left out; none: "No market has products for sale."
    - Each market's subsection opens with its rule: "No duty on a parcel whose CIF is below 1,000.00 SAR." / "No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol." / "No de minimis rule, so every parcel pays duty." Excluded attributes read as "alcohol", "pork" and "a lithium battery", several joined with "or".
-   - Then "Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1." and, only when the market has a rule, "Duty is waived on 10 of them." A market that sells nothing: "No products are for sale." and no table.
+   - Then "Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1." and, only when the market has a rule, "Duty is waived on 10 of them." A market that sells nothing: its rule, then "No products are for sale.", and no table.
 3. **Tariff exposure:** "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT." Config order; markets that sell nothing are left out; none: "No market has products for sale."
 4. **How a price is built:** "Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT." None sold everywhere: "No product is sold in every market, so there is no price to break down."
 5. **Pricing risks:** "The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) and GROC-TEA-060 in KWT (+20.0%)." None: "No price ending adds more than 10.0% to any product."
@@ -1268,6 +1268,7 @@ The sample report does not change: it names the data, not the version (§9.1).
 - Reports go to `outputs/` (gitignored) by default. `docs/GCC_EXPANSION_REPORT.md` is the one committed report, and a test keeps it current.
 - Four milestones, split by report section, so each ends with a report that runs and a pull request small enough for both reviewers.
 - `/release` turns the steps of Release v0.2.0 into one command. It stops for an OK before the merge, never pushes to `main` and never moves a tag.
+- A de minimis threshold is whole minor units, so the report's rule sentence states exactly what the engine compares.
 
 ## 13. Sources
 

@@ -249,6 +249,19 @@ class LogisticsConfig(_Model):
     last_mile_business_days: NonNegativeInt
 
 
+def _decimal_places(value: Decimal) -> int:
+    """The decimals ``value`` needs, ignoring trailing zeros (``Decimal("1000.00")`` needs 0).
+
+    Read from the digits rather than computed, so a huge value never meets the context's
+    precision.
+    """
+    _, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int):  # NaN or infinity, which validation rejects first
+        return 0
+    trailing_zeros = len(digits) - len("".join(map(str, digits)).rstrip("0"))
+    return max(0, -(exponent + trailing_zeros))
+
+
 class MarketConfig(_Model):
     code: NonEmptyStr
     name: NonEmptyStr
@@ -258,6 +271,18 @@ class MarketConfig(_Model):
     compliance: ComplianceConfig
     calendar: CalendarConfig
     logistics: LogisticsConfig
+
+    @model_validator(mode="after")
+    def _threshold_fits_currency(self) -> Self:
+        """A de minimis threshold is whole minor units, so the report states it exactly."""
+        rule = self.customs.de_minimis
+        minor_units = self.currency.minor_units
+        if rule is not None and _decimal_places(rule.threshold) > minor_units:
+            raise ValueError(
+                f"{self.code}: de minimis threshold {rule.threshold} has more decimals than "
+                f"minor_units ({minor_units})"
+            )
+        return self
 
 
 class GccConfig(_Model):
