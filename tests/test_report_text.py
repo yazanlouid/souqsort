@@ -1,4 +1,4 @@
-"""M11 and M12: the report's text (SPEC §9.3 and §9.4): formatting, sentences, the template."""
+"""M11 to M13: the report's text (SPEC §9.3 and §9.4): formatting, sentences, the template."""
 
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, time, timedelta, timezone
@@ -6,8 +6,11 @@ from decimal import Decimal
 from typing import Any, get_args
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from helpers import (
+    FOR_SALE_COUNTS,
     GUMMY_BEARS,
     REPORT_ORDERED_AT,
     VANILLA,
@@ -22,18 +25,25 @@ from souqsort.models import (
     DeMinimisApplies,
     DeMinimisRule,
     GccConfig,
+    ShippingModel,
 )
-from souqsort.pipeline import LocalisationError
+from souqsort.pipeline import LocalisationError, localise_and_summarise
+from souqsort.pricing.landed_cost import PriceQuote
+from souqsort.pricing.money import charm_up, round_minor
 from souqsort.report import build_report, render_report
 from souqsort.report.figures import (
     TARIFF_RISES_POINTS,
     ExpansionReport,
     MarketOverview,
+    PriceBuildUp,
     ProductComparison,
+    SampleProduct,
     ShippingComparison,
     TariffExposure,
 )
 from souqsort.report.text import (
+    build_up_column,
+    build_up_sentences,
     clock_text,
     count_text,
     date_text,
@@ -512,7 +522,7 @@ def test_header_is_appendix_a(rendered: str) -> None:
 def test_summary_lists_the_sentences_built_so_far(rendered: str) -> None:
     assert _section(rendered, "Summary") == (
         f"## Summary\n\n- {PRICE_SENTENCE}\n- {DELIVERY_SENTENCE}\n- {SHIPPING_SENTENCE}\n"
-        f"- {TARIFF_SENTENCE}\n"
+        f"- {TARIFF_SENTENCE}\n- {' '.join(BUILD_UP_SENTENCES)}\n"
         f"- {NOT_SOLD_SENTENCE}\n\n"
     )
 
@@ -541,6 +551,10 @@ def test_sections_are_in_order(rendered: str) -> None:
         "### UAE (United Arab Emirates)",
         "### KWT (Kuwait)",
         "## Tariff exposure",
+        "## How a price is built",
+        "### KSA (SAR)",
+        "### UAE (AED)",
+        "### KWT (KWD)",
         "## Not sold",
         "## How these figures are made",
     ]
@@ -950,3 +964,259 @@ def test_tariff_sentence_names_a_market_missing_a_shipping_model() -> None:
 
     with pytest.raises(LocalisationError, match=r"^B: no parcel figure for the tariff sentence$"):
         tariff_sentence(exposures)
+
+
+# --- how a price is built (§9.3.2 item 4) -------------------------------------------------
+
+BUILD_UP_SENTENCES = [
+    "Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells.",
+    "Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% "
+    "in KSA, -3.8% in UAE and +2.0% in KWT.",
+]
+NO_BUILD_UP_SENTENCE = "No product is sold in every market, so there is no price to break down."
+
+BUILD_UP_SECTION = """\
+## How a price is built
+
+Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT.
+
+### KSA (SAR)
+
+| Step | Consolidated import | Direct parcel |
+|---|---:|---:|
+| Catalogue price, converted | 562.46 | 562.46 |
+| Freight | 5.91 | 11.81 |
+| Duty | 28.42 | 0.00 (waived) |
+| VAT | 89.52 | 86.14 |
+| Rounding and price ending | 0.64 | 0.54 |
+| **Shelf price** | **686.95** | **660.95** |
+
+### UAE (AED)
+
+| Step | Consolidated import | Direct parcel |
+|---|---:|---:|
+| Catalogue price, converted | 550.84 | 550.84 |
+| Freight | 5.14 | 10.28 |
+| Duty | 27.80 | 0.00 (waived) |
+| VAT | 29.19 | 28.06 |
+| Rounding and price ending | 0.02 | 0.81 |
+| **Shelf price** | **612.99** | **589.99** |
+
+### KWT (KWD)
+
+| Step | Consolidated import | Direct parcel |
+|---|---:|---:|
+| Catalogue price, converted | 46.047 | 46.047 |
+| Freight | 0.537 | 1.075 |
+| Duty | 2.329 | 2.356 |
+| VAT | 0.000 | 0.000 |
+| Rounding and price ending | 0.037 | 0.472 |
+| **Shelf price** | **48.950** | **49.950** |
+
+"""  # noqa: E501
+
+
+def _quote(
+    goods: str,
+    freight: str,
+    duty: str,
+    vat: str,
+    shelf_price: str,
+    *,
+    shipping: ShippingModel = "consolidated",
+    waived: bool = False,
+) -> PriceQuote:
+    """A hand-built quote; only the components, the shelf price and the waiver matter here."""
+    parts = [Decimal(goods), Decimal(freight), Decimal(duty), Decimal(vat)]
+    return PriceQuote(
+        sku="SKU-1",
+        market="A",
+        currency="XXX",
+        goods=parts[0],
+        freight=parts[1],
+        duty=parts[2],
+        vat=parts[3],
+        gross=sum(parts, Decimal(0)),
+        shelf_price=Decimal(shelf_price),
+        margin_pct=Decimal("0.5"),
+        shipping=shipping,
+        duty_rate=Decimal(0) if waived else Decimal("0.05"),
+        duty_waived=waived,
+    )
+
+
+def _build_up(code: str, consolidated: str, parcel: str) -> PriceBuildUp:
+    """A hand-built market whose two quotes differ only in their shelf prices."""
+    return PriceBuildUp(
+        code=code,
+        currency="XXX",
+        minor_units=2,
+        consolidated=_quote("1.00", "0", "0", "0", consolidated),
+        parcel=_quote("1.00", "0", "0", "0", parcel, shipping="parcel"),
+    )
+
+
+def _adds_up(column: Sequence[str]) -> bool:
+    """The five displayed steps of a build-up column add up to its shelf price."""
+    *steps, shelf = (Decimal(text.removesuffix(" (waived)").replace(",", "")) for text in column)
+    return sum(steps, Decimal(0)) == shelf
+
+
+def test_build_up_sentences_for_the_sample_data(report: ExpansionReport) -> None:
+    assert build_up_sentences(report.sample_product, report.build_ups) == BUILD_UP_SENTENCES
+
+
+def test_build_up_sentences_for_one_market() -> None:
+    sample = SampleProduct(sku="SKU-1", name_en="Thing")
+
+    assert build_up_sentences(sample, [_build_up("A", "10.00", "10.00")]) == [
+        "Thing (SKU-1) is the first product every market sells.",
+        "Shipped as a direct parcel instead of a consolidated import, its price changes by "
+        "0.0% in A.",
+    ]
+
+
+def test_build_up_sentences_when_no_product_is_sold_everywhere() -> None:
+    assert build_up_sentences(None, []) == [NO_BUILD_UP_SENTENCE]
+
+
+def test_build_up_sentences_keep_data_on_one_line() -> None:
+    sample = SampleProduct(sku="SKU\n1", name_en="Two\r\nlines")
+    build_ups = [_build_up("A\nB", "10.00", "11.00"), _build_up("C", "10.00", "9.00")]
+
+    assert build_up_sentences(sample, build_ups) == [
+        "Two lines (SKU 1) is the first product every market sells.",
+        "Shipped as a direct parcel instead of a consolidated import, its price changes by "
+        "+10.0% in A B and -10.0% in C.",
+    ]
+
+
+def test_build_up_columns_for_ksa(report: ExpansionReport) -> None:
+    ksa = report.build_ups[0]
+
+    assert build_up_column(ksa.consolidated, ksa.minor_units, figure="KSA") == [
+        "562.46",
+        "5.91",
+        "28.42",
+        "89.52",
+        "0.64",
+        "686.95",
+    ]
+    # 660.95 - (562.46 + 11.81 + 0.00 + 86.14), although shelf_price - gross is 0.53375.
+    assert build_up_column(ksa.parcel, ksa.minor_units, figure="KSA") == [
+        "562.46",
+        "11.81",
+        "0.00 (waived)",
+        "86.14",
+        "0.54",
+        "660.95",
+    ]
+
+
+@pytest.mark.parametrize("waived", [False, True])
+def test_duty_shows_waived_exactly_when_it_is(waived: bool) -> None:
+    quote = _quote("10.00", "1.00", "0", "1.65", "12.95", shipping="parcel", waived=waived)
+
+    assert build_up_column(quote, 2, figure="A")[2] == ("0.00 (waived)" if waived else "0.00")
+
+
+def test_the_rounding_line_can_be_below_zero() -> None:
+    # Each component rounds up by half a minor unit; the gross, 1.95, already has the ending.
+    quote = _quote("1.005", "0.315", "0.315", "0.315", "1.95")
+
+    assert build_up_column(quote, 2, figure="A") == [
+        "1.01",
+        "0.32",
+        "0.32",
+        "0.32",
+        "-0.02",
+        "1.95",
+    ]
+
+
+def test_a_component_too_large_to_display_is_named() -> None:
+    quote = _quote("1E+30", "0", "0", "0", "1E+30")
+
+    with pytest.raises(LocalisationError, match=r"^A: ELEC parcel goods is too large to display$"):
+        build_up_column(quote, 2, figure="A: ELEC parcel")
+
+
+def test_every_build_up_column_adds_up_to_the_shelf_price(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    columns = 0
+    for code, market in config.markets.items():
+        for model in get_args(ShippingModel):
+            localised = localise_and_summarise(
+                catalogue.products, config, code, REPORT_ORDERED_AT, Decimal("0"), model
+            )
+            for item in localised.items:
+                column = build_up_column(item.quote, market.currency.minor_units, figure=code)
+                assert _adds_up(column), (code, model, item.sku, column)
+                columns += 1
+
+    assert columns == 2 * sum(FOR_SALE_COUNTS.values())
+
+
+_COMPONENT = st.decimals(min_value=0, max_value=100_000, places=6, allow_nan=False)
+
+
+@settings(max_examples=200)
+@given(
+    components=st.tuples(_COMPONENT, _COMPONENT, _COMPONENT, _COMPONENT),
+    minor_units=st.integers(min_value=0, max_value=3),
+    ending=st.sampled_from(["0", "0.5", "0.95", "0.99", "0.950"]),
+    waived=st.booleans(),
+)
+def test_any_build_up_column_adds_up_to_the_shelf_price(
+    components: tuple[Decimal, Decimal, Decimal, Decimal],
+    minor_units: int,
+    ending: str,
+    waived: bool,
+) -> None:
+    gross = sum(components, Decimal(0))
+    charm = Decimal(ending)
+    fits = charm == charm.quantize(Decimal(1).scaleb(-minor_units))
+    shelf = charm_up(round_minor(gross, minor_units), charm if fits else None, minor_units)
+    quote = _quote(*(str(c) for c in components), str(shelf), waived=waived)
+
+    assert _adds_up(build_up_column(quote, minor_units, figure="A"))
+
+
+def test_how_a_price_is_built_is_appendix_a(rendered: str) -> None:
+    assert _section(rendered, "How a price is built") == BUILD_UP_SECTION
+
+
+@pytest.mark.parametrize(
+    "skus",
+    [(VANILLA,), (VANILLA, GUMMY_BEARS), ()],
+    ids=["only-uae-sells-it", "a-market-sells-nothing", "empty"],
+)
+def test_no_product_sold_everywhere_has_no_build_up_tables(
+    catalogue: Catalogue, config: GccConfig, skus: tuple[str, ...]
+) -> None:
+    text = render_report(build_report(only_products(catalogue, *skus), config, REPORT_ORDERED_AT))
+
+    assert _section(text, "How a price is built") == (
+        f"## How a price is built\n\n{NO_BUILD_UP_SENTENCE}\n\n"
+    )
+    assert f"- {NO_BUILD_UP_SENTENCE}\n" in _section(text, "Summary")
+
+
+def test_a_sample_product_name_with_a_line_break_stays_on_one_line(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    headphones = next(p for p in catalogue.products if p.sku == "ELEC-HP-001")
+    odd = headphones.model_copy(
+        update={"name": headphones.name.model_copy(update={"en": "Wireless\nHeadphones"})}
+    )
+    text = render_report(
+        build_report(catalogue.model_copy(update={"products": [odd]}), config, REPORT_ORDERED_AT)
+    )
+    opening = "Wireless Headphones (ELEC-HP-001) is the first product every market sells. "
+
+    assert _section(text, "How a price is built").startswith(
+        f"## How a price is built\n\n{opening}Shipped as"
+    )
+    assert f"\n- {opening}Shipped as" in _section(text, "Summary")
+    assert "\n\n\n" not in text

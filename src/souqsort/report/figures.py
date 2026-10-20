@@ -20,6 +20,7 @@ from souqsort.pipeline import (
     localise_and_summarise,
 )
 from souqsort.pricing.customs import SHIPPING_MODELS
+from souqsort.pricing.landed_cost import PriceQuote
 
 # The tariff rises the report stress-tests, in whole percentage points (§9.2.3).
 TARIFF_RISES_POINTS: tuple[int, ...] = (5, 10, 20)
@@ -126,6 +127,28 @@ class TariffExposure:
 
 
 @dataclass(frozen=True)
+class SampleProduct:
+    """The first product in catalogue order that every market sells (§9.2.4)."""
+
+    sku: str
+    name_en: str
+
+
+@dataclass(frozen=True)
+class PriceBuildUp:
+    """The sample product's two quotes in one market, at today's duty rates.
+
+    The quotes keep full precision; the report rounds their components for display only.
+    """
+
+    code: str
+    currency: str
+    minor_units: int
+    consolidated: PriceQuote
+    parcel: PriceQuote
+
+
+@dataclass(frozen=True)
 class ExpansionReport:
     """Every market in the config for one order, in config order.
 
@@ -141,6 +164,17 @@ class ExpansionReport:
     markets: tuple[MarketOverview, ...]
     shipping: tuple[ShippingComparison, ...]
     tariffs: tuple[TariffExposure, ...]  # by market, then shipping model
+    sample_product: SampleProduct | None  # None when no product is sold in every market
+    build_ups: tuple[PriceBuildUp, ...]  # config order; empty without a sample product
+
+
+@dataclass(frozen=True)
+class _MarketViews:
+    """One market at today's duty rates, localised once in each shipping model."""
+
+    market: MarketConfig
+    consolidated: LocalisedCatalogue
+    parcel: LocalisedCatalogue
 
 
 def _overview(
@@ -202,19 +236,46 @@ def _shipping(
 
 def _localise(
     products: list[Product], config: GccConfig, market: MarketConfig, ordered_at: datetime
-) -> tuple[MarketOverview, ShippingComparison]:
-    """One market's figures, each shipping model localised once at today's duty rates.
+) -> _MarketViews:
+    """One market, each shipping model localised once at today's duty rates.
 
     The models are named, not taken from ``SHIPPING_MODELS``, so the markets table always
     shows consolidated imports whatever order the models are declared in.
     """
-    consolidated = localise_and_summarise(
-        products, config, market.code, ordered_at, Decimal("0"), "consolidated"
+    return _MarketViews(
+        market=market,
+        consolidated=localise_and_summarise(
+            products, config, market.code, ordered_at, Decimal("0"), "consolidated"
+        ),
+        parcel=localise_and_summarise(
+            products, config, market.code, ordered_at, Decimal("0"), "parcel"
+        ),
     )
-    parcel = localise_and_summarise(
-        products, config, market.code, ordered_at, Decimal("0"), "parcel"
+
+
+def _sample_product(products: list[Product], views: list[_MarketViews]) -> SampleProduct | None:
+    """The first product in catalogue order that every market sells, if there is one.
+
+    Compliance does not depend on the shipping model, so the consolidated views decide.
+    """
+    selling = [{item.sku for item in view.consolidated.items} for view in views]
+    for product in products:
+        if all(product.sku in skus for skus in selling):
+            return SampleProduct(sku=product.sku, name_en=product.name.en)
+    return None
+
+
+def _build_up(view: _MarketViews, sku: str) -> PriceBuildUp:
+    """``sku``'s two quotes in one market, taken from the views already localised."""
+    consolidated = next(item.quote for item in view.consolidated.items if item.sku == sku)
+    parcel = next(item.quote for item in view.parcel.items if item.sku == sku)
+    return PriceBuildUp(
+        code=view.market.code,
+        currency=view.market.currency.code,
+        minor_units=view.market.currency.minor_units,
+        consolidated=consolidated,
+        parcel=parcel,
     )
-    return _overview(market, consolidated, ordered_at), _shipping(market, consolidated, parcel)
 
 
 def _tariffs(
@@ -256,21 +317,24 @@ def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) 
     """
     if ordered_at.utcoffset() is None:
         raise ValueError("ordered_at must be timezone-aware, got a naive datetime")
-    per_market = [
+    views = [
         _localise(catalogue.products, config, market, ordered_at)
         for market in config.markets.values()
     ]
+    sample = _sample_product(catalogue.products, views)
     return ExpansionReport(
         ordered_at=ordered_at,
         config_version=config.config_version,
         fx_as_of=config.fx.as_of,
         catalogue_version=catalogue.catalogue_version,
         product_count=len(catalogue.products),
-        markets=tuple(overview for overview, _ in per_market),
-        shipping=tuple(comparison for _, comparison in per_market),
+        markets=tuple(_overview(view.market, view.consolidated, ordered_at) for view in views),
+        shipping=tuple(_shipping(view.market, view.consolidated, view.parcel) for view in views),
         tariffs=tuple(
             exposure
             for market in config.markets.values()
             for exposure in _tariffs(catalogue.products, config, market, ordered_at)
         ),
+        sample_product=sample,
+        build_ups=() if sample is None else tuple(_build_up(view, sample.sku) for view in views),
     )

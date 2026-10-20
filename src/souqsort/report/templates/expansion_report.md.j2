@@ -48,6 +48,21 @@ An order placed on {{ order.date }} at {{ order.time }} UTC, priced in every mar
 | {{ row.market }} | {{ row.shipping }} |{% for change in row.changes %} {{ change }} |{% endfor +%}
 {% endfor %}
 
+## How a price is built
+
+{{ build_up.sentences }}
+
+{% for market in build_up.markets %}
+### {{ market.heading }}
+
+| Step | Consolidated import | Direct parcel |
+|---|---:|---:|
+{% for row in market.rows %}
+| {{ row.step }} | {{ row.consolidated }} | {{ row.parcel }} |
+{% endfor %}
+| **Shelf price** | **{{ market.shelf.consolidated }}** | **{{ market.shelf.parcel }}** |
+
+{% endfor %}
 ## Not sold
 
 {{ not_sold.sentence }}
