@@ -15,13 +15,18 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 from souqsort.display import SHIPPING_LABELS, WAIVED, excluded_grid_rows
 from souqsort.models import AttributeName, DeMinimisApplies, ShippingModel
 from souqsort.pipeline import LocalisationError
+from souqsort.pricing.landed_cost import PriceQuote
 from souqsort.pricing.money import round_minor
 from souqsort.report.figures import (
     HEADLINE_TARIFF_RISE_POINTS,
+    PRICE_ENDING_ALERT,
     TARIFF_RISES_POINTS,
     ExpansionReport,
     MarketOverview,
+    PriceBuildUp,
+    PricingRisk,
     ProductComparison,
+    SampleProduct,
     ShippingComparison,
     TariffExposure,
 )
@@ -46,6 +51,15 @@ _CONTAINING: dict[AttributeName, str] = {
     "contains_pork": "pork",
     "contains_lithium_battery": "a lithium battery",
 }
+
+# The build-up's steps above the shelf price, in the order build_up_column gives them.
+_BUILD_UP_STEPS = (
+    "Catalogue price, converted",
+    "Freight",
+    "Duty",
+    "VAT",
+    "Rounding and price ending",
+)
 
 # English day names by date.weekday(). strftime's %a follows the locale, and the report must
 # be the same bytes on every machine.
@@ -157,6 +171,10 @@ def table_cell(text: str) -> str:
 
 def _above_catalogue(market: MarketOverview) -> str:
     return f"{market.code}: average above catalogue price"
+
+
+def _added_text(risk: PricingRisk) -> str:
+    return signed_percent_text(risk.added_pct, figure=f"{risk.code}: {risk.sku} price ending")
 
 
 # --- sentences (§9.3.2) -------------------------------------------------------------------
@@ -289,6 +307,49 @@ def tariff_sentence(tariffs: Sequence[TariffExposure]) -> str:
     )
 
 
+def build_up_sentences(
+    sample: SampleProduct | None, build_ups: Sequence[PriceBuildUp]
+) -> list[str]:
+    """The sentences of "How a price is built": the sample product, then its parcel change.
+
+    The change is ``parcel / consolidated - 1`` of the shelf prices, every market in config
+    order (each sells the sample product).
+    """
+    if sample is None:
+        return ["No product is sold in every market, so there is no price to break down."]
+    changes = [
+        (
+            signed_percent_text(
+                b.parcel.shelf_price / b.consolidated.shelf_price - 1,
+                figure=f"{b.code}: {sample.sku} parcel change",
+            ),
+            one_line(b.code),
+        )
+        for b in build_ups
+    ]
+    phrases = [f"{change} in {code}" for change, code in changes]
+    return [
+        f"{one_line(sample.name_en)} ({one_line(sample.sku)}) is the first product every "
+        "market sells.",
+        "Shipped as a direct parcel instead of a consolidated import, its price changes by "
+        f"{join_list(phrases)}.",
+    ]
+
+
+def pricing_risks_sentence(risks: Sequence[PricingRisk]) -> str:
+    """The sentence of "Pricing risks": each risk's SKU, market and share added, in order."""
+    alert = percent_text(PRICE_ENDING_ALERT, figure="the price ending alert")
+    if not risks:
+        return f"No price ending adds more than {alert} to any product."
+    phrases = [
+        f"{one_line(risk.sku)} in {one_line(risk.code)} ({_added_text(risk)})" for risk in risks
+    ]
+    return (
+        f"The price ending adds more than {alert} to "
+        f"{count_text(len(risks), 'product')}: {join_list(phrases)}."
+    )
+
+
 def not_sold_sentence(product_count: int, markets: Sequence[MarketOverview]) -> str:
     """The sentence of "Not sold": every market, in config order."""
     if all(not market.not_sold for market in markets):
@@ -371,6 +432,63 @@ def _tariff_row(exposure: TariffExposure) -> dict[str, ContextValue]:
     }
 
 
+def build_up_column(quote: PriceQuote, minor_units: int, *, figure: str) -> list[str]:
+    """One column of a build-up: goods, freight, duty, VAT, rounding, then the shelf price.
+
+    Each component is rounded for display, and the rounding line is the shelf price minus
+    their sum, so the column adds up exactly to the shelf price. It can be a minor unit or two
+    below zero when the rounded gross already has the price ending. ``figure`` names the
+    quote in the error if an amount is too large to display.
+    """
+    components = [
+        _rounded(f"{figure} {name}", amount, minor_units)
+        for name, amount in (
+            ("goods", quote.goods),
+            ("freight", quote.freight),
+            ("duty", quote.duty),
+            ("VAT", quote.vat),
+        )
+    ]
+    shelf = _rounded(f"{figure} shelf price", quote.shelf_price, minor_units)
+    rounding = _rounded(f"{figure} rounding", shelf - sum(components, Decimal(0)), minor_units)
+    goods, freight, duty, vat = (f"{amount:,f}" for amount in components)
+    if quote.duty_waived:
+        duty = f"{duty} ({WAIVED})"
+    return [goods, freight, duty, vat, f"{rounding:,f}", f"{shelf:,f}"]
+
+
+def _build_up_market(build_up: PriceBuildUp) -> dict[str, ContextValue]:
+    figure = f"{build_up.code}: {build_up.consolidated.sku}"
+    consolidated = build_up_column(
+        build_up.consolidated, build_up.minor_units, figure=f"{figure} consolidated"
+    )
+    parcel = build_up_column(build_up.parcel, build_up.minor_units, figure=f"{figure} parcel")
+    *import_steps, import_shelf = consolidated
+    *parcel_steps, parcel_shelf = parcel
+    return {
+        "heading": one_line(f"{build_up.code} ({build_up.currency})"),
+        "rows": [
+            {"step": step, "consolidated": by_import, "parcel": by_parcel}
+            for step, by_import, by_parcel in zip(
+                _BUILD_UP_STEPS, import_steps, parcel_steps, strict=True
+            )
+        ],
+        "shelf": {"consolidated": import_shelf, "parcel": parcel_shelf},
+    }
+
+
+def _risk_row(risk: PricingRisk) -> dict[str, str]:
+    figure = f"{risk.code}: {risk.sku}"
+    return {
+        "market": table_cell(risk.code),
+        "sku": table_cell(risk.sku),
+        "product": table_cell(risk.name_en),
+        "gross": money_text(risk.gross, risk.minor_units, figure=f"{figure} price before ending"),
+        "shelf": money_text(risk.shelf_price, risk.minor_units, figure=f"{figure} shelf price"),
+        "added": _added_text(risk),
+    }
+
+
 def _not_sold_rows(markets: Sequence[MarketOverview]) -> list[dict[str, str]]:
     return [
         {
@@ -396,6 +514,8 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
     markets = markets_sentences(report.markets)
     shipping = shipping_sentence(report.shipping)
     tariffs = tariff_sentence(report.tariffs)
+    build_up = " ".join(build_up_sentences(report.sample_product, report.build_ups))
+    risks = pricing_risks_sentence(report.pricing_risks)
     not_sold = not_sold_sentence(report.product_count, report.markets)
     return {
         "order": {"date": date_text(ordered_at.date()), "time": clock_text(ordered_at.time())},
@@ -404,7 +524,7 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
             "fx_as_of": report.fx_as_of.isoformat(),
             "catalogue_version": one_line(report.catalogue_version),
         },
-        "summary": [*markets, shipping, tariffs, not_sold],
+        "summary": [*markets, shipping, tariffs, build_up, risks, not_sold],
         "markets": {
             "sentences": " ".join(markets),
             "rows": [_market_row(market) for market in report.markets],
@@ -417,6 +537,18 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
             "sentence": tariffs,
             "rises": [f"+{rise} pp" for rise in TARIFF_RISES_POINTS],
             "rows": [_tariff_row(exposure) for exposure in report.tariffs],
+        },
+        "build_up": {
+            "sentences": build_up,
+            "labels": {
+                "consolidated": SHIPPING_LABELS["consolidated"],
+                "parcel": SHIPPING_LABELS["parcel"],
+            },
+            "markets": [_build_up_market(market) for market in report.build_ups],
+        },
+        "risks": {
+            "sentence": risks,
+            "rows": [_risk_row(risk) for risk in report.pricing_risks],
         },
         "not_sold": {"sentence": not_sold, "rows": _not_sold_rows(report.markets)},
     }

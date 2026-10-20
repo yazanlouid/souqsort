@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import Decimal, Inexact, localcontext
 
 from souqsort.compliance import ExcludedProduct
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
@@ -20,6 +20,7 @@ from souqsort.pipeline import (
     localise_and_summarise,
 )
 from souqsort.pricing.customs import SHIPPING_MODELS
+from souqsort.pricing.landed_cost import PriceQuote
 
 # The tariff rises the report stress-tests, in whole percentage points (§9.2.3).
 TARIFF_RISES_POINTS: tuple[int, ...] = (5, 10, 20)
@@ -37,6 +38,10 @@ def _require_headline_rise(headline: int, rises: tuple[int, ...]) -> None:
 
 # Checked on import, so a mismatch fails at once rather than on every render.
 _require_headline_rise(HEADLINE_TARIFF_RISE_POINTS, TARIFF_RISES_POINTS)
+
+# A product is a pricing risk when rounding and the price ending add more than this share
+# to its consolidated price (§9.2.5). Exactly the alert is not a risk.
+PRICE_ENDING_ALERT = Decimal("0.10")
 
 
 @dataclass(frozen=True)
@@ -126,6 +131,46 @@ class TariffExposure:
 
 
 @dataclass(frozen=True)
+class SampleProduct:
+    """The first product in catalogue order that every market sells (§9.2.4)."""
+
+    sku: str
+    name_en: str
+
+
+@dataclass(frozen=True)
+class PriceBuildUp:
+    """The sample product's two quotes in one market, at today's duty rates.
+
+    The quotes keep full precision; the report rounds their components for display only.
+    """
+
+    code: str
+    currency: str
+    minor_units: int
+    consolidated: PriceQuote
+    parcel: PriceQuote
+
+
+@dataclass(frozen=True)
+class PricingRisk:
+    """A product whose price ending adds more than ``PRICE_ENDING_ALERT`` to its price.
+
+    From its consolidated quote at today's duty rates: ``gross`` is the full-precision price
+    before rounding and the price ending, and ``added_pct`` is the full-precision
+    ``shelf_price / gross - 1``.
+    """
+
+    code: str
+    sku: str
+    name_en: str
+    minor_units: int
+    gross: Decimal
+    shelf_price: Decimal
+    added_pct: Decimal
+
+
+@dataclass(frozen=True)
 class ExpansionReport:
     """Every market in the config for one order, in config order.
 
@@ -141,6 +186,43 @@ class ExpansionReport:
     markets: tuple[MarketOverview, ...]
     shipping: tuple[ShippingComparison, ...]
     tariffs: tuple[TariffExposure, ...]  # by market, then shipping model
+    sample_product: SampleProduct | None  # None when no product is sold in every market
+    build_ups: tuple[PriceBuildUp, ...]  # config order; empty without a sample product
+    pricing_risks: tuple[PricingRisk, ...]  # by market, then catalogue order
+
+
+@dataclass(frozen=True)
+class _MarketViews:
+    """One market at today's duty rates, localised once in each shipping model."""
+
+    market: MarketConfig
+    consolidated: LocalisedCatalogue
+    parcel: LocalisedCatalogue
+
+
+def price_ending_added(quote: PriceQuote) -> Decimal:
+    """The share rounding and the price ending add to a price: ``shelf_price / gross - 1``.
+
+    Full precision, for display: the quotient is rounded to the context's precision, so
+    whether a price is a risk is decided by ``_adds_more_than_the_alert`` instead. Catalogue
+    prices are above zero, so ``gross`` never is zero.
+    """
+    return quote.shelf_price / quote.gross - 1
+
+
+def _adds_more_than_the_alert(quote: PriceQuote) -> bool:
+    """Whether ``shelf_price > gross * (1 + PRICE_ENDING_ALERT)``, decided exactly.
+
+    A product of two coefficients has at most as many digits as both together, so with that
+    precision the multiplication never rounds; ``Inexact`` is trapped to prove it, and so
+    that an alert whose factor cannot be formed exactly raises rather than being rounded.
+    Dividing instead would round a repeating quotient, which can land on the alert itself.
+    """
+    with localcontext() as context:
+        context.traps[Inexact] = True
+        factor = 1 + PRICE_ENDING_ALERT
+        context.prec = len(quote.gross.as_tuple().digits) + len(factor.as_tuple().digits)
+        return quote.shelf_price > quote.gross * factor
 
 
 def _overview(
@@ -202,19 +284,59 @@ def _shipping(
 
 def _localise(
     products: list[Product], config: GccConfig, market: MarketConfig, ordered_at: datetime
-) -> tuple[MarketOverview, ShippingComparison]:
-    """One market's figures, each shipping model localised once at today's duty rates.
+) -> _MarketViews:
+    """One market, each shipping model localised once at today's duty rates.
 
     The models are named, not taken from ``SHIPPING_MODELS``, so the markets table always
     shows consolidated imports whatever order the models are declared in.
     """
-    consolidated = localise_and_summarise(
-        products, config, market.code, ordered_at, Decimal("0"), "consolidated"
+    return _MarketViews(
+        market=market,
+        consolidated=localise_and_summarise(
+            products, config, market.code, ordered_at, Decimal("0"), "consolidated"
+        ),
+        parcel=localise_and_summarise(
+            products, config, market.code, ordered_at, Decimal("0"), "parcel"
+        ),
     )
-    parcel = localise_and_summarise(
-        products, config, market.code, ordered_at, Decimal("0"), "parcel"
+
+
+def _sample_product(products: list[Product], views: list[_MarketViews]) -> SampleProduct | None:
+    """The first product in catalogue order that every market sells, if there is one.
+
+    Compliance does not depend on the shipping model, so the consolidated views decide.
+    """
+    selling = [{item.sku for item in view.consolidated.items} for view in views]
+    for product in products:
+        if all(product.sku in skus for skus in selling):
+            return SampleProduct(sku=product.sku, name_en=product.name.en)
+    return None
+
+
+def _build_up(view: _MarketViews, sku: str) -> PriceBuildUp:
+    """``sku``'s two quotes in one market, taken from the views already localised.
+
+    Raises ``ValueError`` naming the market, the shipping model and the SKU if a view does not
+    sell it.
+    """
+    by_model: tuple[tuple[ShippingModel, LocalisedCatalogue], ...] = (
+        ("consolidated", view.consolidated),
+        ("parcel", view.parcel),
     )
-    return _overview(market, consolidated, ordered_at), _shipping(market, consolidated, parcel)
+    quotes: dict[ShippingModel, PriceQuote] = {}
+    for model, localised in by_model:
+        quote = next((item.quote for item in localised.items if item.sku == sku), None)
+        if quote is None:
+            raise ValueError(f"{view.market.code}: the {model} view has no {sku}")
+        quotes[model] = quote
+    consolidated, parcel = quotes["consolidated"], quotes["parcel"]
+    return PriceBuildUp(
+        code=view.market.code,
+        currency=view.market.currency.code,
+        minor_units=view.market.currency.minor_units,
+        consolidated=consolidated,
+        parcel=parcel,
+    )
 
 
 def _tariffs(
@@ -245,6 +367,25 @@ def _tariffs(
     ]
 
 
+def _pricing_risks(view: _MarketViews) -> list[PricingRisk]:
+    """One market's pricing risks, from its consolidated view, in catalogue order."""
+    risks = []
+    for item in view.consolidated.items:
+        if _adds_more_than_the_alert(item.quote):
+            risks.append(
+                PricingRisk(
+                    code=view.market.code,
+                    sku=item.sku,
+                    name_en=item.name_en,
+                    minor_units=view.market.currency.minor_units,
+                    gross=item.quote.gross,
+                    shelf_price=item.quote.shelf_price,
+                    added_pct=price_ending_added(item.quote),
+                )
+            )
+    return risks
+
+
 def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) -> ExpansionReport:
     """The report's figures for an order placed at ``ordered_at``.
 
@@ -256,21 +397,25 @@ def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) 
     """
     if ordered_at.utcoffset() is None:
         raise ValueError("ordered_at must be timezone-aware, got a naive datetime")
-    per_market = [
+    views = [
         _localise(catalogue.products, config, market, ordered_at)
         for market in config.markets.values()
     ]
+    sample = _sample_product(catalogue.products, views)
     return ExpansionReport(
         ordered_at=ordered_at,
         config_version=config.config_version,
         fx_as_of=config.fx.as_of,
         catalogue_version=catalogue.catalogue_version,
         product_count=len(catalogue.products),
-        markets=tuple(overview for overview, _ in per_market),
-        shipping=tuple(comparison for _, comparison in per_market),
+        markets=tuple(_overview(view.market, view.consolidated, ordered_at) for view in views),
+        shipping=tuple(_shipping(view.market, view.consolidated, view.parcel) for view in views),
         tariffs=tuple(
             exposure
             for market in config.markets.values()
             for exposure in _tariffs(catalogue.products, config, market, ordered_at)
         ),
+        sample_product=sample,
+        build_ups=() if sample is None else tuple(_build_up(view, sample.sku) for view in views),
+        pricing_risks=tuple(risk for view in views for risk in _pricing_risks(view)),
     )

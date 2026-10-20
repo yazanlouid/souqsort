@@ -48,6 +48,33 @@ An order placed on {{ order.date }} at {{ order.time }} UTC, priced in every mar
 | {{ row.market }} | {{ row.shipping }} |{% for change in row.changes %} {{ change }} |{% endfor +%}
 {% endfor %}
 
+## How a price is built
+
+{{ build_up.sentences }}
+
+{% for market in build_up.markets %}
+### {{ market.heading }}
+
+| Step | {{ build_up.labels.consolidated }} | {{ build_up.labels.parcel }} |
+|---|---:|---:|
+{% for row in market.rows %}
+| {{ row.step }} | {{ row.consolidated }} | {{ row.parcel }} |
+{% endfor %}
+| **Shelf price** | **{{ market.shelf.consolidated }}** | **{{ market.shelf.parcel }}** |
+
+{% endfor %}
+## Pricing risks
+
+{{ risks.sentence }}
+
+{% if risks.rows %}
+| Market | SKU | Product | Before the price ending | Shelf price | Added |
+|---|---|---|---:|---:|---:|
+{% for row in risks.rows %}
+| {{ row.market }} | {{ row.sku }} | {{ row.product }} | {{ row.gross }} | {{ row.shelf }} | {{ row.added }} |
+{% endfor %}
+
+{% endif %}
 ## Not sold
 
 {{ not_sold.sentence }}

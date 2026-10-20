@@ -1,7 +1,7 @@
-"""M11 and M12: the expansion report's figures (SPEC §9.2), all Decimal."""
+"""M11 to M13: the expansion report's figures (SPEC §9.2), all Decimal."""
 
 from datetime import UTC, date, datetime, time
-from decimal import Decimal
+from decimal import Decimal, Inexact, localcontext
 
 import pytest
 from hypothesis import given, settings
@@ -23,15 +23,19 @@ from souqsort.pipeline import (
     localise_and_summarise,
 )
 from souqsort.pricing.customs import SHIPPING_MODELS
+from souqsort.pricing.landed_cost import PriceQuote
 from souqsort.pricing.money import round_minor
 from souqsort.report import build_report, figures
 from souqsort.report.figures import (
     HEADLINE_TARIFF_RISE_POINTS,
+    PRICE_ENDING_ALERT,
     TARIFF_RISES_POINTS,
     ExpansionReport,
     MarketOverview,
     ProductComparison,
+    SampleProduct,
     ShippingComparison,
+    price_ending_added,
 )
 
 
@@ -477,3 +481,310 @@ def test_figures_do_not_depend_on_the_order_shipping_models_are_declared(
     assert reordered.markets == report.markets
     assert reordered.shipping == report.shipping
     assert sorted(reordered.tariffs, key=str) == sorted(report.tariffs, key=str)
+
+
+# --- how a price is built (§9.2.4) --------------------------------------------------------
+
+HEADPHONES = "ELEC-HP-001"
+KETTLE = "HOME-KTL-030"
+
+# Appendix A's build-up, as (freight, duty, VAT, shelf price) per shipping model, and goods.
+BUILD_UPS: dict[str, tuple[str, tuple[str, ...], tuple[str, ...]]] = {
+    "KSA": ("562.46", ("5.91", "28.42", "89.52", "686.95"), ("11.81", "0.00", "86.14", "660.95")),
+    "UAE": ("550.84", ("5.14", "27.80", "29.19", "612.99"), ("10.28", "0.00", "28.06", "589.99")),
+    "KWT": (
+        "46.047",
+        ("0.537", "2.329", "0.000", "48.950"),
+        ("1.075", "2.356", "0.000", "49.950"),
+    ),
+}
+
+
+def test_the_sample_product_is_the_first_every_market_sells(report: ExpansionReport) -> None:
+    assert report.sample_product == SampleProduct(
+        sku=HEADPHONES, name_en="Wireless Noise-Cancelling Headphones"
+    )
+
+
+def test_the_sample_product_skips_products_a_market_does_not_sell(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    by_sku = {product.sku: product for product in catalogue.products}
+    products = [by_sku[VANILLA], by_sku[GUMMY_BEARS], by_sku[KETTLE], by_sku[HEADPHONES]]
+    report = build_report(
+        catalogue.model_copy(update={"products": products}), config, REPORT_ORDERED_AT
+    )
+
+    assert report.sample_product is not None
+    assert report.sample_product.sku == KETTLE
+    assert [build_up.consolidated.sku for build_up in report.build_ups] == [KETTLE] * 3
+
+
+def test_build_ups_are_in_config_order_with_their_currency(
+    report: ExpansionReport, config: GccConfig
+) -> None:
+    assert [(b.code, b.currency, b.minor_units) for b in report.build_ups] == [
+        (market.code, market.currency.code, market.currency.minor_units)
+        for market in config.markets.values()
+    ]
+
+
+@pytest.mark.parametrize("code", list(BUILD_UPS))
+def test_the_six_columns_of_the_build_up(report: ExpansionReport, code: str) -> None:
+    build_up = next(b for b in report.build_ups if b.code == code)
+    goods, consolidated, parcel = BUILD_UPS[code]
+
+    for quote, expected in ((build_up.consolidated, consolidated), (build_up.parcel, parcel)):
+        shown = tuple(
+            round_minor(amount, build_up.minor_units)
+            for amount in (quote.freight, quote.duty, quote.vat, quote.shelf_price)
+        )
+        assert round_minor(quote.goods, build_up.minor_units) == Decimal(goods)
+        assert shown == tuple(Decimal(amount) for amount in expected)
+    assert build_up.consolidated.shipping == "consolidated"
+    assert build_up.parcel.shipping == "parcel"
+
+
+def test_duty_is_waived_on_the_sample_parcels_in_ksa_and_uae(report: ExpansionReport) -> None:
+    assert {
+        (b.code, b.consolidated.duty_waived, b.parcel.duty_waived) for b in report.build_ups
+    } == {
+        ("KSA", False, True),
+        ("UAE", False, True),
+        ("KWT", False, False),
+    }
+
+
+def test_build_ups_come_from_localise_and_summarise(
+    report: ExpansionReport, catalogue: Catalogue, config: GccConfig
+) -> None:
+    for build_up in report.build_ups:
+        for model, quote in (("consolidated", build_up.consolidated), ("parcel", build_up.parcel)):
+            localised = localise_and_summarise(
+                catalogue.products, config, build_up.code, REPORT_ORDERED_AT, Decimal("0"), model
+            )
+            assert quote == next(i.quote for i in localised.items if i.sku == HEADPHONES)
+
+
+@pytest.mark.parametrize(
+    "skus",
+    [(VANILLA,), (VANILLA, GUMMY_BEARS), (GUMMY_BEARS,), ()],
+    ids=["only-uae-sells-it", "a-market-sells-nothing", "none-sells-anything", "empty"],
+)
+def test_no_product_sold_everywhere_gives_no_build_up(
+    catalogue: Catalogue, config: GccConfig, skus: tuple[str, ...]
+) -> None:
+    report = build_report(only_products(catalogue, *skus), config, REPORT_ORDERED_AT)
+
+    assert report.sample_product is None
+    assert report.build_ups == ()
+
+
+def test_build_ups_are_the_same_whatever_order_shipping_models_are_declared(
+    catalogue: Catalogue,
+    config: GccConfig,
+    report: ExpansionReport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(figures, "SHIPPING_MODELS", ("parcel", "consolidated"))
+    reordered = build_report(catalogue, config, REPORT_ORDERED_AT)
+
+    assert reordered.sample_product == report.sample_product
+    assert reordered.build_ups == report.build_ups
+
+
+# --- pricing risks (§9.2.5) ---------------------------------------------------------------
+
+LIP_BALM = "BEAU-LIP-040"
+TEA = "GROC-TEA-060"
+
+
+def _quote(gross: str, shelf_price: str) -> PriceQuote:
+    """A hand-built consolidated quote; only the gross and the shelf price matter here."""
+    return PriceQuote(
+        sku="SKU-1",
+        market="A",
+        currency="XXX",
+        goods=Decimal(gross),
+        freight=Decimal(0),
+        duty=Decimal(0),
+        vat=Decimal(0),
+        gross=Decimal(gross),
+        shelf_price=Decimal(shelf_price),
+        margin_pct=Decimal("0.5"),
+        shipping="consolidated",
+        duty_rate=Decimal("0.05"),
+        duty_waived=False,
+    )
+
+
+def test_the_alert_is_ten_percent() -> None:
+    assert Decimal("0.10") == PRICE_ENDING_ALERT
+
+
+@pytest.mark.parametrize(
+    ("shelf_price", "added", "risk"),
+    [("1.00", "0", False), ("1.10", "0.10", False), ("1.11", "0.11", True)],
+    ids=["nothing-added", "exactly-the-alert", "above-the-alert"],
+)
+def test_price_ending_added(shelf_price: str, added: str, risk: bool) -> None:
+    quote = _quote("1.00", shelf_price)
+
+    assert price_ending_added(quote) == Decimal(added)
+    assert figures._adds_more_than_the_alert(quote) is risk
+
+
+# 0.999...9 with 28 nines: shelf / gross rounds to exactly 1.1 at 28 digits, although the
+# share added is 0.10000000000000000000000000011, above the alert.
+JUST_BELOW_ONE = "0." + "9" * 28
+LONG_GROSS = "1.234567890123456789012345678901234567890"  # 40 digits
+LONG_AT_ALERT = "1.35802467913580246791358024679135802467900"  # LONG_GROSS * 1.10, exactly
+
+
+@pytest.mark.parametrize(
+    ("gross", "shelf_price", "risk"),
+    [
+        (JUST_BELOW_ONE, "1.10", True),
+        ("1." + "0" * 27 + "1", "1.10", False),
+        (LONG_GROSS, LONG_AT_ALERT, False),
+        (LONG_GROSS, LONG_AT_ALERT + "1", True),
+        ("3", "3.30", False),
+        ("3", "3.300000000000000000000000000000001", True),
+    ],
+    ids=[
+        "just-below-one",
+        "just-above-one",
+        "long-exactly-the-alert",
+        "long-just-above",
+        "exactly",
+        "far-digit-above",
+    ],
+)
+def test_the_alert_is_compared_exactly(gross: str, shelf_price: str, risk: bool) -> None:
+    assert figures._adds_more_than_the_alert(_quote(gross, shelf_price)) is risk
+
+
+def test_the_division_alone_would_miss_the_boundary() -> None:
+    quote = _quote(JUST_BELOW_ONE, "1.10")
+
+    assert price_ending_added(quote) == PRICE_ENDING_ALERT  # rounded onto the boundary
+    assert figures._adds_more_than_the_alert(quote)
+
+
+def test_the_comparison_ignores_the_caller_s_precision() -> None:
+    with localcontext() as ctx:
+        ctx.prec = 3
+        assert figures._adds_more_than_the_alert(_quote(JUST_BELOW_ONE, "1.10"))
+        assert not figures._adds_more_than_the_alert(_quote(LONG_GROSS, LONG_AT_ALERT))
+
+
+def test_an_alert_that_cannot_be_added_to_one_exactly_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(figures, "PRICE_ENDING_ALERT", Decimal("0." + "3" * 30))
+
+    with pytest.raises(Inexact):
+        figures._adds_more_than_the_alert(_quote("1.00", "1.50"))
+
+
+def test_price_ending_added_keeps_full_precision() -> None:
+    assert price_ending_added(_quote("3", "4")) == Decimal(4) / Decimal(3) - 1
+
+
+def test_the_two_pricing_risks_of_the_sample_data(report: ExpansionReport) -> None:
+    shown = [
+        (
+            risk.code,
+            risk.sku,
+            risk.name_en,
+            risk.minor_units,
+            round_minor(risk.gross, risk.minor_units),
+            risk.shelf_price,
+            _percent(risk.added_pct),
+        )
+        for risk in report.pricing_risks
+    ]
+
+    assert shown == [
+        ("KWT", LIP_BALM, "Lip Balm", 3, Decimal("1.157"), Decimal("1.950"), Decimal("68.5")),
+        (
+            "KWT",
+            TEA,
+            "English Breakfast Tea, 80 bags",
+            3,
+            Decimal("2.458"),
+            Decimal("2.950"),
+            Decimal("20.0"),
+        ),
+    ]
+
+
+def test_pricing_risks_come_from_consolidated_quotes(
+    report: ExpansionReport, catalogue: Catalogue, config: GccConfig
+) -> None:
+    expected = []
+    for code in config.markets:
+        localised = localise_and_summarise(
+            catalogue.products, config, code, REPORT_ORDERED_AT, Decimal("0"), "consolidated"
+        )
+        for item in localised.items:
+            if figures._adds_more_than_the_alert(item.quote):
+                quote = item.quote
+                added = price_ending_added(quote)
+                expected.append((code, item.sku, quote.gross, quote.shelf_price, added))
+
+    assert [(r.code, r.sku, r.gross, r.shelf_price, r.added_pct) for r in report.pricing_risks] == (
+        expected
+    )
+
+
+def test_pricing_risks_are_in_market_then_catalogue_order(
+    catalogue: Catalogue, config: GccConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(figures, "PRICE_ENDING_ALERT", Decimal("0.04"))
+    risks = build_report(catalogue, config, REPORT_ORDERED_AT).pricing_risks
+    markets = list(config.markets)
+    skus = [product.sku for product in catalogue.products]
+
+    assert [r.code for r in risks] == sorted((r.code for r in risks), key=markets.index)
+    for code in markets:
+        in_market = [r.sku for r in risks if r.code == code]
+        assert in_market == sorted(in_market, key=skus.index)
+    assert {(r.code, r.sku) for r in risks} == {
+        ("KSA", LIP_BALM),
+        ("KWT", "ELEC-CHG-002"),
+        ("KWT", "HOME-KTL-030"),
+        ("KWT", LIP_BALM),
+        ("KWT", TEA),
+    }
+
+
+def test_no_risks_without_a_price_ending_that_adds_more_than_the_alert(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    report = build_report(only_products(catalogue, HEADPHONES), config, REPORT_ORDERED_AT)
+
+    assert report.pricing_risks == ()
+
+
+def test_a_build_up_names_a_view_missing_the_sample_product(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    ksa = config.markets["KSA"]
+    views = figures._MarketViews(
+        market=ksa,
+        consolidated=localise_and_summarise(
+            catalogue.products, config, ksa.code, REPORT_ORDERED_AT, Decimal("0"), "consolidated"
+        ),
+        parcel=localise_and_summarise(
+            [p for p in catalogue.products if p.sku != HEADPHONES],
+            config,
+            ksa.code,
+            REPORT_ORDERED_AT,
+            Decimal("0"),
+            "parcel",
+        ),
+    )
+
+    with pytest.raises(ValueError, match=r"^KSA: the parcel view has no ELEC-HP-001$"):
+        figures._build_up(views, HEADPHONES)
