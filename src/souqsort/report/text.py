@@ -12,16 +12,33 @@ from functools import cache
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
-from souqsort.display import excluded_grid_rows
+from souqsort.display import WAIVED, excluded_grid_rows
+from souqsort.models import AttributeName, DeMinimisApplies
 from souqsort.pipeline import LocalisationError
 from souqsort.pricing.money import round_minor
-from souqsort.report.figures import ExpansionReport, MarketOverview
+from souqsort.report.figures import (
+    ExpansionReport,
+    MarketOverview,
+    ProductComparison,
+    ShippingComparison,
+)
 
 type ContextValue = str | Sequence[ContextValue] | Mapping[str, ContextValue]
 
 _TEMPLATE = "expansion_report.md.j2"
 _NO_VALUE = "-"
 _PERCENT = Decimal(100)
+_NOTHING_FOR_SALE = "No market has products for sale."
+
+# How a de minimis rule reads: "a parcel whose CIF is below 1,000.00 SAR".
+_APPLIES: dict[DeMinimisApplies, str] = {"below": "below", "at_or_below": "at or below"}
+
+# What a product excluded from de minimis contains: "except products containing alcohol".
+_CONTAINING: dict[AttributeName, str] = {
+    "contains_alcohol": "alcohol",
+    "contains_pork": "pork",
+    "contains_lithium_battery": "a lithium battery",
+}
 
 # English day names by date.weekday(). strftime's %a follows the locale, and the report must
 # be the same bytes on every machine.
@@ -88,13 +105,16 @@ def local_time_text(moment: datetime) -> str:
     return f"{date_text(moment.date())} {clock_text(moment.time())}"
 
 
-def join_list(items: Sequence[str]) -> str:
-    """``a``, ``a and b``, ``a, b and c``. Raises ``ValueError`` if there is nothing to join."""
+def join_list(items: Sequence[str], *, word: str = "and") -> str:
+    """``a``, ``a and b``, ``a, b and c``; ``word`` can be ``"or"``.
+
+    Raises ``ValueError`` if there is nothing to join.
+    """
     if not items:
         raise ValueError("nothing to join")
     if len(items) == 1:
         return items[0]
-    return f"{', '.join(items[:-1])} and {items[-1]}"
+    return f"{', '.join(items[:-1])} {word} {items[-1]}"
 
 
 def count_text(count: int, noun: str) -> str:
@@ -149,10 +169,65 @@ def markets_sentences(markets: Sequence[MarketOverview]) -> list[str]:
         ]
         prices = f"On average, shelf prices sit {join_list(phrases)}."
     else:
-        prices = "No market has products for sale."
+        prices = _NOTHING_FOR_SALE
 
     deliveries = [f"{date_text(m.delivery.delivery_date)} in {one_line(m.code)}" for m in markets]
     return [prices, f"For this order, delivery is on {join_list(deliveries)}."]
+
+
+def de_minimis_sentence(comparison: ShippingComparison) -> str:
+    """The rule a market's parcel subsection opens with.
+
+    The threshold is shown in the market currency's minor units; excluded attributes join
+    with "or".
+    """
+    rule = comparison.de_minimis
+    if rule is None:
+        return "No de minimis rule, so every parcel pays duty."
+    threshold = money_text(
+        rule.threshold, comparison.minor_units, figure=f"{comparison.code}: de minimis threshold"
+    )
+    sentence = (
+        f"No duty on a parcel whose CIF is {_APPLIES[rule.applies]} {threshold} "
+        f"{one_line(comparison.currency)}"
+    )
+    if rule.excluded_attributes:
+        containing = [_CONTAINING[name] for name in rule.excluded_attributes]
+        sentence += f", except products containing {join_list(containing, word='or')}"
+    return f"{sentence}."
+
+
+def shipping_market_sentences(comparison: ShippingComparison) -> str:
+    """A market's parcel subsection: its rule, then its counts, or that nothing is for sale.
+
+    The waived count is given only when the market has a de minimis rule.
+    """
+    sentences = [de_minimis_sentence(comparison)]
+    if not comparison.products:
+        sentences.append("No products are for sale.")
+        return " ".join(sentences)
+    sentences.append(
+        f"Parcels are cheaper for {comparison.cheaper} of "
+        f"{count_text(len(comparison.products), 'product')}, dearer for {comparison.dearer} "
+        f"and unchanged for {comparison.unchanged}."
+    )
+    if comparison.de_minimis is not None:
+        sentences.append(f"Duty is waived on {comparison.waived} of them.")
+    return " ".join(sentences)
+
+
+def shipping_sentence(comparisons: Sequence[ShippingComparison]) -> str:
+    """The sentence of "Consolidated or parcel": markets that sell something, config order."""
+    selling = [comparison for comparison in comparisons if comparison.products]
+    if not selling:
+        return _NOTHING_FOR_SALE
+    phrases = [
+        f"{c.cheaper} of {len(c.products)} in {one_line(c.code)}"
+        if position
+        else f"{c.cheaper} of {count_text(len(c.products), 'product')} in {one_line(c.code)}"
+        for position, c in enumerate(selling)
+    ]
+    return f"Direct parcels are cheaper than consolidated imports for {join_list(phrases)}."
 
 
 def not_sold_sentence(product_count: int, markets: Sequence[MarketOverview]) -> str:
@@ -195,6 +270,34 @@ def _market_row(market: MarketOverview) -> dict[str, str]:
     }
 
 
+def _parcel_row(comparison: ShippingComparison, product: ProductComparison) -> dict[str, str]:
+    figure = f"{comparison.code}: {product.sku}"
+    minor_units = comparison.minor_units
+    return {
+        "sku": table_cell(product.sku),
+        "product": table_cell(product.name_en),
+        "consolidated": money_text(
+            product.consolidated_price, minor_units, figure=f"{figure} consolidated price"
+        ),
+        "parcel": money_text(product.parcel_price, minor_units, figure=f"{figure} parcel price"),
+        "change": signed_percent_text(product.change_pct, figure=f"{figure} parcel change"),
+        "duty": (
+            WAIVED
+            if product.parcel_duty_waived
+            else percent_text(product.parcel_duty_rate, figure=f"{figure} parcel duty rate")
+        ),
+    }
+
+
+def _shipping_market(comparison: ShippingComparison) -> dict[str, ContextValue]:
+    return {
+        "heading": one_line(f"{comparison.code} ({comparison.name})"),
+        "sentences": shipping_market_sentences(comparison),
+        "currency": table_cell(comparison.currency),
+        "rows": [_parcel_row(comparison, product) for product in comparison.products],
+    }
+
+
 def _not_sold_rows(markets: Sequence[MarketOverview]) -> list[dict[str, str]]:
     return [
         {
@@ -218,6 +321,7 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
     """
     ordered_at = report.ordered_at.astimezone(UTC)
     markets = markets_sentences(report.markets)
+    shipping = shipping_sentence(report.shipping)
     not_sold = not_sold_sentence(report.product_count, report.markets)
     return {
         "order": {"date": date_text(ordered_at.date()), "time": clock_text(ordered_at.time())},
@@ -226,10 +330,14 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
             "fx_as_of": report.fx_as_of.isoformat(),
             "catalogue_version": one_line(report.catalogue_version),
         },
-        "summary": [*markets, not_sold],
+        "summary": [*markets, shipping, not_sold],
         "markets": {
             "sentences": " ".join(markets),
             "rows": [_market_row(market) for market in report.markets],
+        },
+        "shipping": {
+            "sentence": shipping,
+            "markets": [_shipping_market(comparison) for comparison in report.shipping],
         },
         "not_sold": {"sentence": not_sold, "rows": _not_sold_rows(report.markets)},
     }

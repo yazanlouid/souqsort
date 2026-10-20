@@ -20,6 +20,24 @@ An order placed on {{ order.date }} at {{ order.time }} UTC, priced in every mar
 | {{ row.market }} | {{ row.currency }} | {{ row.vat }} | {{ row.for_sale }} | {{ row.not_sold }} | {{ row.above_catalogue }} | {{ row.average_margin }} | {{ row.ordered }} | {{ row.cutoff }} | {{ row.delivered }} |
 {% endfor %}
 
+## Consolidated or parcel
+
+{{ shipping.sentence }}
+
+{% for market in shipping.markets %}
+### {{ market.heading }}
+
+{{ market.sentences }}
+
+{% if market.rows %}
+| SKU | Product | Consolidated ({{ market.currency }}) | Direct parcel ({{ market.currency }}) | Change | Parcel duty |
+|---|---|---:|---:|---:|---|
+{% for row in market.rows %}
+| {{ row.sku }} | {{ row.product }} | {{ row.consolidated }} | {{ row.parcel }} | {{ row.change }} | {{ row.duty }} |
+{% endfor %}
+
+{% endif %}
+{% endfor %}
 ## Not sold
 
 {{ not_sold.sentence }}

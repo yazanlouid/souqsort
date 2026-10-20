@@ -1,9 +1,9 @@
-"""M11: the expansion report's text (SPEC §9.3 and §9.4): formatting, sentences, the template."""
+"""M11 and M12: the report's text (SPEC §9.3 and §9.4): formatting, sentences, the template."""
 
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -16,14 +16,26 @@ from helpers import (
 )
 from souqsort.compliance import ExcludedProduct
 from souqsort.logistics.calendar import DeliveryEstimate
-from souqsort.models import Catalogue, GccConfig
+from souqsort.models import (
+    AttributeName,
+    Catalogue,
+    DeMinimisApplies,
+    DeMinimisRule,
+    GccConfig,
+)
 from souqsort.pipeline import LocalisationError
 from souqsort.report import build_report, render_report
-from souqsort.report.figures import ExpansionReport, MarketOverview
+from souqsort.report.figures import (
+    ExpansionReport,
+    MarketOverview,
+    ProductComparison,
+    ShippingComparison,
+)
 from souqsort.report.text import (
     clock_text,
     count_text,
     date_text,
+    de_minimis_sentence,
     join_list,
     local_time_text,
     markets_sentences,
@@ -32,6 +44,8 @@ from souqsort.report.text import (
     one_line,
     percent_text,
     report_context,
+    shipping_market_sentences,
+    shipping_sentence,
     signed_percent_text,
     table_cell,
 )
@@ -56,6 +70,68 @@ On average, shelf prices sit 24.7% above the catalogue price in UAE, 33.1% in KW
 | KSA (Saudi Arabia) | SAR | 15.0% | 11 | 2 | +41.2% | 64.6% | Thu 2026-10-15 12:00 | 14:00 | Thu 2026-10-22 |
 | UAE (United Arab Emirates) | AED | 5.0% | 12 | 1 | +24.7% | 64.9% | Thu 2026-10-15 13:00 | 15:00 | Wed 2026-10-21 |
 | KWT (Kuwait) | KWD | 0.0% | 11 | 2 | +33.1% | 66.6% | Thu 2026-10-15 12:00 | 13:00 | Thu 2026-10-22 |
+
+"""  # noqa: E501
+
+SHIPPING_SECTION = """\
+## Consolidated or parcel
+
+Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
+
+### KSA (Saudi Arabia)
+
+No duty on a parcel whose CIF is below 1,000.00 SAR. Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1. Duty is waived on 10 of them.
+
+| SKU | Product | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel duty |
+|---|---|---:|---:|---:|---|
+| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 686.95 | 660.95 | -3.8% | waived |
+| ELEC-CHG-002 | 65W USB-C Charger | 184.95 | 179.95 | -2.7% | waived |
+| FASH-BAG-014 | Leather Crossbody Bag | 594.95 | 546.95 | -8.1% | waived |
+| FASH-SCF-015 | Silk Scarf | 293.95 | 264.95 | -9.9% | waived |
+| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 593.95 | 875.95 | +47.5% | waived |
+| HOME-KTL-030 | Electric Kettle 1.7 L | 237.95 | 249.95 | +5.0% | waived |
+| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 4,144.95 | 4,344.95 | +4.8% | 5.0% |
+| BEAU-LIP-040 | Lip Balm | 16.95 | 15.95 | -5.9% | waived |
+| BEAU-SRM-041 | Vitamin C Serum 30 ml | 111.95 | 108.95 | -2.7% | waived |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 340.95 | 340.95 | 0.0% | waived |
+| GROC-TEA-060 | English Breakfast Tea, 80 bags | 34.95 | 37.95 | +8.6% | waived |
+
+### UAE (United Arab Emirates)
+
+No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol. Parcels are cheaper for 5 of 12 products, dearer for 5 and unchanged for 2. Duty is waived on 10 of them.
+
+| SKU | Product | Consolidated (AED) | Direct parcel (AED) | Change | Parcel duty |
+|---|---|---:|---:|---:|---|
+| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 612.99 | 589.99 | -3.8% | waived |
+| ELEC-CHG-002 | 65W USB-C Charger | 164.99 | 159.99 | -3.0% | waived |
+| FASH-BAG-014 | Leather Crossbody Bag | 496.99 | 485.99 | -2.2% | waived |
+| FASH-SCF-015 | Silk Scarf | 246.99 | 236.99 | -4.0% | waived |
+| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 498.99 | 721.99 | +44.7% | waived |
+| HOME-KTL-030 | Electric Kettle 1.7 L | 209.99 | 218.99 | +4.3% | waived |
+| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 3,685.99 | 3,844.99 | +4.3% | 5.0% |
+| BEAU-LIP-040 | Lip Balm | 14.99 | 14.99 | 0.0% | waived |
+| BEAU-SRM-041 | Vitamin C Serum 30 ml | 99.99 | 96.99 | -3.0% | waived |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 304.99 | 304.99 | 0.0% | waived |
+| GROC-TEA-060 | English Breakfast Tea, 80 bags | 29.99 | 32.99 | +10.0% | waived |
+| GROC-VAN-061 | Pure Vanilla Extract | 55.99 | 57.99 | +3.6% | 5.0% |
+
+### KWT (Kuwait)
+
+No de minimis rule, so every parcel pays duty. Parcels are cheaper for 0 of 11 products, dearer for 6 and unchanged for 5.
+
+| SKU | Product | Consolidated (KWD) | Direct parcel (KWD) | Change | Parcel duty |
+|---|---|---:|---:|---:|---|
+| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 48.950 | 49.950 | +2.0% | 5.0% |
+| ELEC-CHG-002 | 65W USB-C Charger | 13.950 | 13.950 | 0.0% | 5.0% |
+| FASH-BAG-014 | Leather Crossbody Bag | 39.950 | 41.950 | +5.0% | 5.0% |
+| FASH-SCF-015 | Silk Scarf | 19.950 | 19.950 | 0.0% | 5.0% |
+| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 44.950 | 70.950 | +57.8% | 5.0% |
+| HOME-KTL-030 | Electric Kettle 1.7 L | 17.950 | 19.950 | +11.1% | 5.0% |
+| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 296.950 | 312.950 | +5.4% | 5.0% |
+| BEAU-LIP-040 | Lip Balm | 1.950 | 1.950 | 0.0% | 5.0% |
+| BEAU-SRM-041 | Vitamin C Serum 30 ml | 7.950 | 8.950 | +12.6% | 5.0% |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 24.950 | 24.950 | 0.0% | 0.0% |
+| GROC-TEA-060 | English Breakfast Tea, 80 bags | 2.950 | 2.950 | 0.0% | 5.0% |
 
 """  # noqa: E501
 
@@ -415,7 +491,8 @@ def test_header_is_appendix_a(rendered: str) -> None:
 
 def test_summary_lists_the_sentences_built_so_far(rendered: str) -> None:
     assert _section(rendered, "Summary") == (
-        f"## Summary\n\n- {PRICE_SENTENCE}\n- {DELIVERY_SENTENCE}\n- {NOT_SOLD_SENTENCE}\n\n"
+        f"## Summary\n\n- {PRICE_SENTENCE}\n- {DELIVERY_SENTENCE}\n- {SHIPPING_SENTENCE}\n"
+        f"- {NOT_SOLD_SENTENCE}\n\n"
     )
 
 
@@ -438,6 +515,10 @@ def test_sections_are_in_order(rendered: str) -> None:
         "# GCC expansion report",
         "## Summary",
         "## Markets side by side",
+        "## Consolidated or parcel",
+        "### KSA (Saudi Arabia)",
+        "### UAE (United Arab Emirates)",
+        "### KWT (Kuwait)",
         "## Not sold",
         "## How these figures are made",
     ]
@@ -555,3 +636,184 @@ def test_line_breaks_in_a_market_code_stay_on_one_line() -> None:
         "For this order, delivery is on Thu 2026-10-22 in A B and Thu 2026-10-22 in C.",
     ]
     assert not_sold_sentence(2, markets) == "Out of 2 products, A B cannot sell 1 and C 0."
+
+
+# --- consolidated or parcel (§9.3.2 item 2) -----------------------------------------------
+
+SHIPPING_SENTENCE = (
+    "Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, "
+    "5 of 12 in UAE and 0 of 11 in KWT."
+)
+
+
+def _rule(
+    applies: DeMinimisApplies = "below", *excluded: AttributeName, threshold: str = "1000.00"
+) -> DeMinimisRule:
+    return DeMinimisRule(
+        threshold=Decimal(threshold),
+        applies=applies,
+        excluded_attributes=excluded,
+        source="test rule",
+    )
+
+
+def _comparison(
+    code: str,
+    rule: DeMinimisRule | None = None,
+    prices: Sequence[tuple[str, str, bool]] = (),
+) -> ShippingComparison:
+    """A hand-built market for sentence tests: (consolidated, parcel, waived) per product."""
+    products = tuple(
+        ProductComparison(
+            sku=f"SKU-{n}",
+            name_en=f"Product {n}",
+            consolidated_price=Decimal(consolidated),
+            parcel_price=Decimal(parcel),
+            change_pct=Decimal(parcel) / Decimal(consolidated) - 1,
+            parcel_duty_rate=Decimal(0) if waived else Decimal("0.05"),
+            parcel_duty_waived=waived,
+        )
+        for n, (consolidated, parcel, waived) in enumerate(prices)
+    )
+    return ShippingComparison(
+        code=code,
+        name=f"{code} name",
+        currency="XXX",
+        minor_units=2,
+        de_minimis=rule,
+        products=products,
+    )
+
+
+@pytest.mark.parametrize(
+    ("rule", "expected"),
+    [
+        (_rule("below"), "No duty on a parcel whose CIF is below 1,000.00 XXX."),
+        (
+            _rule("at_or_below", "contains_alcohol"),
+            "No duty on a parcel whose CIF is at or below 1,000.00 XXX, "
+            "except products containing alcohol.",
+        ),
+        (
+            _rule("below", "contains_alcohol", "contains_pork"),
+            "No duty on a parcel whose CIF is below 1,000.00 XXX, "
+            "except products containing alcohol or pork.",
+        ),
+        (
+            _rule("below", *get_args(AttributeName)),
+            "No duty on a parcel whose CIF is below 1,000.00 XXX, "
+            "except products containing alcohol, pork or a lithium battery.",
+        ),
+        (_rule("below", threshold="250.5"), "No duty on a parcel whose CIF is below 250.50 XXX."),
+        (None, "No de minimis rule, so every parcel pays duty."),
+    ],
+    ids=["below", "at-or-below-except", "two-exclusions", "every-attribute", "minor-units", "none"],
+)
+def test_de_minimis_rule_sentences(rule: DeMinimisRule | None, expected: str) -> None:
+    assert de_minimis_sentence(_comparison("A", rule)) == expected
+
+
+def test_market_sentences_with_a_rule() -> None:
+    comparison = _comparison(
+        "A", _rule(), [("10.00", "9.00", True), ("10.00", "12.00", True), ("10.00", "10.00", False)]
+    )
+
+    assert shipping_market_sentences(comparison) == (
+        "No duty on a parcel whose CIF is below 1,000.00 XXX. Parcels are cheaper for 1 of "
+        "3 products, dearer for 1 and unchanged for 1. Duty is waived on 2 of them."
+    )
+
+
+def test_market_sentences_without_a_rule_say_nothing_about_waivers() -> None:
+    comparison = _comparison("A", None, [("10.00", "11.00", False)])
+
+    assert shipping_market_sentences(comparison) == (
+        "No de minimis rule, so every parcel pays duty. Parcels are cheaper for 0 of 1 product, "
+        "dearer for 1 and unchanged for 0."
+    )
+
+
+def test_market_sentences_with_a_rule_that_waived_nothing() -> None:
+    comparison = _comparison("A", _rule(), [("10.00", "11.00", False)])
+
+    assert shipping_market_sentences(comparison).endswith(" Duty is waived on 0 of them.")
+
+
+@pytest.mark.parametrize(
+    ("rule", "opening"),
+    [
+        (_rule(), "No duty on a parcel whose CIF is below 1,000.00 XXX."),
+        (None, "No de minimis rule, so every parcel pays duty."),
+    ],
+    ids=["rule", "no-rule"],
+)
+def test_a_market_that_sells_nothing_gives_its_rule_and_no_products(
+    rule: DeMinimisRule | None, opening: str
+) -> None:
+    assert shipping_market_sentences(_comparison("A", rule)) == (
+        f"{opening} No products are for sale."
+    )
+
+
+def test_shipping_sentence_for_the_sample_data(report: ExpansionReport) -> None:
+    assert shipping_sentence(report.shipping) == SHIPPING_SENTENCE
+
+
+def test_shipping_sentence_leaves_out_a_market_that_sells_nothing() -> None:
+    comparisons = [
+        _comparison("A"),
+        _comparison("B", None, [("10.00", "9.00", False)]),
+        _comparison("C", None, [("10.00", "9.00", False), ("10.00", "11.00", False)]),
+    ]
+
+    assert shipping_sentence(comparisons) == (
+        "Direct parcels are cheaper than consolidated imports for 1 of 1 product in B "
+        "and 1 of 2 in C."
+    )
+
+
+def test_shipping_sentence_when_no_market_sells_anything() -> None:
+    assert shipping_sentence([_comparison("A"), _comparison("B")]) == (
+        "No market has products for sale."
+    )
+
+
+def test_lists_can_join_with_or() -> None:
+    assert join_list(["alcohol"], word="or") == "alcohol"
+    assert join_list(["alcohol", "pork"], word="or") == "alcohol or pork"
+    assert join_list(["a", "b", "c"], word="or") == "a, b or c"
+
+
+def test_consolidated_or_parcel_is_appendix_a(rendered: str) -> None:
+    assert _section(rendered, "Consolidated or parcel") == SHIPPING_SECTION
+
+
+def test_a_market_that_sells_nothing_has_no_parcel_table(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    section = _section(render_report(report), "Consolidated or parcel")
+
+    assert section.startswith(
+        "## Consolidated or parcel\n\n"
+        "Direct parcels are cheaper than consolidated imports for 0 of 1 product in UAE.\n\n"
+        "### KSA (Saudi Arabia)\n\n"
+        "No duty on a parcel whose CIF is below 1,000.00 SAR. No products are for sale.\n\n"
+        "### UAE (United Arab Emirates)\n\n"
+    )
+    assert "| GROC-VAN-061 | Pure Vanilla Extract | 55.99 | 57.99 | +3.6% | 5.0% |\n" in section
+    assert section.endswith(
+        "### KWT (Kuwait)\n\n"
+        "No de minimis rule, so every parcel pays duty. No products are for sale.\n\n"
+    )
+
+
+def test_parcel_rows_escape_cells_from_the_data(catalogue: Catalogue, config: GccConfig) -> None:
+    lip = next(p for p in catalogue.products if p.sku == "BEAU-LIP-040")
+    odd = lip.model_copy(update={"name": lip.name.model_copy(update={"en": "Lip | Balm\nXL"})})
+    report = build_report(
+        catalogue.model_copy(update={"products": [odd]}), config, REPORT_ORDERED_AT
+    )
+    row = "| BEAU-LIP-040 | Lip \\| Balm XL | 16.95 | 15.95 | -5.9% | waived |\n"
+
+    assert row in render_report(report)

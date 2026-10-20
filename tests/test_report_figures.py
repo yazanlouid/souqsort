@@ -1,4 +1,4 @@
-"""M11: the expansion report's figures (SPEC §9.2.1 and §9.2.6), all Decimal."""
+"""M11 and M12: the expansion report's figures (SPEC §9.2), all Decimal."""
 
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
@@ -16,8 +16,13 @@ from helpers import (
 from souqsort.models import Catalogue, GccConfig
 from souqsort.pipeline import LocalisationError, localise_and_summarise
 from souqsort.pricing.money import round_minor
-from souqsort.report import build_report
-from souqsort.report.figures import ExpansionReport, MarketOverview
+from souqsort.report import build_report, figures
+from souqsort.report.figures import (
+    ExpansionReport,
+    MarketOverview,
+    ProductComparison,
+    ShippingComparison,
+)
 
 
 def _percent(fraction: Decimal | None) -> Decimal | None:
@@ -166,3 +171,194 @@ def test_an_order_time_beyond_the_calendar_raises_localisation_error(
 ) -> None:
     with pytest.raises(LocalisationError, match=r"^KSA:"):
         build_report(catalogue, config, datetime(9999, 12, 31, 23, 0, tzinfo=UTC))
+
+
+# --- consolidated or parcel (§9.2.2) ------------------------------------------------------
+
+# SPEC §7.9.1 and §7.9.2 for the products each market sells, in catalogue order:
+# (SKU, consolidated, direct parcel, duty waived on the parcel).
+PRICE_LISTS: dict[str, list[tuple[str, str, str, bool]]] = {
+    "KSA": [
+        ("ELEC-HP-001", "686.95", "660.95", True),
+        ("ELEC-CHG-002", "184.95", "179.95", True),
+        ("FASH-BAG-014", "594.95", "546.95", True),
+        ("FASH-SCF-015", "293.95", "264.95", True),
+        ("SPRT-KTB-020", "593.95", "875.95", True),
+        ("HOME-KTL-030", "237.95", "249.95", True),
+        ("HOME-ESP-031", "4144.95", "4344.95", False),
+        ("BEAU-LIP-040", "16.95", "15.95", True),
+        ("BEAU-SRM-041", "111.95", "108.95", True),
+        ("DIGI-LIC-050", "340.95", "340.95", True),
+        ("GROC-TEA-060", "34.95", "37.95", True),
+    ],
+    "UAE": [
+        ("ELEC-HP-001", "612.99", "589.99", True),
+        ("ELEC-CHG-002", "164.99", "159.99", True),
+        ("FASH-BAG-014", "496.99", "485.99", True),
+        ("FASH-SCF-015", "246.99", "236.99", True),
+        ("SPRT-KTB-020", "498.99", "721.99", True),
+        ("HOME-KTL-030", "209.99", "218.99", True),
+        ("HOME-ESP-031", "3685.99", "3844.99", False),
+        ("BEAU-LIP-040", "14.99", "14.99", True),
+        ("BEAU-SRM-041", "99.99", "96.99", True),
+        ("DIGI-LIC-050", "304.99", "304.99", True),
+        ("GROC-TEA-060", "29.99", "32.99", True),
+        (VANILLA, "55.99", "57.99", False),
+    ],
+    "KWT": [
+        ("ELEC-HP-001", "48.950", "49.950", False),
+        ("ELEC-CHG-002", "13.950", "13.950", False),
+        ("FASH-BAG-014", "39.950", "41.950", False),
+        ("FASH-SCF-015", "19.950", "19.950", False),
+        ("SPRT-KTB-020", "44.950", "70.950", False),
+        ("HOME-KTL-030", "17.950", "19.950", False),
+        ("HOME-ESP-031", "296.950", "312.950", False),
+        ("BEAU-LIP-040", "1.950", "1.950", False),
+        ("BEAU-SRM-041", "7.950", "8.950", False),
+        ("DIGI-LIC-050", "24.950", "24.950", False),
+        ("GROC-TEA-060", "2.950", "2.950", False),
+    ],
+}
+
+
+def _shipping(report: ExpansionReport, code: str) -> ShippingComparison:
+    return next(market for market in report.shipping if market.code == code)
+
+
+def test_shipping_comparisons_are_in_config_order(
+    report: ExpansionReport, config: GccConfig
+) -> None:
+    assert [market.code for market in report.shipping] == list(config.markets)
+
+
+def test_shipping_comparisons_name_the_market_and_its_rule(
+    report: ExpansionReport, config: GccConfig
+) -> None:
+    for comparison in report.shipping:
+        market = config.markets[comparison.code]
+
+        assert comparison.name == market.name
+        assert comparison.currency == market.currency.code
+        assert comparison.minor_units == market.currency.minor_units
+        assert comparison.de_minimis == market.customs.de_minimis
+
+
+@pytest.mark.parametrize("code", list(PRICE_LISTS))
+def test_every_price_is_the_spec_price_list(report: ExpansionReport, code: str) -> None:
+    products = _shipping(report, code).products
+
+    assert [
+        (p.sku, p.consolidated_price, p.parcel_price, p.parcel_duty_waived) for p in products
+    ] == [
+        (sku, Decimal(consolidated), Decimal(parcel), waived)
+        for sku, consolidated, parcel, waived in PRICE_LISTS[code]
+    ]
+
+
+def test_the_product_rows_number_34(report: ExpansionReport) -> None:
+    assert sum(len(market.products) for market in report.shipping) == 34
+
+
+@pytest.mark.parametrize(
+    ("code", "counts"),
+    [("KSA", (6, 4, 1, 10)), ("UAE", (5, 5, 2, 10)), ("KWT", (0, 6, 5, 0))],
+)
+def test_counts_of_the_parcel_table(
+    report: ExpansionReport, code: str, counts: tuple[int, int, int, int]
+) -> None:
+    market = _shipping(report, code)
+
+    assert (market.cheaper, market.dearer, market.unchanged, market.waived) == counts
+
+
+def test_change_is_the_full_precision_ratio(report: ExpansionReport) -> None:
+    for market in report.shipping:
+        for product in market.products:
+            assert product.change_pct == product.parcel_price / product.consolidated_price - 1
+
+
+def test_parcel_duty_rate_is_the_parcel_quote_s(report: ExpansionReport) -> None:
+    rates = {
+        (market.code, p.sku): p.parcel_duty_rate
+        for market in report.shipping
+        for p in market.products
+    }
+
+    assert rates["KSA", "HOME-ESP-031"] == Decimal("0.05")
+    assert rates["KSA", "ELEC-HP-001"] == Decimal("0")
+    assert rates["UAE", VANILLA] == Decimal("0.05")
+    assert rates["KWT", "ELEC-HP-001"] == Decimal("0.05")
+    assert rates["KWT", "DIGI-LIC-050"] == Decimal("0")
+
+
+def test_comparisons_come_from_localise_and_summarise(
+    report: ExpansionReport, catalogue: Catalogue, config: GccConfig
+) -> None:
+    for market in report.shipping:
+        consolidated, parcel = (
+            localise_and_summarise(
+                catalogue.products, config, market.code, REPORT_ORDERED_AT, Decimal(0), model
+            )
+            for model in ("consolidated", "parcel")
+        )
+
+        assert [p.sku for p in market.products] == [item.sku for item in consolidated.items]
+        assert [p.consolidated_price for p in market.products] == [
+            item.quote.shelf_price for item in consolidated.items
+        ]
+        assert [
+            (p.parcel_price, p.parcel_duty_rate, p.parcel_duty_waived) for p in market.products
+        ] == [
+            (item.quote.shelf_price, item.quote.duty_rate, item.quote.duty_waived)
+            for item in parcel.items
+        ]
+
+
+def test_counts_compare_prices_not_the_rounded_change() -> None:
+    # +0.04% rounds to 0.0%, but the parcel is still dearer.
+    comparison = ShippingComparison(
+        code="A",
+        name="A name",
+        currency="XXX",
+        minor_units=2,
+        de_minimis=None,
+        products=(
+            ProductComparison(
+                "SKU-1",
+                "One",
+                Decimal("2500.00"),
+                Decimal("2501.00"),
+                Decimal("0.0004"),
+                Decimal("0.05"),
+                False,
+            ),
+        ),
+    )
+
+    assert (comparison.cheaper, comparison.dearer, comparison.unchanged) == (0, 1, 0)
+
+
+def test_a_market_that_sells_nothing_compares_nothing(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    ksa, uae = _shipping(report, "KSA"), _shipping(report, "UAE")
+
+    assert ksa.products == ()
+    assert (ksa.cheaper, ksa.dearer, ksa.unchanged, ksa.waived) == (0, 0, 0, 0)
+    assert [(p.sku, p.parcel_duty_waived) for p in uae.products] == [(VANILLA, False)]
+    assert (uae.cheaper, uae.dearer, uae.unchanged, uae.waived) == (0, 1, 0, 0)
+
+
+def test_pairs_of_different_products_are_rejected(catalogue: Catalogue, config: GccConfig) -> None:
+    # Same length, different SKUs: zip(strict=True) alone would pair them.
+    market = config.markets["KSA"]
+    consolidated, parcel = (
+        localise_and_summarise(
+            only_products(catalogue, sku).products, config, "KSA", REPORT_ORDERED_AT
+        )
+        for sku in ("ELEC-HP-001", "ELEC-CHG-002")
+    )
+
+    with pytest.raises(ValueError, match="parcel view has ELEC-CHG-002 where ELEC-HP-001"):
+        figures._shipping(market, consolidated, parcel)
