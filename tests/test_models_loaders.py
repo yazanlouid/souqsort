@@ -543,6 +543,35 @@ def test_unknown_de_minimis_key_rejected(write_json: WriteJson, raw_config: Raw)
     _reject_config(write_json, raw_config, "de_minimis.currency")
 
 
+def test_de_minimis_threshold_finer_than_minor_units_rejected(
+    write_json: WriteJson, raw_config: Raw
+) -> None:
+    # Shown as 1,000.00 SAR, a 999.995 threshold would make the report's rule sentence wrong.
+    _ksa(raw_config)["customs"]["de_minimis"]["threshold"] = "999.995"
+    _reject_config(write_json, raw_config, "KSA:", "threshold 999.995", "minor_units (2)")
+
+
+@pytest.mark.parametrize("threshold", ["1000.00", "1000", "1000.000", "1E+30"])
+def test_de_minimis_threshold_in_whole_minor_units_accepted(
+    write_json: WriteJson, raw_config: Raw, threshold: str
+) -> None:
+    # Trailing zeros add no precision, as for charm_ending; a huge threshold still loads.
+    _ksa(raw_config)["customs"]["de_minimis"]["threshold"] = threshold
+    rule = _load_config(write_json, raw_config).markets["KSA"].customs.de_minimis
+    assert rule is not None
+    assert rule.threshold == Decimal(threshold)
+
+
+def test_de_minimis_threshold_with_three_minor_units_accepted(
+    write_json: WriteJson, raw_config: Raw
+) -> None:
+    rule = {**_ksa(raw_config)["customs"]["de_minimis"], "threshold": "300.125"}
+    raw_config["markets"]["KWT"]["customs"]["de_minimis"] = rule
+    loaded = _load_config(write_json, raw_config).markets["KWT"].customs.de_minimis
+    assert loaded is not None
+    assert loaded.threshold == Decimal("300.125")
+
+
 def test_excluded_attributes_may_be_empty(write_json: WriteJson, raw_config: Raw) -> None:
     _ksa(raw_config)["customs"]["de_minimis"]["excluded_attributes"] = []
     rule = _load_config(write_json, raw_config).markets["KSA"].customs.de_minimis

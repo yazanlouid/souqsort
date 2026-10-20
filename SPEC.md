@@ -300,7 +300,7 @@ Rules:
 - Weekend days use `MON` … `SUN`.
 - Validation must reject unknown currency codes, negative rates, an invalid timezone, a malformed cutoff time and a config with no markets.
 - `compliance` is required in every market (M9). `banned_attributes` may be empty; each name must be an attribute from §6.1, with no duplicates. `source` is not empty.
-- `customs.de_minimis` is required in every market (M10) and may be `null`, meaning no de minimis. When set: `threshold` > 0, in the market currency; `applies` is `"below"` or `"at_or_below"`; `excluded_attributes` follows the rule for `banned_attributes`; `source` is not empty.
+- `customs.de_minimis` is required in every market (M10) and may be `null`, meaning no de minimis. When set: `threshold` > 0, in the market currency, with no more decimals than the currency's minor units; `applies` is `"below"` or `"at_or_below"`; `excluded_attributes` follows the rule for `banned_attributes`; `source` is not empty.
 - `logistics.parcel_freight_per_kg_usd` is required (M10) and ≥ 0.
 - These fields are required rather than defaulted, so a market cannot end up with "nothing banned" or "no de minimis" because a field was left out.
 - Test fixtures get the same fields. `tests/fixtures/zero_vat_config.json`: an empty banned list (M9), `"de_minimis": null` and parcel freight `9.00` (M10).
@@ -1268,6 +1268,7 @@ The sample report does not change: it names the data, not the version (§9.1).
 - Reports go to `outputs/` (gitignored) by default. `docs/GCC_EXPANSION_REPORT.md` is the one committed report, and a test keeps it current.
 - Four milestones, split by report section, so each ends with a report that runs and a pull request small enough for both reviewers.
 - `/release` turns the steps of Release v0.2.0 into one command. It stops for an OK before the merge, never pushes to `main` and never moves a tag.
+- A de minimis threshold is whole minor units, so the report's rule sentence states exactly what the engine compares.
 
 ## 13. Sources
 
