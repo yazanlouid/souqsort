@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import Decimal, Inexact, localcontext
 
 from souqsort.compliance import ExcludedProduct
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
@@ -203,9 +203,26 @@ class _MarketViews:
 def price_ending_added(quote: PriceQuote) -> Decimal:
     """The share rounding and the price ending add to a price: ``shelf_price / gross - 1``.
 
-    Full precision. Catalogue prices are above zero, so ``gross`` never is zero.
+    Full precision, for display: the quotient is rounded to the context's precision, so
+    whether a price is a risk is decided by ``_adds_more_than_the_alert`` instead. Catalogue
+    prices are above zero, so ``gross`` never is zero.
     """
     return quote.shelf_price / quote.gross - 1
+
+
+def _adds_more_than_the_alert(quote: PriceQuote) -> bool:
+    """Whether ``shelf_price > gross * (1 + PRICE_ENDING_ALERT)``, decided exactly.
+
+    A product of two coefficients has at most as many digits as both together, so with that
+    precision the multiplication never rounds; ``Inexact`` is trapped to prove it, and so
+    that an alert whose factor cannot be formed exactly raises rather than being rounded.
+    Dividing instead would round a repeating quotient, which can land on the alert itself.
+    """
+    with localcontext() as context:
+        context.traps[Inexact] = True
+        factor = 1 + PRICE_ENDING_ALERT
+        context.prec = len(quote.gross.as_tuple().digits) + len(factor.as_tuple().digits)
+        return quote.shelf_price > quote.gross * factor
 
 
 def _overview(
@@ -297,9 +314,22 @@ def _sample_product(products: list[Product], views: list[_MarketViews]) -> Sampl
 
 
 def _build_up(view: _MarketViews, sku: str) -> PriceBuildUp:
-    """``sku``'s two quotes in one market, taken from the views already localised."""
-    consolidated = next(item.quote for item in view.consolidated.items if item.sku == sku)
-    parcel = next(item.quote for item in view.parcel.items if item.sku == sku)
+    """``sku``'s two quotes in one market, taken from the views already localised.
+
+    Raises ``ValueError`` naming the market, the shipping model and the SKU if a view does not
+    sell it.
+    """
+    by_model: tuple[tuple[ShippingModel, LocalisedCatalogue], ...] = (
+        ("consolidated", view.consolidated),
+        ("parcel", view.parcel),
+    )
+    quotes: dict[ShippingModel, PriceQuote] = {}
+    for model, localised in by_model:
+        quote = next((item.quote for item in localised.items if item.sku == sku), None)
+        if quote is None:
+            raise ValueError(f"{view.market.code}: the {model} view has no {sku}")
+        quotes[model] = quote
+    consolidated, parcel = quotes["consolidated"], quotes["parcel"]
     return PriceBuildUp(
         code=view.market.code,
         currency=view.market.currency.code,
@@ -341,8 +371,7 @@ def _pricing_risks(view: _MarketViews) -> list[PricingRisk]:
     """One market's pricing risks, from its consolidated view, in catalogue order."""
     risks = []
     for item in view.consolidated.items:
-        added = price_ending_added(item.quote)
-        if added > PRICE_ENDING_ALERT:
+        if _adds_more_than_the_alert(item.quote):
             risks.append(
                 PricingRisk(
                     code=view.market.code,
@@ -351,7 +380,7 @@ def _pricing_risks(view: _MarketViews) -> list[PricingRisk]:
                     minor_units=view.market.currency.minor_units,
                     gross=item.quote.gross,
                     shelf_price=item.quote.shelf_price,
-                    added_pct=added,
+                    added_pct=price_ending_added(item.quote),
                 )
             )
     return risks

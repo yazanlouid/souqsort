@@ -514,7 +514,7 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
     markets = markets_sentences(report.markets)
     shipping = shipping_sentence(report.shipping)
     tariffs = tariff_sentence(report.tariffs)
-    build_up = build_up_sentences(report.sample_product, report.build_ups)
+    build_up = " ".join(build_up_sentences(report.sample_product, report.build_ups))
     risks = pricing_risks_sentence(report.pricing_risks)
     not_sold = not_sold_sentence(report.product_count, report.markets)
     return {
@@ -524,7 +524,7 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
             "fx_as_of": report.fx_as_of.isoformat(),
             "catalogue_version": one_line(report.catalogue_version),
         },
-        "summary": [*markets, shipping, tariffs, " ".join(build_up), risks, not_sold],
+        "summary": [*markets, shipping, tariffs, build_up, risks, not_sold],
         "markets": {
             "sentences": " ".join(markets),
             "rows": [_market_row(market) for market in report.markets],
@@ -539,8 +539,12 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
             "rows": [_tariff_row(exposure) for exposure in report.tariffs],
         },
         "build_up": {
-            "sentences": " ".join(build_up),
-            "markets": [_build_up_market(build_up) for build_up in report.build_ups],
+            "sentences": build_up,
+            "labels": {
+                "consolidated": SHIPPING_LABELS["consolidated"],
+                "parcel": SHIPPING_LABELS["parcel"],
+            },
+            "markets": [_build_up_market(market) for market in report.build_ups],
         },
         "risks": {
             "sentence": risks,

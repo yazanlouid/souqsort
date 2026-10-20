@@ -1,7 +1,7 @@
 """M11 to M13: the expansion report's figures (SPEC §9.2), all Decimal."""
 
 from datetime import UTC, date, datetime, time
-from decimal import Decimal
+from decimal import Decimal, Inexact, localcontext
 
 import pytest
 from hypothesis import given, settings
@@ -628,10 +628,63 @@ def test_the_alert_is_ten_percent() -> None:
     ids=["nothing-added", "exactly-the-alert", "above-the-alert"],
 )
 def test_price_ending_added(shelf_price: str, added: str, risk: bool) -> None:
-    fraction = price_ending_added(_quote("1.00", shelf_price))
+    quote = _quote("1.00", shelf_price)
 
-    assert fraction == Decimal(added)
-    assert (fraction > PRICE_ENDING_ALERT) is risk
+    assert price_ending_added(quote) == Decimal(added)
+    assert figures._adds_more_than_the_alert(quote) is risk
+
+
+# 0.999...9 with 28 nines: shelf / gross rounds to exactly 1.1 at 28 digits, although the
+# share added is 0.10000000000000000000000000011, above the alert.
+JUST_BELOW_ONE = "0." + "9" * 28
+LONG_GROSS = "1.234567890123456789012345678901234567890"  # 40 digits
+LONG_AT_ALERT = "1.35802467913580246791358024679135802467900"  # LONG_GROSS * 1.10, exactly
+
+
+@pytest.mark.parametrize(
+    ("gross", "shelf_price", "risk"),
+    [
+        (JUST_BELOW_ONE, "1.10", True),
+        ("1." + "0" * 27 + "1", "1.10", False),
+        (LONG_GROSS, LONG_AT_ALERT, False),
+        (LONG_GROSS, LONG_AT_ALERT + "1", True),
+        ("3", "3.30", False),
+        ("3", "3.300000000000000000000000000000001", True),
+    ],
+    ids=[
+        "just-below-one",
+        "just-above-one",
+        "long-exactly-the-alert",
+        "long-just-above",
+        "exactly",
+        "far-digit-above",
+    ],
+)
+def test_the_alert_is_compared_exactly(gross: str, shelf_price: str, risk: bool) -> None:
+    assert figures._adds_more_than_the_alert(_quote(gross, shelf_price)) is risk
+
+
+def test_the_division_alone_would_miss_the_boundary() -> None:
+    quote = _quote(JUST_BELOW_ONE, "1.10")
+
+    assert price_ending_added(quote) == PRICE_ENDING_ALERT  # rounded onto the boundary
+    assert figures._adds_more_than_the_alert(quote)
+
+
+def test_the_comparison_ignores_the_caller_s_precision() -> None:
+    with localcontext() as ctx:
+        ctx.prec = 3
+        assert figures._adds_more_than_the_alert(_quote(JUST_BELOW_ONE, "1.10"))
+        assert not figures._adds_more_than_the_alert(_quote(LONG_GROSS, LONG_AT_ALERT))
+
+
+def test_an_alert_that_cannot_be_added_to_one_exactly_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(figures, "PRICE_ENDING_ALERT", Decimal("0." + "3" * 30))
+
+    with pytest.raises(Inexact):
+        figures._adds_more_than_the_alert(_quote("1.00", "1.50"))
 
 
 def test_price_ending_added_keeps_full_precision() -> None:
@@ -675,9 +728,10 @@ def test_pricing_risks_come_from_consolidated_quotes(
             catalogue.products, config, code, REPORT_ORDERED_AT, Decimal("0"), "consolidated"
         )
         for item in localised.items:
-            added = price_ending_added(item.quote)
-            if added > PRICE_ENDING_ALERT:
-                expected.append((code, item.sku, item.quote.gross, item.quote.shelf_price, added))
+            if figures._adds_more_than_the_alert(item.quote):
+                quote = item.quote
+                added = price_ending_added(quote)
+                expected.append((code, item.sku, quote.gross, quote.shelf_price, added))
 
     assert [(r.code, r.sku, r.gross, r.shelf_price, r.added_pct) for r in report.pricing_risks] == (
         expected
@@ -705,23 +759,32 @@ def test_pricing_risks_are_in_market_then_catalogue_order(
     }
 
 
-def test_a_price_ending_that_adds_exactly_the_alert_is_not_a_risk(
-    report: ExpansionReport,
-    catalogue: Catalogue,
-    config: GccConfig,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    tea = next(risk for risk in report.pricing_risks if risk.sku == TEA)
-    monkeypatch.setattr(figures, "PRICE_ENDING_ALERT", tea.added_pct)
-
-    risks = build_report(catalogue, config, REPORT_ORDERED_AT).pricing_risks
-
-    assert [risk.sku for risk in risks] == [LIP_BALM]
-
-
 def test_no_risks_without_a_price_ending_that_adds_more_than_the_alert(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
     report = build_report(only_products(catalogue, HEADPHONES), config, REPORT_ORDERED_AT)
 
     assert report.pricing_risks == ()
+
+
+def test_a_build_up_names_a_view_missing_the_sample_product(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    ksa = config.markets["KSA"]
+    views = figures._MarketViews(
+        market=ksa,
+        consolidated=localise_and_summarise(
+            catalogue.products, config, ksa.code, REPORT_ORDERED_AT, Decimal("0"), "consolidated"
+        ),
+        parcel=localise_and_summarise(
+            [p for p in catalogue.products if p.sku != HEADPHONES],
+            config,
+            ksa.code,
+            REPORT_ORDERED_AT,
+            Decimal("0"),
+            "parcel",
+        ),
+    )
+
+    with pytest.raises(ValueError, match=r"^KSA: the parcel view has no ELEC-HP-001$"):
+        figures._build_up(views, HEADPHONES)

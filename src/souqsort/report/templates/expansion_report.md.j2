@@ -55,7 +55,7 @@ An order placed on {{ order.date }} at {{ order.time }} UTC, priced in every mar
 {% for market in build_up.markets %}
 ### {{ market.heading }}
 
-| Step | Consolidated import | Direct parcel |
+| Step | {{ build_up.labels.consolidated }} | {{ build_up.labels.parcel }} |
 |---|---:|---:|
 {% for row in market.rows %}
 | {{ row.step }} | {{ row.consolidated }} | {{ row.parcel }} |

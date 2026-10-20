@@ -1352,3 +1352,14 @@ def test_every_section_is_appendix_a(rendered: str) -> None:
         + NOT_SOLD_SECTION
         + METHOD_SECTION
     )
+
+
+def test_build_up_columns_use_the_dashboard_s_shipping_labels(
+    catalogue: Catalogue, config: GccConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(report_text.SHIPPING_LABELS, "consolidated", "By sea")
+    monkeypatch.setitem(report_text.SHIPPING_LABELS, "parcel", "By post")
+    text = render_report(build_report(catalogue, config, REPORT_ORDERED_AT))
+
+    assert "| Step | By sea | By post |\n" in _section(text, "How a price is built")
+    assert "| KSA | By post |" in _section(text, "Tariff exposure")
