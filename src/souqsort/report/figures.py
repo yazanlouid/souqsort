@@ -6,9 +6,25 @@ from decimal import Decimal
 
 from souqsort.compliance import ExcludedProduct
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
-from souqsort.models import Catalogue, DeMinimisRule, GccConfig, MarketConfig, Product
-from souqsort.pipeline import LocalisedCatalogue, localise_and_summarise
+from souqsort.models import (
+    Catalogue,
+    DeMinimisRule,
+    GccConfig,
+    MarketConfig,
+    Product,
+    ShippingModel,
+)
+from souqsort.pipeline import (
+    LocalisedCatalogue,
+    duty_adjustment_from_points,
+    localise_and_summarise,
+)
 from souqsort.pricing.customs import SHIPPING_MODELS
+
+# The tariff rises the report stress-tests, in whole percentage points (§9.2.3).
+TARIFF_RISES_POINTS: tuple[int, ...] = (5, 10, 20)
+# The rise the tariff sentence quotes; it must be one of TARIFF_RISES_POINTS.
+HEADLINE_TARIFF_RISE_POINTS = 10
 
 
 @dataclass(frozen=True)
@@ -84,6 +100,20 @@ class ShippingComparison:
 
 
 @dataclass(frozen=True)
+class TariffExposure:
+    """How much a market's prices rise in one shipping model for each tariff rise.
+
+    ``average_change_pct`` has one full-precision fraction per ``TARIFF_RISES_POINTS``: the
+    mean change in shelf price against the same products in the same model at today's rates.
+    Each is ``None`` when the market sells nothing.
+    """
+
+    code: str
+    shipping: ShippingModel
+    average_change_pct: tuple[Decimal | None, ...]
+
+
+@dataclass(frozen=True)
 class ExpansionReport:
     """Every market in the config for one order, in config order.
 
@@ -98,6 +128,7 @@ class ExpansionReport:
     product_count: int
     markets: tuple[MarketOverview, ...]
     shipping: tuple[ShippingComparison, ...]
+    tariffs: tuple[TariffExposure, ...]  # by market, then shipping model
 
 
 def _overview(
@@ -168,6 +199,34 @@ def _localise(
     return _overview(market, consolidated, ordered_at), _shipping(market, consolidated, parcel)
 
 
+def _tariffs(
+    products: list[Product], config: GccConfig, market: MarketConfig, ordered_at: datetime
+) -> list[TariffExposure]:
+    """One market's exposure in each shipping model, from ``localise_and_summarise``.
+
+    Its average price change already compares each product with its price at 0 pp in the
+    same shipping model.
+    """
+    return [
+        TariffExposure(
+            code=market.code,
+            shipping=model,
+            average_change_pct=tuple(
+                localise_and_summarise(
+                    products,
+                    config,
+                    market.code,
+                    ordered_at,
+                    duty_adjustment_from_points(rise),
+                    model,
+                ).summary.average_price_change_pct
+                for rise in TARIFF_RISES_POINTS
+            ),
+        )
+        for model in SHIPPING_MODELS
+    ]
+
+
 def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) -> ExpansionReport:
     """The report's figures for an order placed at ``ordered_at``.
 
@@ -191,4 +250,9 @@ def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) 
         product_count=len(catalogue.products),
         markets=tuple(overview for overview, _ in per_market),
         shipping=tuple(comparison for _, comparison in per_market),
+        tariffs=tuple(
+            exposure
+            for market in config.markets.values()
+            for exposure in _tariffs(catalogue.products, config, market, ordered_at)
+        ),
     )

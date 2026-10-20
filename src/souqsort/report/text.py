@@ -12,15 +12,18 @@ from functools import cache
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
-from souqsort.display import WAIVED, excluded_grid_rows
-from souqsort.models import AttributeName, DeMinimisApplies
+from souqsort.display import SHIPPING_LABELS, WAIVED, excluded_grid_rows
+from souqsort.models import AttributeName, DeMinimisApplies, ShippingModel
 from souqsort.pipeline import LocalisationError
 from souqsort.pricing.money import round_minor
 from souqsort.report.figures import (
+    HEADLINE_TARIFF_RISE_POINTS,
+    TARIFF_RISES_POINTS,
     ExpansionReport,
     MarketOverview,
     ProductComparison,
     ShippingComparison,
+    TariffExposure,
 )
 
 type ContextValue = str | Sequence[ContextValue] | Mapping[str, ContextValue]
@@ -115,6 +118,18 @@ def join_list(items: Sequence[str], *, word: str = "and") -> str:
     if len(items) == 1:
         return items[0]
     return f"{', '.join(items[:-1])} {word} {items[-1]}"
+
+
+def join_clauses(items: Sequence[str]) -> str:
+    """Clauses that already contain "and": ``a``, ``a; and b``, ``a; b; and c``.
+
+    Raises ``ValueError`` if there is nothing to join.
+    """
+    if not items:
+        raise ValueError("nothing to join")
+    if len(items) == 1:
+        return items[0]
+    return f"{'; '.join(items[:-1])}; and {items[-1]}"
 
 
 def count_text(count: int, noun: str) -> str:
@@ -230,6 +245,42 @@ def shipping_sentence(comparisons: Sequence[ShippingComparison]) -> str:
     return f"Direct parcels are cheaper than consolidated imports for {join_list(phrases)}."
 
 
+def tariff_sentence(tariffs: Sequence[TariffExposure]) -> str:
+    """The sentence of "Tariff exposure", at ``HEADLINE_TARIFF_RISE_POINTS``.
+
+    Markets in config order, both shipping models each; a market that sells nothing has no
+    averages and is left out.
+    """
+    headline = TARIFF_RISES_POINTS.index(HEADLINE_TARIFF_RISE_POINTS)
+    by_market: dict[str, dict[ShippingModel, Decimal]] = {}
+    for exposure in tariffs:
+        change = exposure.average_change_pct[headline]
+        if change is not None:
+            by_market.setdefault(exposure.code, {})[exposure.shipping] = change
+    if not by_market:
+        return _NOTHING_FOR_SALE
+
+    clauses = []
+    for position, (code, changes) in enumerate(by_market.items()):
+        consolidated, parcel = (
+            percent_text(
+                changes[model],
+                figure=f"{code}: {HEADLINE_TARIFF_RISE_POINTS} pp {model} price change",
+            )
+            for model in ("consolidated", "parcel")
+        )
+        clauses.append(
+            f"{consolidated} and {parcel} in {one_line(code)}"
+            if position
+            else f"{consolidated} for consolidated imports and {parcel} for direct parcels "
+            f"in {one_line(code)}"
+        )
+    return (
+        f"A {HEADLINE_TARIFF_RISE_POINTS} pp tariff rise lifts average prices by "
+        f"{join_clauses(clauses)}."
+    )
+
+
 def not_sold_sentence(product_count: int, markets: Sequence[MarketOverview]) -> str:
     """The sentence of "Not sold": every market, in config order."""
     if all(not market.not_sold for market in markets):
@@ -298,6 +349,20 @@ def _shipping_market(comparison: ShippingComparison) -> dict[str, ContextValue]:
     }
 
 
+def _tariff_row(exposure: TariffExposure) -> dict[str, ContextValue]:
+    figure = f"{exposure.code}: {exposure.shipping} price change"
+    return {
+        "market": table_cell(exposure.code),
+        "shipping": SHIPPING_LABELS[exposure.shipping],
+        "changes": [
+            _NO_VALUE
+            if change is None
+            else signed_percent_text(change, figure=f"{figure} at +{rise} pp")
+            for rise, change in zip(TARIFF_RISES_POINTS, exposure.average_change_pct, strict=True)
+        ],
+    }
+
+
 def _not_sold_rows(markets: Sequence[MarketOverview]) -> list[dict[str, str]]:
     return [
         {
@@ -322,6 +387,7 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
     ordered_at = report.ordered_at.astimezone(UTC)
     markets = markets_sentences(report.markets)
     shipping = shipping_sentence(report.shipping)
+    tariffs = tariff_sentence(report.tariffs)
     not_sold = not_sold_sentence(report.product_count, report.markets)
     return {
         "order": {"date": date_text(ordered_at.date()), "time": clock_text(ordered_at.time())},
@@ -330,7 +396,7 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
             "fx_as_of": report.fx_as_of.isoformat(),
             "catalogue_version": one_line(report.catalogue_version),
         },
-        "summary": [*markets, shipping, not_sold],
+        "summary": [*markets, shipping, tariffs, not_sold],
         "markets": {
             "sentences": " ".join(markets),
             "rows": [_market_row(market) for market in report.markets],
@@ -338,6 +404,11 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
         "shipping": {
             "sentence": shipping,
             "markets": [_shipping_market(comparison) for comparison in report.shipping],
+        },
+        "tariffs": {
+            "sentence": tariffs,
+            "rises": [f"+{rise} pp" for rise in TARIFF_RISES_POINTS],
+            "rows": [_tariff_row(exposure) for exposure in report.tariffs],
         },
         "not_sold": {"sentence": not_sold, "rows": _not_sold_rows(report.markets)},
     }

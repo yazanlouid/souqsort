@@ -38,6 +38,16 @@ An order placed on {{ order.date }} at {{ order.time }} UTC, priced in every mar
 
 {% endif %}
 {% endfor %}
+## Tariff exposure
+
+{{ tariffs.sentence }}
+
+| Market | Shipping model |{% for rise in tariffs.rises %} {{ rise }} |{% endfor +%}
+|---|---|{% for rise in tariffs.rises %}---:|{% endfor +%}
+{% for row in tariffs.rows %}
+| {{ row.market }} | {{ row.shipping }} |{% for change in row.changes %} {{ change }} |{% endfor +%}
+{% endfor %}
+
 ## Not sold
 
 {{ not_sold.sentence }}

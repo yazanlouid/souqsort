@@ -4,6 +4,8 @@ from datetime import UTC, date, datetime, time
 from decimal import Decimal
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from helpers import (
     FOR_SALE_COUNTS,
@@ -13,11 +15,19 @@ from helpers import (
     VANILLA,
     only_products,
 )
-from souqsort.models import Catalogue, GccConfig
-from souqsort.pipeline import LocalisationError, localise_and_summarise
+from souqsort.models import Catalogue, GccConfig, ShippingModel
+from souqsort.pipeline import (
+    MAX_DUTY_ADJUST_POINTS,
+    LocalisationError,
+    duty_adjustment_from_points,
+    localise_and_summarise,
+)
+from souqsort.pricing.customs import SHIPPING_MODELS
 from souqsort.pricing.money import round_minor
 from souqsort.report import build_report, figures
 from souqsort.report.figures import (
+    HEADLINE_TARIFF_RISE_POINTS,
+    TARIFF_RISES_POINTS,
     ExpansionReport,
     MarketOverview,
     ProductComparison,
@@ -362,3 +372,84 @@ def test_pairs_of_different_products_are_rejected(catalogue: Catalogue, config: 
 
     with pytest.raises(ValueError, match="parcel view has ELEC-CHG-002 where ELEC-HP-001"):
         figures._shipping(market, consolidated, parcel)
+
+
+# --- tariff exposure (§9.2.3) -------------------------------------------------------------
+
+# SPEC §9.2.3: the average price change at +5, +10 and +20 pp, rounded for display.
+TARIFF_CELLS: dict[tuple[str, ShippingModel], tuple[str, str, str]] = {
+    ("KSA", "consolidated"): ("4.6", "9.0", "18.6"),
+    ("KSA", "parcel"): ("0.4", "0.9", "1.7"),
+    ("UAE", "consolidated"): ("4.9", "9.3", "19.2"),
+    ("UAE", "parcel"): ("0.8", "1.5", "3.2"),
+    ("KWT", "consolidated"): ("3.8", "7.6", "16.0"),
+    ("KWT", "parcel"): ("6.3", "9.4", "17.7"),
+}
+
+
+def test_tariff_rises_are_whole_points_the_pipeline_accepts() -> None:
+    assert TARIFF_RISES_POINTS == (5, 10, 20)
+    assert HEADLINE_TARIFF_RISE_POINTS in TARIFF_RISES_POINTS
+    assert all(0 <= rise <= MAX_DUTY_ADJUST_POINTS for rise in TARIFF_RISES_POINTS)
+
+
+def test_tariffs_are_by_market_then_shipping_model(
+    report: ExpansionReport, config: GccConfig
+) -> None:
+    assert [(t.code, t.shipping) for t in report.tariffs] == [
+        (code, model) for code in config.markets for model in SHIPPING_MODELS
+    ]
+
+
+def test_the_18_cells_of_the_tariff_table(report: ExpansionReport) -> None:
+    assert {
+        (t.code, t.shipping): tuple(_percent(change) for change in t.average_change_pct)
+        for t in report.tariffs
+    } == {key: tuple(Decimal(cell) for cell in cells) for key, cells in TARIFF_CELLS.items()}
+
+
+def test_tariffs_come_from_localise_and_summarise(
+    report: ExpansionReport, catalogue: Catalogue, config: GccConfig
+) -> None:
+    for exposure in report.tariffs:
+        assert exposure.average_change_pct == tuple(
+            localise_and_summarise(
+                catalogue.products,
+                config,
+                exposure.code,
+                REPORT_ORDERED_AT,
+                duty_adjustment_from_points(rise),
+                exposure.shipping,
+            ).summary.average_price_change_pct
+            for rise in TARIFF_RISES_POINTS
+        )
+
+
+def test_a_market_that_sells_nothing_has_no_tariff_figures(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    by_market = {(t.code, t.shipping): t.average_change_pct for t in report.tariffs}
+
+    assert by_market["KSA", "consolidated"] == by_market["KSA", "parcel"] == (None, None, None)
+    assert all(change is not None for change in by_market["UAE", "parcel"])
+
+
+@settings(max_examples=50, deadline=None)  # each example builds a whole report
+@given(data=st.data())
+def test_a_bigger_tariff_rise_never_lowers_the_average_change(
+    catalogue: Catalogue, config: GccConfig, data: st.DataObject
+) -> None:
+    skus = data.draw(st.sets(st.sampled_from([p.sku for p in catalogue.products])), label="skus")
+    report = build_report(only_products(catalogue, *skus), config, REPORT_ORDERED_AT)
+    selling = {market.code: market.for_sale > 0 for market in report.markets}
+
+    for exposure in report.tariffs:
+        changes = exposure.average_change_pct
+        if not selling[exposure.code]:
+            assert changes == (None,) * len(TARIFF_RISES_POINTS)
+            continue
+        figures = [change for change in changes if change is not None]
+        assert len(figures) == len(TARIFF_RISES_POINTS)
+        assert all(change >= 0 for change in figures)
+        assert figures == sorted(figures)

@@ -26,16 +26,19 @@ from souqsort.models import (
 from souqsort.pipeline import LocalisationError
 from souqsort.report import build_report, render_report
 from souqsort.report.figures import (
+    TARIFF_RISES_POINTS,
     ExpansionReport,
     MarketOverview,
     ProductComparison,
     ShippingComparison,
+    TariffExposure,
 )
 from souqsort.report.text import (
     clock_text,
     count_text,
     date_text,
     de_minimis_sentence,
+    join_clauses,
     join_list,
     local_time_text,
     markets_sentences,
@@ -48,6 +51,7 @@ from souqsort.report.text import (
     shipping_sentence,
     signed_percent_text,
     table_cell,
+    tariff_sentence,
 )
 
 # SPEC Appendix A, exactly: the parts of the sample report that M11 builds.
@@ -132,6 +136,22 @@ No de minimis rule, so every parcel pays duty. Parcels are cheaper for 0 of 11 p
 | BEAU-SRM-041 | Vitamin C Serum 30 ml | 7.950 | 8.950 | +12.6% | 5.0% |
 | DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 24.950 | 24.950 | 0.0% | 0.0% |
 | GROC-TEA-060 | English Breakfast Tea, 80 bags | 2.950 | 2.950 | 0.0% | 5.0% |
+
+"""  # noqa: E501
+
+TARIFF_SECTION = """\
+## Tariff exposure
+
+A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT.
+
+| Market | Shipping model | +5 pp | +10 pp | +20 pp |
+|---|---|---:|---:|---:|
+| KSA | Consolidated import | +4.6% | +9.0% | +18.6% |
+| KSA | Direct parcel | +0.4% | +0.9% | +1.7% |
+| UAE | Consolidated import | +4.9% | +9.3% | +19.2% |
+| UAE | Direct parcel | +0.8% | +1.5% | +3.2% |
+| KWT | Consolidated import | +3.8% | +7.6% | +16.0% |
+| KWT | Direct parcel | +6.3% | +9.4% | +17.7% |
 
 """  # noqa: E501
 
@@ -492,6 +512,7 @@ def test_header_is_appendix_a(rendered: str) -> None:
 def test_summary_lists_the_sentences_built_so_far(rendered: str) -> None:
     assert _section(rendered, "Summary") == (
         f"## Summary\n\n- {PRICE_SENTENCE}\n- {DELIVERY_SENTENCE}\n- {SHIPPING_SENTENCE}\n"
+        f"- {TARIFF_SENTENCE}\n"
         f"- {NOT_SOLD_SENTENCE}\n\n"
     )
 
@@ -519,6 +540,7 @@ def test_sections_are_in_order(rendered: str) -> None:
         "### KSA (Saudi Arabia)",
         "### UAE (United Arab Emirates)",
         "### KWT (Kuwait)",
+        "## Tariff exposure",
         "## Not sold",
         "## How these figures are made",
     ]
@@ -817,3 +839,107 @@ def test_parcel_rows_escape_cells_from_the_data(catalogue: Catalogue, config: Gc
     row = "| BEAU-LIP-040 | Lip \\| Balm XL | 16.95 | 15.95 | -5.9% | waived |\n"
 
     assert row in render_report(report)
+
+
+# --- tariff exposure (§9.3.2 item 3) ------------------------------------------------------
+
+TARIFF_SENTENCE = (
+    "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for "
+    "direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT."
+)
+
+
+def _exposures(code: str, consolidated: str | None, parcel: str | None) -> list[TariffExposure]:
+    """A hand-built market's two rows, one figure for every rise; ``None`` sells nothing."""
+
+    def changes(figure: str | None) -> tuple[Decimal | None, ...]:
+        return tuple(None if figure is None else Decimal(figure) for _ in TARIFF_RISES_POINTS)
+
+    return [
+        TariffExposure(code, "consolidated", changes(consolidated)),
+        TariffExposure(code, "parcel", changes(parcel)),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("items", "expected"),
+    [
+        (["a"], "a"),
+        (["a and b", "c and d"], "a and b; and c and d"),
+        (["a and b", "c and d", "e and f"], "a and b; c and d; and e and f"),
+    ],
+)
+def test_clauses_join_with_semicolons_and_a_final_and(items: list[str], expected: str) -> None:
+    assert join_clauses(items) == expected
+
+
+def test_no_clauses_cannot_be_joined() -> None:
+    with pytest.raises(ValueError, match="nothing to join"):
+        join_clauses([])
+
+
+def test_tariff_sentence_for_the_sample_data(report: ExpansionReport) -> None:
+    assert tariff_sentence(report.tariffs) == TARIFF_SENTENCE
+
+
+def test_tariff_sentence_for_one_market() -> None:
+    assert tariff_sentence(_exposures("A", "0.09", "0.009")) == (
+        "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for "
+        "direct parcels in A."
+    )
+
+
+def test_tariff_sentence_for_two_markets() -> None:
+    exposures = [*_exposures("A", "0.09", "0.009"), *_exposures("B", "0.1", "0.02")]
+
+    assert tariff_sentence(exposures) == (
+        "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for "
+        "direct parcels in A; and 10.0% and 2.0% in B."
+    )
+
+
+def test_tariff_sentence_quotes_the_headline_rise() -> None:
+    exposures = [
+        TariffExposure("A", "consolidated", (Decimal("0.01"), Decimal("0.02"), Decimal("0.03"))),
+        TariffExposure("A", "parcel", (Decimal("0.04"), Decimal("0.05"), Decimal("0.06"))),
+    ]
+
+    assert tariff_sentence(exposures) == (
+        "A 10 pp tariff rise lifts average prices by 2.0% for consolidated imports and 5.0% for "
+        "direct parcels in A."
+    )
+
+
+def test_tariff_sentence_leaves_out_a_market_that_sells_nothing() -> None:
+    exposures = [
+        *_exposures("A", None, None),
+        *_exposures("B", "0.1", "0.02"),
+        *_exposures("C", "0.05", "0"),
+    ]
+
+    assert tariff_sentence(exposures) == (
+        "A 10 pp tariff rise lifts average prices by 10.0% for consolidated imports and 2.0% for "
+        "direct parcels in B; and 5.0% and 0.0% in C."
+    )
+
+
+def test_tariff_sentence_when_no_market_sells_anything() -> None:
+    exposures = [*_exposures("A", None, None), *_exposures("B", None, None)]
+
+    assert tariff_sentence(exposures) == "No market has products for sale."
+
+
+def test_tariff_exposure_is_appendix_a(rendered: str) -> None:
+    assert _section(rendered, "Tariff exposure") == TARIFF_SECTION
+
+
+def test_a_market_that_sells_nothing_shows_dashes_for_tariffs(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    section = _section(render_report(report), "Tariff exposure")
+
+    assert "| KSA | Consolidated import | - | - | - |\n| KSA | Direct parcel | - | - | - |\n" in (
+        section
+    )
+    assert "in UAE.\n" in section
