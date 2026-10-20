@@ -31,11 +31,13 @@ from souqsort.pipeline import LocalisationError, localise_and_summarise
 from souqsort.pricing.landed_cost import PriceQuote
 from souqsort.pricing.money import charm_up, round_minor
 from souqsort.report import build_report, render_report
+from souqsort.report import text as report_text
 from souqsort.report.figures import (
     TARIFF_RISES_POINTS,
     ExpansionReport,
     MarketOverview,
     PriceBuildUp,
+    PricingRisk,
     ProductComparison,
     SampleProduct,
     ShippingComparison,
@@ -56,6 +58,7 @@ from souqsort.report.text import (
     not_sold_sentence,
     one_line,
     percent_text,
+    pricing_risks_sentence,
     report_context,
     shipping_market_sentences,
     shipping_sentence,
@@ -519,14 +522,6 @@ def test_header_is_appendix_a(rendered: str) -> None:
     assert rendered.startswith(HEADER)
 
 
-def test_summary_lists_the_sentences_built_so_far(rendered: str) -> None:
-    assert _section(rendered, "Summary") == (
-        f"## Summary\n\n- {PRICE_SENTENCE}\n- {DELIVERY_SENTENCE}\n- {SHIPPING_SENTENCE}\n"
-        f"- {TARIFF_SENTENCE}\n- {' '.join(BUILD_UP_SENTENCES)}\n"
-        f"- {NOT_SOLD_SENTENCE}\n\n"
-    )
-
-
 def test_markets_side_by_side_is_appendix_a(rendered: str) -> None:
     assert _section(rendered, "Markets side by side") == MARKETS_SECTION
 
@@ -555,6 +550,7 @@ def test_sections_are_in_order(rendered: str) -> None:
         "### KSA (SAR)",
         "### UAE (AED)",
         "### KWT (KWD)",
+        "## Pricing risks",
         "## Not sold",
         "## How these figures are made",
     ]
@@ -1220,3 +1216,139 @@ def test_a_sample_product_name_with_a_line_break_stays_on_one_line(
     )
     assert f"\n- {opening}Shipped as" in _section(text, "Summary")
     assert "\n\n\n" not in text
+
+
+# --- pricing risks (§9.3.2 item 5) --------------------------------------------------------
+
+RISKS_SENTENCE = (
+    "The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) "
+    "and GROC-TEA-060 in KWT (+20.0%)."
+)
+NO_RISKS_SENTENCE = "No price ending adds more than 10.0% to any product."
+
+RISKS_SECTION = """\
+## Pricing risks
+
+The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) and GROC-TEA-060 in KWT (+20.0%).
+
+| Market | SKU | Product | Before the price ending | Shelf price | Added |
+|---|---|---|---:|---:|---:|
+| KWT | BEAU-LIP-040 | Lip Balm | 1.157 | 1.950 | +68.5% |
+| KWT | GROC-TEA-060 | English Breakfast Tea, 80 bags | 2.458 | 2.950 | +20.0% |
+
+"""  # noqa: E501
+
+
+def _risk(code: str, sku: str, added: str) -> PricingRisk:
+    """A hand-built risk; only the market, the SKU and the share added matter here."""
+    return PricingRisk(
+        code=code,
+        sku=sku,
+        name_en=f"{sku} name",
+        minor_units=2,
+        gross=Decimal("1.00"),
+        shelf_price=Decimal("1.00") * (1 + Decimal(added)),
+        added_pct=Decimal(added),
+    )
+
+
+def test_pricing_risks_sentence_for_the_sample_data(report: ExpansionReport) -> None:
+    assert pricing_risks_sentence(report.pricing_risks) == RISKS_SENTENCE
+
+
+def test_pricing_risks_sentence_for_one_risk() -> None:
+    assert pricing_risks_sentence([_risk("A", "SKU-1", "0.12")]) == (
+        "The price ending adds more than 10.0% to 1 product: SKU-1 in A (+12.0%)."
+    )
+
+
+def test_pricing_risks_sentence_for_three_risks() -> None:
+    risks = [_risk("A", "SKU-1", "0.12"), _risk("A", "SKU-2", "0.5"), _risk("B", "SKU-1", "1")]
+
+    assert pricing_risks_sentence(risks) == (
+        "The price ending adds more than 10.0% to 3 products: SKU-1 in A (+12.0%), "
+        "SKU-2 in A (+50.0%) and SKU-1 in B (+100.0%)."
+    )
+
+
+def test_pricing_risks_sentence_when_there_are_none() -> None:
+    assert pricing_risks_sentence([]) == NO_RISKS_SENTENCE
+
+
+def test_pricing_risks_sentence_quotes_the_alert(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(report_text, "PRICE_ENDING_ALERT", Decimal("0.25"))
+
+    assert pricing_risks_sentence([]) == "No price ending adds more than 25.0% to any product."
+    assert pricing_risks_sentence([_risk("A", "SKU-1", "0.3")]).startswith(
+        "The price ending adds more than 25.0% to 1 product: "
+    )
+
+
+def test_pricing_risks_sentence_keeps_data_on_one_line() -> None:
+    risks = [_risk("A\nB", "SKU\r\n1", "0.12"), _risk("C", "SKU-2", "0.2")]
+
+    assert pricing_risks_sentence(risks) == (
+        "The price ending adds more than 10.0% to 2 products: SKU 1 in A B (+12.0%) "
+        "and SKU-2 in C (+20.0%)."
+    )
+
+
+def test_pricing_risks_is_appendix_a(rendered: str) -> None:
+    assert _section(rendered, "Pricing risks") == RISKS_SECTION
+
+
+def test_no_pricing_risks_has_no_table(catalogue: Catalogue, config: GccConfig) -> None:
+    text = render_report(
+        build_report(only_products(catalogue, "ELEC-HP-001"), config, REPORT_ORDERED_AT)
+    )
+
+    assert _section(text, "Pricing risks") == f"## Pricing risks\n\n{NO_RISKS_SENTENCE}\n\n"
+    assert f"- {NO_RISKS_SENTENCE}\n" in _section(text, "Summary")
+
+
+def test_risk_rows_escape_cells_from_the_data(catalogue: Catalogue, config: GccConfig) -> None:
+    lip = next(p for p in catalogue.products if p.sku == "BEAU-LIP-040")
+    odd = lip.model_copy(update={"name": lip.name.model_copy(update={"en": "Lip | Balm\nXL"})})
+    report = build_report(
+        catalogue.model_copy(update={"products": [odd]}), config, REPORT_ORDERED_AT
+    )
+    section = _section(render_report(report), "Pricing risks")
+
+    assert "| KWT | BEAU-LIP-040 | Lip \\| Balm XL | 1.157 | 1.950 | +68.5% |\n" in section
+    assert section.startswith(
+        "## Pricing risks\n\n"
+        "The price ending adds more than 10.0% to 1 product: BEAU-LIP-040 in KWT (+68.5%).\n\n"
+    )
+
+
+# --- the whole report ---------------------------------------------------------------------
+
+
+def test_summary_is_appendix_a(rendered: str) -> None:
+    sentences = [
+        PRICE_SENTENCE,
+        DELIVERY_SENTENCE,
+        SHIPPING_SENTENCE,
+        TARIFF_SENTENCE,
+        " ".join(BUILD_UP_SENTENCES),
+        RISKS_SENTENCE,
+        NOT_SOLD_SENTENCE,
+    ]
+
+    assert _section(rendered, "Summary") == (
+        "## Summary\n\n" + "".join(f"- {sentence}\n" for sentence in sentences) + "\n"
+    )
+
+
+def test_every_section_is_appendix_a(rendered: str) -> None:
+    assert rendered == (
+        HEADER
+        + _section(rendered, "Summary")
+        + MARKETS_SECTION
+        + SHIPPING_SECTION
+        + TARIFF_SECTION
+        + BUILD_UP_SECTION
+        + RISKS_SECTION
+        + NOT_SOLD_SECTION
+        + METHOD_SECTION
+    )

@@ -23,16 +23,19 @@ from souqsort.pipeline import (
     localise_and_summarise,
 )
 from souqsort.pricing.customs import SHIPPING_MODELS
+from souqsort.pricing.landed_cost import PriceQuote
 from souqsort.pricing.money import round_minor
 from souqsort.report import build_report, figures
 from souqsort.report.figures import (
     HEADLINE_TARIFF_RISE_POINTS,
+    PRICE_ENDING_ALERT,
     TARIFF_RISES_POINTS,
     ExpansionReport,
     MarketOverview,
     ProductComparison,
     SampleProduct,
     ShippingComparison,
+    price_ending_added,
 )
 
 
@@ -588,3 +591,137 @@ def test_build_ups_are_the_same_whatever_order_shipping_models_are_declared(
 
     assert reordered.sample_product == report.sample_product
     assert reordered.build_ups == report.build_ups
+
+
+# --- pricing risks (§9.2.5) ---------------------------------------------------------------
+
+LIP_BALM = "BEAU-LIP-040"
+TEA = "GROC-TEA-060"
+
+
+def _quote(gross: str, shelf_price: str) -> PriceQuote:
+    """A hand-built consolidated quote; only the gross and the shelf price matter here."""
+    return PriceQuote(
+        sku="SKU-1",
+        market="A",
+        currency="XXX",
+        goods=Decimal(gross),
+        freight=Decimal(0),
+        duty=Decimal(0),
+        vat=Decimal(0),
+        gross=Decimal(gross),
+        shelf_price=Decimal(shelf_price),
+        margin_pct=Decimal("0.5"),
+        shipping="consolidated",
+        duty_rate=Decimal("0.05"),
+        duty_waived=False,
+    )
+
+
+def test_the_alert_is_ten_percent() -> None:
+    assert Decimal("0.10") == PRICE_ENDING_ALERT
+
+
+@pytest.mark.parametrize(
+    ("shelf_price", "added", "risk"),
+    [("1.00", "0", False), ("1.10", "0.10", False), ("1.11", "0.11", True)],
+    ids=["nothing-added", "exactly-the-alert", "above-the-alert"],
+)
+def test_price_ending_added(shelf_price: str, added: str, risk: bool) -> None:
+    fraction = price_ending_added(_quote("1.00", shelf_price))
+
+    assert fraction == Decimal(added)
+    assert (fraction > PRICE_ENDING_ALERT) is risk
+
+
+def test_price_ending_added_keeps_full_precision() -> None:
+    assert price_ending_added(_quote("3", "4")) == Decimal(4) / Decimal(3) - 1
+
+
+def test_the_two_pricing_risks_of_the_sample_data(report: ExpansionReport) -> None:
+    shown = [
+        (
+            risk.code,
+            risk.sku,
+            risk.name_en,
+            risk.minor_units,
+            round_minor(risk.gross, risk.minor_units),
+            risk.shelf_price,
+            _percent(risk.added_pct),
+        )
+        for risk in report.pricing_risks
+    ]
+
+    assert shown == [
+        ("KWT", LIP_BALM, "Lip Balm", 3, Decimal("1.157"), Decimal("1.950"), Decimal("68.5")),
+        (
+            "KWT",
+            TEA,
+            "English Breakfast Tea, 80 bags",
+            3,
+            Decimal("2.458"),
+            Decimal("2.950"),
+            Decimal("20.0"),
+        ),
+    ]
+
+
+def test_pricing_risks_come_from_consolidated_quotes(
+    report: ExpansionReport, catalogue: Catalogue, config: GccConfig
+) -> None:
+    expected = []
+    for code in config.markets:
+        localised = localise_and_summarise(
+            catalogue.products, config, code, REPORT_ORDERED_AT, Decimal("0"), "consolidated"
+        )
+        for item in localised.items:
+            added = price_ending_added(item.quote)
+            if added > PRICE_ENDING_ALERT:
+                expected.append((code, item.sku, item.quote.gross, item.quote.shelf_price, added))
+
+    assert [(r.code, r.sku, r.gross, r.shelf_price, r.added_pct) for r in report.pricing_risks] == (
+        expected
+    )
+
+
+def test_pricing_risks_are_in_market_then_catalogue_order(
+    catalogue: Catalogue, config: GccConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(figures, "PRICE_ENDING_ALERT", Decimal("0.04"))
+    risks = build_report(catalogue, config, REPORT_ORDERED_AT).pricing_risks
+    markets = list(config.markets)
+    skus = [product.sku for product in catalogue.products]
+
+    assert [r.code for r in risks] == sorted((r.code for r in risks), key=markets.index)
+    for code in markets:
+        in_market = [r.sku for r in risks if r.code == code]
+        assert in_market == sorted(in_market, key=skus.index)
+    assert {(r.code, r.sku) for r in risks} == {
+        ("KSA", LIP_BALM),
+        ("KWT", "ELEC-CHG-002"),
+        ("KWT", "HOME-KTL-030"),
+        ("KWT", LIP_BALM),
+        ("KWT", TEA),
+    }
+
+
+def test_a_price_ending_that_adds_exactly_the_alert_is_not_a_risk(
+    report: ExpansionReport,
+    catalogue: Catalogue,
+    config: GccConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tea = next(risk for risk in report.pricing_risks if risk.sku == TEA)
+    monkeypatch.setattr(figures, "PRICE_ENDING_ALERT", tea.added_pct)
+
+    risks = build_report(catalogue, config, REPORT_ORDERED_AT).pricing_risks
+
+    assert [risk.sku for risk in risks] == [LIP_BALM]
+
+
+def test_no_risks_without_a_price_ending_that_adds_more_than_the_alert(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    report = build_report(only_products(catalogue, HEADPHONES), config, REPORT_ORDERED_AT)
+
+    assert report.pricing_risks == ()

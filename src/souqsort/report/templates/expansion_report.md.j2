@@ -63,6 +63,18 @@ An order placed on {{ order.date }} at {{ order.time }} UTC, priced in every mar
 | **Shelf price** | **{{ market.shelf.consolidated }}** | **{{ market.shelf.parcel }}** |
 
 {% endfor %}
+## Pricing risks
+
+{{ risks.sentence }}
+
+{% if risks.rows %}
+| Market | SKU | Product | Before the price ending | Shelf price | Added |
+|---|---|---|---:|---:|---:|
+{% for row in risks.rows %}
+| {{ row.market }} | {{ row.sku }} | {{ row.product }} | {{ row.gross }} | {{ row.shelf }} | {{ row.added }} |
+{% endfor %}
+
+{% endif %}
 ## Not sold
 
 {{ not_sold.sentence }}

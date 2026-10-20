@@ -39,6 +39,10 @@ def _require_headline_rise(headline: int, rises: tuple[int, ...]) -> None:
 # Checked on import, so a mismatch fails at once rather than on every render.
 _require_headline_rise(HEADLINE_TARIFF_RISE_POINTS, TARIFF_RISES_POINTS)
 
+# A product is a pricing risk when rounding and the price ending add more than this share
+# to its consolidated price (§9.2.5). Exactly the alert is not a risk.
+PRICE_ENDING_ALERT = Decimal("0.10")
+
 
 @dataclass(frozen=True)
 class MarketOverview:
@@ -149,6 +153,24 @@ class PriceBuildUp:
 
 
 @dataclass(frozen=True)
+class PricingRisk:
+    """A product whose price ending adds more than ``PRICE_ENDING_ALERT`` to its price.
+
+    From its consolidated quote at today's duty rates: ``gross`` is the full-precision price
+    before rounding and the price ending, and ``added_pct`` is the full-precision
+    ``shelf_price / gross - 1``.
+    """
+
+    code: str
+    sku: str
+    name_en: str
+    minor_units: int
+    gross: Decimal
+    shelf_price: Decimal
+    added_pct: Decimal
+
+
+@dataclass(frozen=True)
 class ExpansionReport:
     """Every market in the config for one order, in config order.
 
@@ -166,6 +188,7 @@ class ExpansionReport:
     tariffs: tuple[TariffExposure, ...]  # by market, then shipping model
     sample_product: SampleProduct | None  # None when no product is sold in every market
     build_ups: tuple[PriceBuildUp, ...]  # config order; empty without a sample product
+    pricing_risks: tuple[PricingRisk, ...]  # by market, then catalogue order
 
 
 @dataclass(frozen=True)
@@ -175,6 +198,14 @@ class _MarketViews:
     market: MarketConfig
     consolidated: LocalisedCatalogue
     parcel: LocalisedCatalogue
+
+
+def price_ending_added(quote: PriceQuote) -> Decimal:
+    """The share rounding and the price ending add to a price: ``shelf_price / gross - 1``.
+
+    Full precision. Catalogue prices are above zero, so ``gross`` never is zero.
+    """
+    return quote.shelf_price / quote.gross - 1
 
 
 def _overview(
@@ -306,6 +337,26 @@ def _tariffs(
     ]
 
 
+def _pricing_risks(view: _MarketViews) -> list[PricingRisk]:
+    """One market's pricing risks, from its consolidated view, in catalogue order."""
+    risks = []
+    for item in view.consolidated.items:
+        added = price_ending_added(item.quote)
+        if added > PRICE_ENDING_ALERT:
+            risks.append(
+                PricingRisk(
+                    code=view.market.code,
+                    sku=item.sku,
+                    name_en=item.name_en,
+                    minor_units=view.market.currency.minor_units,
+                    gross=item.quote.gross,
+                    shelf_price=item.quote.shelf_price,
+                    added_pct=added,
+                )
+            )
+    return risks
+
+
 def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) -> ExpansionReport:
     """The report's figures for an order placed at ``ordered_at``.
 
@@ -337,4 +388,5 @@ def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) 
         ),
         sample_product=sample,
         build_ups=() if sample is None else tuple(_build_up(view, sample.sku) for view in views),
+        pricing_risks=tuple(risk for view in views for risk in _pricing_risks(view)),
     )

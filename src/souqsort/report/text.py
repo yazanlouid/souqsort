@@ -19,10 +19,12 @@ from souqsort.pricing.landed_cost import PriceQuote
 from souqsort.pricing.money import round_minor
 from souqsort.report.figures import (
     HEADLINE_TARIFF_RISE_POINTS,
+    PRICE_ENDING_ALERT,
     TARIFF_RISES_POINTS,
     ExpansionReport,
     MarketOverview,
     PriceBuildUp,
+    PricingRisk,
     ProductComparison,
     SampleProduct,
     ShippingComparison,
@@ -169,6 +171,10 @@ def table_cell(text: str) -> str:
 
 def _above_catalogue(market: MarketOverview) -> str:
     return f"{market.code}: average above catalogue price"
+
+
+def _added_text(risk: PricingRisk) -> str:
+    return signed_percent_text(risk.added_pct, figure=f"{risk.code}: {risk.sku} price ending")
 
 
 # --- sentences (§9.3.2) -------------------------------------------------------------------
@@ -330,6 +336,20 @@ def build_up_sentences(
     ]
 
 
+def pricing_risks_sentence(risks: Sequence[PricingRisk]) -> str:
+    """The sentence of "Pricing risks": each risk's SKU, market and share added, in order."""
+    alert = percent_text(PRICE_ENDING_ALERT, figure="the price ending alert")
+    if not risks:
+        return f"No price ending adds more than {alert} to any product."
+    phrases = [
+        f"{one_line(risk.sku)} in {one_line(risk.code)} ({_added_text(risk)})" for risk in risks
+    ]
+    return (
+        f"The price ending adds more than {alert} to "
+        f"{count_text(len(risks), 'product')}: {join_list(phrases)}."
+    )
+
+
 def not_sold_sentence(product_count: int, markets: Sequence[MarketOverview]) -> str:
     """The sentence of "Not sold": every market, in config order."""
     if all(not market.not_sold for market in markets):
@@ -457,6 +477,18 @@ def _build_up_market(build_up: PriceBuildUp) -> dict[str, ContextValue]:
     }
 
 
+def _risk_row(risk: PricingRisk) -> dict[str, str]:
+    figure = f"{risk.code}: {risk.sku}"
+    return {
+        "market": table_cell(risk.code),
+        "sku": table_cell(risk.sku),
+        "product": table_cell(risk.name_en),
+        "gross": money_text(risk.gross, risk.minor_units, figure=f"{figure} price before ending"),
+        "shelf": money_text(risk.shelf_price, risk.minor_units, figure=f"{figure} shelf price"),
+        "added": _added_text(risk),
+    }
+
+
 def _not_sold_rows(markets: Sequence[MarketOverview]) -> list[dict[str, str]]:
     return [
         {
@@ -483,6 +515,7 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
     shipping = shipping_sentence(report.shipping)
     tariffs = tariff_sentence(report.tariffs)
     build_up = build_up_sentences(report.sample_product, report.build_ups)
+    risks = pricing_risks_sentence(report.pricing_risks)
     not_sold = not_sold_sentence(report.product_count, report.markets)
     return {
         "order": {"date": date_text(ordered_at.date()), "time": clock_text(ordered_at.time())},
@@ -491,7 +524,7 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
             "fx_as_of": report.fx_as_of.isoformat(),
             "catalogue_version": one_line(report.catalogue_version),
         },
-        "summary": [*markets, shipping, tariffs, " ".join(build_up), not_sold],
+        "summary": [*markets, shipping, tariffs, " ".join(build_up), risks, not_sold],
         "markets": {
             "sentences": " ".join(markets),
             "rows": [_market_row(market) for market in report.markets],
@@ -508,6 +541,10 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
         "build_up": {
             "sentences": " ".join(build_up),
             "markets": [_build_up_market(build_up) for build_up in report.build_ups],
+        },
+        "risks": {
+            "sentence": risks,
+            "rows": [_risk_row(risk) for risk in report.pricing_risks],
         },
         "not_sold": {"sentence": not_sold, "rows": _not_sold_rows(report.markets)},
     }
