@@ -195,7 +195,13 @@ The full rules, with worked examples, are in [SPEC.md](SPEC.md).
 
 ## Status
 
-**v0.2.0: three markets, compliance and de minimis.** KSA, the UAE and Kuwait; banned product
+**v0.3.0: the expansion report.** `GCC_EXPANSION_REPORT.md` compares every market and both shipping
+models for one order: prices, margins and delivery side by side, consolidated imports against direct
+parcels, tariff exposure, how a price is built, pricing risks and what is not sold. Each section
+opens with sentences computed from its figures. It comes from the `report` CLI command or the
+dashboard's download button, and the same inputs give the same bytes on every OS.
+
+**v0.2.0:** three markets, compliance and de minimis: KSA, the UAE and Kuwait; banned product
 attributes reported as not sold; a consolidated-import or direct-parcel shipping model, with de
 minimis thresholds; the duty rate and any de minimis waiver in the CLI, the CSV and the dashboard.
 
@@ -204,7 +210,5 @@ delivery estimates, the CLI and the dashboard.
 
 Roadmap:
 
-- **v0.3:** a `GCC_EXPANSION_REPORT.md` generated from a template, with a download button in the
-  dashboard, building on the consolidated-versus-parcel comparison.
 - **Later:** pricing refinements (per-parcel fees, orders of several items, a finer price ladder for
   KWD), calculation traces, and a data pipeline. See [SPEC.md](SPEC.md) §2.
