@@ -15,7 +15,7 @@ sold, with the reason.
 > costs, holidays, compliance rules and the product catalogue are sample values written for this
 > demo. Do not use them to quote real prices or delivery dates.
 
-![SouqSort dashboard: UAE direct-parcel prices with a +3 pp duty adjustment, duty waived for most products, and the gummy bears listed as not sold](docs/dashboard.png)
+![SouqSort dashboard: UAE direct-parcel prices with a +3 pp duty adjustment, duty waived for most products, the gummy bears listed as not sold, and the expansion report's download button in the sidebar](docs/dashboard.png)
 
 ## Sample run
 
@@ -71,6 +71,33 @@ valuable items get cheaper as parcels and heavy or cheap ones get dearer. In KSA
 from 686.95 to 660.95 SAR, but the 16 kg kettlebell goes from 593.95 to 875.95. Kuwait has no de
 minimis, so a parcel there is never cheaper.
 
+## The expansion report
+
+The dashboard answers one market at a time. The expansion report puts them side by side: for one
+order, it prices the catalogue in every market in the config, under both shipping models, at today's
+duty rates and with tariff rises of 5, 10 and 20 percentage points as stress tests. It shows how one
+price is built in each market, flags prices whose ending adds more than 10%, and lists what each
+market cannot sell, with the reasons. Its only inputs are the data files and the order time, so the
+same order always gives the same file, byte for byte.
+
+```sh
+uv run python -m souqsort report --ordered-at 2026-10-15T09:00Z
+```
+
+This writes `outputs/GCC_EXPANSION_REPORT.md`. `--ordered-at` needs a UTC offset because the report
+covers every market, and defaults to now. In the dashboard, **Download expansion report** in the
+sidebar gives the same report for the order date and time picked there; the duty slider, shipping
+model and search don't change it.
+
+[`docs/GCC_EXPANSION_REPORT.md`](docs/GCC_EXPANSION_REPORT.md) is the report for the sample data,
+for an order on Thursday 15 October 2026 at 09:00 UTC. Three of its findings:
+
+- **Parcels in KSA.** Direct parcels pay no duty on 10 of the 11 products KSA sells, but dearer
+  parcel freight means they are cheaper than consolidated imports for only 6 of them.
+- **A 10 pp tariff rise.** In KSA it lifts average prices by 9.0% for consolidated imports but only
+  0.9% for direct parcels, because de minimis waives the duty on most parcels whatever the rate.
+- **Kuwait's lip balm.** The 0.950 price ending takes it from 1.157 to 1.950 KWD, adding 68.5%.
+
 ## What makes it tricky
 
 - **Money.** `Decimal` throughout, rounded once with `ROUND_HALF_UP`: 0.0005 at 3 decimals gives
@@ -110,6 +137,7 @@ uv sync
 |---|---|
 | Price a market from the CLI | `uv run python -m souqsort price --market KSA` |
 | Price UAE direct parcels | `uv run python -m souqsort price --market UAE --shipping parcel` |
+| Write the expansion report | `uv run python -m souqsort report` |
 | Open the dashboard | `uv run streamlit run app/streamlit_app.py` |
 | Run the tests | `uv run pytest` |
 | Format, lint and type-check | `uv run ruff format --check .`, `uv run ruff check .` and `uv run mypy src` |
@@ -158,6 +186,8 @@ The full rules, with worked examples, are in [SPEC.md](SPEC.md).
   - A format hook runs `ruff format` on every Python file Claude edits.
   - The `money-reviewer` subagent checks a branch against the money rules (Decimal only, one
     rounding, duty and VAT bases, de minimis, compliance) before code review.
+  - `/release VERSION "title"` turns a release into one command: a release pull request, then,
+    after CI and an OK, the merge, an annotated tag and the GitHub release.
 - **Independent review.** The work was reviewed by an independent AI code review, and the de minimis
   milestone by the money-reviewer as well. I triaged every finding; decisions are recorded in the
   spec, and deferred items are tracked as

@@ -1138,7 +1138,7 @@ Each milestone ends with a report that runs. Its sections must match Appendix A 
 #### M11: the report's foundation
 Branch `feat/m11-report`. Commits, in order:
 1. `docs: add the v0.3 spec`: this SPEC.md and the v0.3 CLAUDE.md.
-2. `chore: point the money-reviewer at the report`: the two changes to `.claude/agents/money-reviewer.md` in Appendix B.
+2. `chore: point the money-reviewer at the report`: two changes to `.claude/agents/money-reviewer.md`, which is now its own source of truth: its description names the expansion report and `src/souqsort/report/`, it reads §9 when the report changes, and a tenth rule covers the report's figures.
 3. `feat: add the expansion report with markets side by side and what is not sold`:
    - `uv add jinja2`, which adds it to `pyproject.toml`; Streamlit already installs it, so the lock gains no package;
    - the `report` package (§10.3) with `MarketOverview` and `build_report`, the formatting and sentence rules of §9.3, and the template with the header, the summary, "Markets side by side", "Not sold" and the method notes;
@@ -1200,7 +1200,7 @@ Branch `feat/m14-report-download`. Commits, in order:
    - a section after "Sample run" with what the report covers, the `report` command, a link to `docs/GCC_EXPANSION_REPORT.md` and three of its findings (parcels in KSA, the 10 pp tariff rise, Kuwait's lip balm);
    - a retaken `docs/dashboard.png` with the v0.2 scenario (UAE, Direct parcel, +3 pp, 2026/10/15, 14:59), so the screenshot shows the button.
    - Status and the roadmap wait for the release.
-3. `chore: add the /release skill`: `.claude/skills/release/SKILL.md` from Appendix B, and its line under "Project tools" in CLAUDE.md (Appendix B). Every file in Appendix B now exists, so delete that appendix in the same commit. Restart Claude Code afterwards so the skill loads.
+3. `chore: add the /release skill`: `.claude/skills/release/SKILL.md`, and its line under "Project tools" in CLAUDE.md. In the same commit, delete the appendix that listed the files to create in v0.3 (every one of them now exists and is its own source of truth). Restart Claude Code afterwards so the skill loads.
 - **AppTest:**
   - the sidebar has the button with its label, file name and help text;
   - Thu 2026-10-15 12:00 picked in KSA offers exactly the sample report. If AppTest cannot read the button's data, check instead that the app builds the report for 2026-10-15 09:00 UTC;
@@ -1211,10 +1211,12 @@ Branch `feat/m14-report-download`. Commits, in order:
 
 #### Release v0.3.0
 In a fresh Claude Code session on an up-to-date `main`: `/release 0.3.0 "the expansion report"`. The skill:
-1. makes the branch `chore/release-0.3.0`, bumps the version and runs `uv lock`;
+1. checks that `0.3.0` is higher than the latest tag, `v0.2.0`, and stops before creating anything if it is not; then makes the branch `chore/release-0.3.0`, bumps the version and runs `uv lock`;
 2. marks v0.3 done in this spec's header and §2, and updates the README's Status and roadmap, then waits for your OK;
 3. opens the pull request "Release v0.3.0" and waits for CI, then for your OK to merge;
-4. merges, tags `v0.3.0` with the message "v0.3.0: the expansion report", and creates the GitHub release with notes generated from the pull requests merged since `v0.2.0`.
+4. merges, tags the pull request's merge commit (not whatever `main` points to by then) as `v0.3.0` with the message "v0.3.0: the expansion report", and creates the GitHub release with notes generated from the pull requests merged since `v0.2.0`.
+
+Its `allowed-tools` names only the commands its steps run. `git push`, `git tag` and `gh pr merge` are left out, because a pattern cannot rule out a flag such as `--force`, so each asks you first.
 
 The sample report does not change: it names the data, not the version (§9.1).
 
@@ -1456,59 +1458,3 @@ Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2.
 - Markets side by side and pricing risks use consolidated imports, the default shipping model.
 - Delivery dates are the same for both shipping models.
 ````
-
-## Appendix B: files for v0.3
-
-Copy these exactly, in the milestone each one names. Once a file exists it is its own source of truth, so M14 deletes this appendix once the last of them exists.
-
-### `.claude/agents/money-reviewer.md` (M11): two changes
-
-The `description` line becomes:
-
-```yaml
-description: Reviews SouqSort changes that touch money, pricing, FX, customs, de minimis, compliance, market data or the expansion report's figures against the project's money rules. Use after changing src/souqsort/pricing/, src/souqsort/report/, compliance.py, pipeline.py or data/raw/*.json, before /code-review.
-```
-
-"Read SPEC.md §3 and §7 first." becomes "Read SPEC.md §3 and §7 first, and §9 when the report changes." A tenth rule follows the ninth:
-
-```markdown
-10. The expansion report computes its figures from engine results in Decimal and rounds only when it formats them. Its template receives text only: no float, no arithmetic and no number formatting in the template. The same inputs give the same bytes.
-```
-
-### `.claude/skills/release/SKILL.md` (M14)
-
-```markdown
----
-name: release
-description: Release a new SouqSort version through a release pull request, then tag it and publish the GitHub release. Runs only when invoked as /release.
-argument-hint: "[VERSION] [title]"
-disable-model-invocation: true
-allowed-tools: Read Grep Glob Edit Bash(git *) Bash(gh *) Bash(uv *)
----
-
-Release SouqSort `$0` as "v$0: $1".
-
-Rules:
-- `$0` is a version such as `0.3.0`, higher than the latest tag. If it is not, or `$1` is empty, stop and tell me.
-- Never push to `main`, and never move or delete a tag. Everything reaches `main` through the release pull request.
-- Wait for my OK wherever a step says so.
-
-Steps:
-1. Check that the working tree is clean, then `git switch main` and `git pull --ff-only`. Find the previous tag with `git describe --tags --abbrev=0` and show it.
-2. `git switch -c chore/release-$0`.
-3. Set `version = "$0"` in `pyproject.toml` and run `uv lock`. Check that `git diff uv.lock` changes only SouqSort's own version.
-4. In SPEC.md, mark this version done and tagged `v$0`, in the header and in §2. In the README, update Status and the roadmap for this version. Show me both diffs and wait for my OK.
-5. Run `uv run --locked ruff format --check .`, `uv run --locked ruff check .`, `uv run --locked mypy src` and `uv run --locked pytest -q`. If one fails, stop and show it.
-6. Commit `chore: release $0`, push with `git push -u origin chore/release-$0`, and open a pull request titled "Release v$0" with `gh pr create`.
-7. Run `gh pr checks --watch`. When both CI jobs pass, show the pull request link and wait for my OK to merge.
-8. `gh pr merge --merge --delete-branch`, then `git switch main` and `git pull --ff-only`.
-9. `git tag -a v$0 -m "v$0: $1"`, then `git push origin v$0`.
-10. `gh release create v$0 --verify-tag --title "v$0: $1" --generate-notes --notes-start-tag <the previous tag from step 1>`.
-11. Show the release URL and the commit the tag points to.
-```
-
-### CLAUDE.md, under "Project tools" (M14)
-
-```markdown
-- `/release VERSION "title"` releases a version: a release pull request (version, `uv.lock`, SPEC.md and README), then, after CI and your OK, the merge, an annotated tag and the GitHub release. Only you can start it; Claude never runs it on its own.
-```

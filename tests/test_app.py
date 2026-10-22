@@ -18,17 +18,20 @@ import pytest
 import streamlit
 from streamlit.testing.v1 import AppTest
 
-from helpers import FOR_SALE_COUNTS, decimal_places
+from helpers import FOR_SALE_COUNTS, REPORT_ORDERED_AT, decimal_places
 from souqsort.display import display_summary, excluded_grid_rows, grid_rows
 from souqsort.loaders import load_gcc_config
 from souqsort.models import Catalogue, GccConfig
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
+    LocalisationError,
     duty_adjustment_from_points,
     localise_and_summarise,
 )
+from souqsort.report import build_report, render_report
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py"
+SAMPLE_REPORT = Path(__file__).resolve().parents[1] / "docs" / "GCC_EXPANSION_REPORT.md"
 
 HEADPHONES = "ELEC-HP-001"
 CHARGER = "ELEC-CHG-002"
@@ -68,6 +71,13 @@ SHIPPING_HELP = (
     "Consolidated: orders travel as one commercial import, so de minimis never applies. "
     "Direct parcel: each order is cleared on its own; under the market's threshold it pays no "
     "duty, but parcel freight costs more per kg."
+)
+
+# The report download button in the sidebar (SPEC §9.6).
+REPORT_LABEL = "Download expansion report"
+REPORT_HELP = (
+    "Every market and both shipping models for the order date and time above, at today's duty "
+    "rates. The duty slider, shipping model and search don't change it."
 )
 
 # The moment the dashboard is opened: Sun 10:00 in Riyadh, before the cutoff (SPEC §8.1 row 1).
@@ -199,7 +209,7 @@ def test_worked_example_rows(app: AppTest) -> None:
 # --- sidebar ------------------------------------------------------------------------------
 
 
-def test_sidebar_holds_the_six_controls(app: AppTest) -> None:
+def test_sidebar_holds_the_seven_controls(app: AppTest) -> None:
     sidebar = app.sidebar
 
     assert [widget.key for widget in sidebar.selectbox] == ["market"]
@@ -208,6 +218,7 @@ def test_sidebar_holds_the_six_controls(app: AppTest) -> None:
     assert [widget.key for widget in sidebar.date_input] == ["order_date"]
     assert [widget.key for widget in sidebar.time_input] == ["order_time"]
     assert [widget.key for widget in sidebar.text_input] == ["search"]
+    assert [widget.key for widget in sidebar.download_button] == ["report_download"]
 
 
 def test_market_selector_is_filled_from_the_config(app: AppTest, config: GccConfig) -> None:
@@ -784,6 +795,161 @@ def test_a_market_that_bans_nothing_shows_no_not_sold_table(
     assert not [s.value for s in at.subheader if s.value.startswith("Not sold")]
 
 
+# --- the expansion report (SPEC §9.6, M14) ------------------------------------------------
+
+
+@pytest.fixture
+def offers(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """What the app passes to ``st.download_button`` on each run, latest last.
+
+    AppTest keeps the button's label and help, but not its file name, type or data.
+    """
+    recorded: list[dict[str, Any]] = []
+    offer = streamlit.download_button
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        recorded.append(kwargs)
+        return offer(*args, **kwargs)
+
+    monkeypatch.setattr(streamlit, "download_button", recording)
+    return recorded
+
+
+@pytest.fixture
+def report_app(offers: list[dict[str, Any]]) -> AppTest:
+    """The dashboard after its first run, with what its download button offers recorded."""
+    at = _new_app()
+    at.session_state["opened_at"] = OPENED_AT
+    return at.run()
+
+
+def _offered(offers: list[dict[str, Any]]) -> bytes:
+    """The file the download button offers after the latest run."""
+    data = offers[-1]["data"]
+    assert type(data) is bytes  # encoded by the app, as the CLI writes the file
+    return data
+
+
+def _report_bytes(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) -> bytes:
+    return render_report(build_report(catalogue, config, ordered_at)).encode("utf-8")
+
+
+def test_sidebar_has_the_report_download_button(
+    report_app: AppTest, offers: list[dict[str, Any]]
+) -> None:
+    (button,) = report_app.sidebar.download_button
+
+    assert button.label == REPORT_LABEL
+    assert button.help == REPORT_HELP
+    assert offers[-1]["file_name"] == "GCC_EXPANSION_REPORT.md"
+    assert offers[-1]["mime"] == "text/markdown"
+
+
+def _sidebar_calls() -> list[str]:
+    """Every ``st.<name>(...)`` call in the app's ``with st.sidebar:`` block, in source order."""
+    tree = ast.parse(APP_PATH.read_text(encoding="utf-8"))
+    (sidebar,) = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.With) and ast.unparse(node.items[0].context_expr) == "st.sidebar"
+    ]
+    # Sorted by line: ast.walk goes breadth first, and the button is nested in a try statement.
+    return [
+        name
+        for _, name in sorted(
+            (node.lineno, node.func.attr)
+            for node in ast.walk(sidebar)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "st"
+        )
+    ]
+
+
+def test_report_button_is_right_under_the_search_box() -> None:
+    calls = _sidebar_calls()
+
+    # After the search box, only the button, or the error that takes its place, of any kind of
+    # element: a widget added below the button would fail here.
+    after_search = calls[calls.index("text_input") + 1 :]
+    assert after_search == ["error", "download_button"]
+
+
+def test_thursday_noon_in_ksa_offers_the_sample_report(
+    report_app: AppTest, offers: list[dict[str, Any]], catalogue: Catalogue, config: GccConfig
+) -> None:
+    # 12:00 in Riyadh is 09:00 UTC, the sample report's order (SPEC §9.5).
+    _order(report_app, date(2026, 10, 15), time(12, 0))
+
+    offered = _offered(offers)
+    assert offered == _report_bytes(catalogue, config, REPORT_ORDERED_AT)
+    assert offered == SAMPLE_REPORT.read_bytes()
+
+
+def test_slider_shipping_model_and_search_do_not_change_the_report(
+    report_app: AppTest, offers: list[dict[str, Any]]
+) -> None:
+    _order(report_app, date(2026, 10, 15), time(12, 0))
+    sample = _offered(offers)
+
+    report_app.slider(key="duty_points").set_value(20).run()
+    assert _offered(offers) == sample
+
+    _ship(report_app, "parcel")
+    assert _offered(offers) == sample
+
+    _search(report_app, "no such product")
+    assert _offered(offers) == sample
+
+
+def test_switching_to_the_uae_offers_the_report_for_the_same_reading_on_its_clock(
+    report_app: AppTest, offers: list[dict[str, Any]], catalogue: Catalogue, config: GccConfig
+) -> None:
+    _order(report_app, date(2026, 10, 15), time(12, 0))
+
+    _select_market(report_app, "UAE")
+
+    # The pickers keep 12:00, now read in Dubai: 08:00 UTC (issue #3).
+    offered = _offered(offers)
+    assert offered == _report_bytes(catalogue, config, datetime(2026, 10, 15, 8, 0, tzinfo=UTC))
+    assert offered != SAMPLE_REPORT.read_bytes()
+
+
+def test_report_button_is_there_when_the_search_matches_nothing(
+    report_app: AppTest, offers: list[dict[str, Any]], catalogue: Catalogue, config: GccConfig
+) -> None:
+    _search(report_app, "no such product")
+
+    assert len(_grid(report_app)) == 0
+    (button,) = report_app.sidebar.download_button
+    assert button.label == REPORT_LABEL
+    assert _offered(offers) == _report_bytes(catalogue, config, OPENED_AT)
+
+
+def test_a_report_that_cannot_be_built_is_an_error_where_the_button_would_be(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failing(*args: Any, **kwargs: Any) -> Any:
+        raise LocalisationError("KWT: something cannot be priced")
+
+    monkeypatch.setattr("souqsort.report.build_report", failing)
+    at = _new_app()
+    at.session_state["opened_at"] = OPENED_AT
+    at.run()
+
+    assert not at.exception, at.exception
+    assert [error.value for error in at.sidebar.error] == [
+        "Cannot build the expansion report: KWT: something cannot be priced"
+    ]
+    assert len(at.sidebar.download_button) == 0
+    # The rest of the page keeps working.
+    assert len(at.main.error) == 0
+    assert len(at.dataframe[0].value) == KSA_FOR_SALE
+    assert _metrics(at)[AVERAGE_MARGIN] == "64.6%"
+    assert len(at.dataframe) == 2  # the not-sold table too
+
+
 # --- problems are shown as a message, not a traceback -------------------------------------
 
 
@@ -841,9 +1007,15 @@ def test_margin_too_large_to_display_is_a_message(
     at = _run_with(monkeypatch, load_catalogue=lambda path: broken)
 
     assert not at.exception, at.exception
-    (error,) = at.error
+    (error,) = at.main.error
     assert "too large to display" in error.value
     assert len(at.dataframe) == 0
+    # The report cannot format that margin either, so the sidebar says so instead of a button.
+    (report_error,) = at.sidebar.error
+    assert report_error.value == (
+        "Cannot build the expansion report: KSA: average margin is too large to display"
+    )
+    assert len(at.sidebar.download_button) == 0
 
 
 # --- no business logic in the app ---------------------------------------------------------

@@ -22,6 +22,7 @@ from souqsort.pipeline import (
     find_market,
     localise_and_summarise,
 )
+from souqsort.report import build_report, render_report
 
 # Found from this file, so the app starts from any working directory.
 DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
@@ -102,10 +103,30 @@ with st.sidebar:
 
     query = st.text_input("Search", placeholder="SKU or English name", key="search")
 
-# --- results ------------------------------------------------------------------------------
+    # The pickers give a date and a time with no offset: the same case as the CLI's --ordered-at.
+    ordered_at = in_market_time(datetime.combine(order_date, order_time), market)
 
-# The pickers give a date and a time with no offset: the same case as the CLI's --ordered-at.
-ordered_at = in_market_time(datetime.combine(order_date, order_time), market)
+    # The report covers every market and both shipping models at today's duty rates, for the
+    # order picked above, so the slider, the shipping model and the search never change it.
+    try:
+        report = render_report(build_report(catalogue, config, ordered_at))
+    except LocalisationError as exc:
+        st.error(f"Cannot build the expansion report: {exc}")
+    else:
+        st.download_button(
+            "Download expansion report",
+            data=report.encode("utf-8"),  # bytes, as the CLI writes them: \n on every OS
+            file_name="GCC_EXPANSION_REPORT.md",
+            mime="text/markdown",
+            help=(
+                "Every market and both shipping models for the order date and time above, at "
+                "today's duty rates. The duty slider, shipping model and search don't change it."
+            ),
+            on_click="ignore",  # downloading changes nothing on the page, so no rerun
+            key="report_download",
+        )
+
+# --- results ------------------------------------------------------------------------------
 
 try:
     localised = localise_and_summarise(
