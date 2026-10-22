@@ -1138,7 +1138,7 @@ Each milestone ends with a report that runs. Its sections must match Appendix A 
 #### M11: the report's foundation
 Branch `feat/m11-report`. Commits, in order:
 1. `docs: add the v0.3 spec`: this SPEC.md and the v0.3 CLAUDE.md.
-2. `chore: point the money-reviewer at the report`: the two changes to `.claude/agents/money-reviewer.md` in Appendix B.
+2. `chore: point the money-reviewer at the report`: two changes to `.claude/agents/money-reviewer.md`, which is now its own source of truth: its description names the expansion report and `src/souqsort/report/`, it reads §9 when the report changes, and a tenth rule covers the report's figures.
 3. `feat: add the expansion report with markets side by side and what is not sold`:
    - `uv add jinja2`, which adds it to `pyproject.toml`; Streamlit already installs it, so the lock gains no package;
    - the `report` package (§10.3) with `MarketOverview` and `build_report`, the formatting and sentence rules of §9.3, and the template with the header, the summary, "Markets side by side", "Not sold" and the method notes;
@@ -1200,7 +1200,7 @@ Branch `feat/m14-report-download`. Commits, in order:
    - a section after "Sample run" with what the report covers, the `report` command, a link to `docs/GCC_EXPANSION_REPORT.md` and three of its findings (parcels in KSA, the 10 pp tariff rise, Kuwait's lip balm);
    - a retaken `docs/dashboard.png` with the v0.2 scenario (UAE, Direct parcel, +3 pp, 2026/10/15, 14:59), so the screenshot shows the button.
    - Status and the roadmap wait for the release.
-3. `chore: add the /release skill`: `.claude/skills/release/SKILL.md` from Appendix B, and its line under "Project tools" in CLAUDE.md (Appendix B). Every file in Appendix B now exists, so delete that appendix in the same commit. Restart Claude Code afterwards so the skill loads.
+3. `chore: add the /release skill`: `.claude/skills/release/SKILL.md`, and its line under "Project tools" in CLAUDE.md. In the same commit, delete the appendix that listed the files to create in v0.3 (every one of them now exists and is its own source of truth). Restart Claude Code afterwards so the skill loads.
 - **AppTest:**
   - the sidebar has the button with its label, file name and help text;
   - Thu 2026-10-15 12:00 picked in KSA offers exactly the sample report. If AppTest cannot read the button's data, check instead that the app builds the report for 2026-10-15 09:00 UTC;

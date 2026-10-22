@@ -186,6 +186,8 @@ The full rules, with worked examples, are in [SPEC.md](SPEC.md).
   - A format hook runs `ruff format` on every Python file Claude edits.
   - The `money-reviewer` subagent checks a branch against the money rules (Decimal only, one
     rounding, duty and VAT bases, de minimis, compliance) before code review.
+  - `/release VERSION "title"` turns a release into one command: a release pull request, then,
+    after CI and an OK, the merge, an annotated tag and the GitHub release.
 - **Independent review.** The work was reviewed by an independent AI code review, and the de minimis
   milestone by the money-reviewer as well. I triaged every finding; decisions are recorded in the
   spec, and deferred items are tracked as
