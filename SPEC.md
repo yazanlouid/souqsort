@@ -2,7 +2,7 @@
 
 > The single source of truth for building SouqSort with Claude Code.
 > Work one milestone at a time (M0 → M14). Each milestone lists its acceptance tests.
-> v0.1 (M0–M6) is done and tagged `v0.1.0`. v0.2 (**M7 → Fix #2 → M8 → M9 → M10 → Release**) is done and tagged `v0.2.0`. v0.3 runs **M11 → M12 → M13 → M14 → Release**. Each step has its own branch and reaches `main` through a pull request with green CI.
+> v0.1 (M0–M6) is done and tagged `v0.1.0`. v0.2 (**M7 → Fix #2 → M8 → M9 → M10 → Release**) is done and tagged `v0.2.0`. v0.3 (**M11 → M12 → M13 → M14 → Release**) is done and tagged `v0.3.0`. Each step has its own branch and reaches `main` through a pull request with green CI.
 
 ## 1. What SouqSort is
 
@@ -26,7 +26,7 @@ SouqSort is a localisation and pricing engine for a UK-based retailer launching 
 - **GitHub issues:** #1 lowercase categories (M9), #2 CSV formula injection (Fix #2), #3 order-time pickers on a market switch (M8).
 - **Claude Code, one new feature per milestone:** GitHub Actions and a `/verify` skill (M7), an `/add-market` skill with arguments (M8), a format-on-edit hook (M9), a `money-reviewer` subagent (M10), `gh release` (Release).
 
-### v0.3: the expansion report
+### v0.3: the expansion report (done, tag `v0.3.0`)
 - **`GCC_EXPANSION_REPORT.md`** (§9): one order, every market in the config, both shipping models, today's duty rates plus three tariff rises. Six sections, each opening with sentences computed from its figures, and a summary of those sentences at the top: markets side by side, consolidated or parcel, tariff exposure, how a price is built, pricing risks, and what is not sold.
 - **Two ways to get it:** a `report` CLI command and a download button in the dashboard.
 - **Reproducible:** the same catalogue, config and order time give the same bytes on every OS. A sample for a fixed order lives in `docs/`, and a test keeps it current.
