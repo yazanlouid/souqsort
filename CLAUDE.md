@@ -39,6 +39,7 @@ Always run Python through `uv run`. Never use `pip install` or a conda environme
 ## Project tools
 - `/verify` runs the same four checks as CI, each through `uv run --locked`, and ends with `verify: PASS` or `verify: FAIL (...)`.
 - `/add-market CODE "Name"` adds a market as data only (`data/raw/gcc_config.json` and `tests/`), with tests for its worked example, price column and delivery cells. Only you can start it; Claude never runs it on its own.
+- `/release VERSION "title"` releases a version: a release pull request (version, `uv.lock`, SPEC.md and README), then, after CI and your OK, the merge, an annotated tag and the GitHub release. Only you can start it; Claude never runs it on its own.
 - A `PostToolUse` hook (`.claude/settings.json` → `.claude/hooks/format_python.py`) runs `ruff format` on each `.py` file Claude writes or edits inside the project. It only formats, never lints. On a syntax error it exits 2 with ruff's message and the edit stands.
 - The `money-reviewer` subagent (`.claude/agents/money-reviewer.md`) checks a branch against the money rules in SPEC.md §3 and §7 (and §9 for the report): Decimal only, one rounding, FX, duty and VAT bases, de minimis, compliance, no market codes, no clock. It reads and runs the tests but never edits. Use it after changing `src/souqsort/pricing/`, `src/souqsort/report/`, `compliance.py`, `pipeline.py` or `data/raw/*.json`, before `/code-review`.
 
