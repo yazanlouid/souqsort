@@ -1211,10 +1211,12 @@ Branch `feat/m14-report-download`. Commits, in order:
 
 #### Release v0.3.0
 In a fresh Claude Code session on an up-to-date `main`: `/release 0.3.0 "the expansion report"`. The skill:
-1. makes the branch `chore/release-0.3.0`, bumps the version and runs `uv lock`;
+1. checks that `0.3.0` is higher than the latest tag, `v0.2.0`, and stops before creating anything if it is not; then makes the branch `chore/release-0.3.0`, bumps the version and runs `uv lock`;
 2. marks v0.3 done in this spec's header and §2, and updates the README's Status and roadmap, then waits for your OK;
 3. opens the pull request "Release v0.3.0" and waits for CI, then for your OK to merge;
-4. merges, tags `v0.3.0` with the message "v0.3.0: the expansion report", and creates the GitHub release with notes generated from the pull requests merged since `v0.2.0`.
+4. merges, tags the pull request's merge commit (not whatever `main` points to by then) as `v0.3.0` with the message "v0.3.0: the expansion report", and creates the GitHub release with notes generated from the pull requests merged since `v0.2.0`.
+
+Its `allowed-tools` names only the commands its steps run. `git push`, `git tag` and `gh pr merge` are left out, because a pattern cannot rule out a flag such as `--force`, so each asks you first.
 
 The sample report does not change: it names the data, not the version (§9.1).
 
