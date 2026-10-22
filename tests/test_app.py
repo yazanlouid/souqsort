@@ -845,21 +845,35 @@ def test_sidebar_has_the_report_download_button(
     assert offers[-1]["mime"] == "text/markdown"
 
 
-def test_report_button_is_right_under_the_search_box() -> None:
-    source = APP_PATH.read_text(encoding="utf-8")
-    controls = {"selectbox", "radio", "slider", "date_input", "time_input", "text_input"}
+def _sidebar_calls() -> list[str]:
+    """Every ``st.<name>(...)`` call in the app's ``with st.sidebar:`` block, in source order."""
+    tree = ast.parse(APP_PATH.read_text(encoding="utf-8"))
+    (sidebar,) = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.With) and ast.unparse(node.items[0].context_expr) == "st.sidebar"
+    ]
     # Sorted by line: ast.walk goes breadth first, and the button is nested in a try statement.
-    widgets = [
-        attr
-        for _, attr in sorted(
+    return [
+        name
+        for _, name in sorted(
             (node.lineno, node.func.attr)
-            for node in ast.walk(ast.parse(source))
+            for node in ast.walk(sidebar)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
-            and node.func.attr in controls | {"download_button"}
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "st"
         )
     ]
-    assert widgets[-2:] == ["text_input", "download_button"]
+
+
+def test_report_button_is_right_under_the_search_box() -> None:
+    calls = _sidebar_calls()
+
+    # After the search box, only the button, or the error that takes its place, of any kind of
+    # element: a widget added below the button would fail here.
+    after_search = calls[calls.index("text_input") + 1 :]
+    assert after_search == ["error", "download_button"]
 
 
 def test_thursday_noon_in_ksa_offers_the_sample_report(
