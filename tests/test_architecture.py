@@ -1,7 +1,8 @@
 """Guard rails for the non-negotiables.
 
 M7: no floats and no market codes in the code (SPEC §3 rules 1 and 4). M11: the report's
-templates only place text (§3 rule 8, §9.4.1).
+templates only place text (§3 rule 8, §9.4.1). M15: the delivery calendar does not depend on
+pricing.
 """
 
 import ast
@@ -150,6 +151,50 @@ def test_src_and_app_have_no_market_code_literals(raw_config: dict[str, Any]) ->
         return _market_code_literals(source, codes)
 
     assert _violations(_python_files(SRC_DIR, APP_DIR), find) == []
+
+
+# --- layering -----------------------------------------------------------------------------
+
+LOGISTICS_DIR = SRC_DIR / "souqsort" / "logistics"
+
+
+def _imports_of(source: str, package: str) -> Found:
+    """Every import of ``package`` or one of its modules."""
+    found: Found = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module is not None and node.level == 0:
+            names = [node.module]
+        else:
+            continue
+        found += [
+            (node.lineno, name)
+            for name in names
+            if name == package or name.startswith(f"{package}.")
+        ]
+    return found
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("from souqsort.pricing.customs import travels", ["souqsort.pricing.customs"]),
+        ("import souqsort.pricing", ["souqsort.pricing"]),
+        ("from souqsort.pricing import money", ["souqsort.pricing"]),
+        ("from souqsort.models import ShippingModel", []),
+        ("from souqsort.pricingx import thing", []),
+    ],
+)
+def test_import_guard_recognises_imports(source: str, expected: list[str]) -> None:
+    assert [name for _, name in _imports_of(source, "souqsort.pricing")] == expected
+
+
+def test_logistics_does_not_import_pricing() -> None:
+    def find(source: str) -> Found:
+        return _imports_of(source, "souqsort.pricing")
+
+    assert _violations(_python_files(LOGISTICS_DIR), find) == []
 
 
 # --- report templates ---------------------------------------------------------------------

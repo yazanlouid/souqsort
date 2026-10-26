@@ -25,7 +25,6 @@ from souqsort.pricing.customs import (
     assess_duty,
     de_minimis_applies,
     parcel_fee_due,
-    require_shipping,
     travels,
 )
 from souqsort.pricing.landed_cost import price_product
@@ -225,17 +224,6 @@ def test_duty_assessment_is_frozen() -> None:
 
 
 BAD_SHIPPING = ["bulk", "Parcel", "", None]
-
-
-@pytest.mark.parametrize("shipping", BAD_SHIPPING)
-def test_require_shipping_rejects_anything_else(shipping: Any) -> None:
-    with pytest.raises(ValueError, match="one of consolidated, parcel"):
-        require_shipping(shipping)
-
-
-@pytest.mark.parametrize("shipping", ["consolidated", "parcel"])
-def test_require_shipping_accepts_the_two_models(shipping: Any) -> None:
-    require_shipping(shipping)
 
 
 @pytest.mark.parametrize("shipping", BAD_SHIPPING)

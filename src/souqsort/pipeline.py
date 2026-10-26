@@ -7,8 +7,14 @@ from decimal import Decimal, DecimalException
 
 from souqsort.compliance import ExcludedProduct, screen_products
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
-from souqsort.models import FxTable, GccConfig, MarketConfig, Product, ShippingModel
-from souqsort.pricing.customs import require_shipping
+from souqsort.models import (
+    FxTable,
+    GccConfig,
+    MarketConfig,
+    Product,
+    ShippingModel,
+    require_shipping,
+)
 from souqsort.pricing.landed_cost import PriceQuote, price_product
 from souqsort.pricing.money import require_decimal
 

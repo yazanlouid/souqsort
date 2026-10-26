@@ -2,11 +2,16 @@
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import assert_never, get_args
+from typing import assert_never
 
-from souqsort.models import DeMinimisRule, MarketConfig, Product, ProductAttributes, ShippingModel
-
-SHIPPING_MODELS: tuple[ShippingModel, ...] = get_args(ShippingModel)
+from souqsort.models import (
+    DeMinimisRule,
+    MarketConfig,
+    Product,
+    ProductAttributes,
+    ShippingModel,
+    require_shipping,
+)
 
 
 @dataclass(frozen=True)
@@ -19,13 +24,6 @@ class DutyAssessment:
 
     rate: Decimal
     waived: bool
-
-
-def require_shipping(shipping: object) -> None:
-    """Raise ``ValueError`` unless ``shipping`` is one of ``ShippingModel``'s values."""
-    if shipping not in SHIPPING_MODELS:
-        allowed = ", ".join(SHIPPING_MODELS)
-        raise ValueError(f"shipping must be one of {allowed}, got {shipping!r}")
 
 
 def travels(product: Product) -> bool:

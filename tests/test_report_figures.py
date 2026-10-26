@@ -16,14 +16,13 @@ from helpers import (
     only_products,
 )
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
-from souqsort.models import Catalogue, GccConfig, ShippingModel
+from souqsort.models import SHIPPING_MODELS, Catalogue, GccConfig, ShippingModel
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     LocalisationError,
     duty_adjustment_from_points,
     localise_and_summarise,
 )
-from souqsort.pricing.customs import SHIPPING_MODELS
 from souqsort.pricing.landed_cost import PriceQuote
 from souqsort.pricing.money import round_minor
 from souqsort.report import build_report, figures

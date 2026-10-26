@@ -17,7 +17,7 @@ from souqsort.compliance import ExcludedProduct
 from souqsort.display import DisplayRow, display_rows, duty_text, parcel_fee_note
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
 from souqsort.logistics.calendar import in_market_time, to_market_time
-from souqsort.models import Catalogue, GccConfig, MarketConfig, ShippingModel
+from souqsort.models import SHIPPING_MODELS, Catalogue, GccConfig, MarketConfig, ShippingModel
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     LocalisationError,
@@ -25,7 +25,6 @@ from souqsort.pipeline import (
     find_market,
     localise_and_summarise,
 )
-from souqsort.pricing.customs import SHIPPING_MODELS
 from souqsort.report import build_report, render_report
 
 DEFAULT_CATALOGUE = Path("data/raw/global_products.json")

@@ -55,8 +55,16 @@ CategoryName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
 AttributeName = Literal["contains_alcohol", "contains_pork", "contains_lithium_battery"]
 # How an order travels: a scenario parameter, like the duty adjustment; the config never stores it.
 ShippingModel = Literal["consolidated", "parcel"]
+SHIPPING_MODELS: tuple[ShippingModel, ...] = get_args(ShippingModel)
 # Whether a CIF equal to the de minimis threshold still qualifies ("at_or_below") or not.
 DeMinimisApplies = Literal["below", "at_or_below"]
+
+
+def require_shipping(shipping: object) -> None:
+    """Raise ``ValueError`` unless ``shipping`` is one of ``ShippingModel``'s values."""
+    if shipping not in SHIPPING_MODELS:
+        allowed = ", ".join(SHIPPING_MODELS)
+        raise ValueError(f"shipping must be one of {allowed}, got {shipping!r}")
 
 
 class _Model(BaseModel):

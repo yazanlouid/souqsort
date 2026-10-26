@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from souqsort.models import MarketConfig, ShippingModel, Weekday
-from souqsort.pricing.customs import require_shipping
+from souqsort.models import MarketConfig, ShippingModel, Weekday, require_shipping
 
 # Config day names as ``date.weekday()`` numbers.
 _WEEKDAY_NUMBER: dict[Weekday, int] = {

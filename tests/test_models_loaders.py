@@ -11,7 +11,16 @@ from pydantic import ValidationError
 
 from helpers import NO_ATTRIBUTES, SAMPLE_PRODUCT_COUNT
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
-from souqsort.models import AttributeName, GccConfig, Product, ProductAttributes, ProductName
+from souqsort.models import (
+    SHIPPING_MODELS,
+    AttributeName,
+    GccConfig,
+    Product,
+    ProductAttributes,
+    ProductName,
+    ShippingModel,
+    require_shipping,
+)
 
 WriteJson = Callable[[Any], Path]
 Raw = dict[str, Any]
@@ -840,6 +849,24 @@ def test_bad_business_day_count_rejected(
 ) -> None:
     _ksa(raw_config)["logistics"][field] = value
     _reject_config(write_json, raw_config, field)
+
+
+# --- ShippingModel ------------------------------------------------------------------------
+
+
+def test_shipping_models_are_the_literal_s_values() -> None:
+    assert SHIPPING_MODELS == get_args(ShippingModel) == ("consolidated", "parcel")
+
+
+@pytest.mark.parametrize("shipping", ["bulk", "Parcel", "", None])
+def test_require_shipping_rejects_anything_else(shipping: Any) -> None:
+    with pytest.raises(ValueError, match="one of consolidated, parcel"):
+        require_shipping(shipping)
+
+
+@pytest.mark.parametrize("shipping", ["consolidated", "parcel"])
+def test_require_shipping_accepts_the_two_models(shipping: Any) -> None:
+    require_shipping(shipping)
 
 
 # --- GccConfig: market code from the dict key ---------------------------------------------

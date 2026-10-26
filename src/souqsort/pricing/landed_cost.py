@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
-from souqsort.models import FxTable, MarketConfig, Product, ShippingModel
-from souqsort.pricing.customs import assess_duty, require_shipping
+from souqsort.models import FxTable, MarketConfig, Product, ShippingModel, require_shipping
+from souqsort.pricing.customs import assess_duty
 from souqsort.pricing.fx import convert
 from souqsort.pricing.money import charm_up, require_decimal, round_minor
 

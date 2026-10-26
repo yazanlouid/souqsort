@@ -8,6 +8,7 @@ from decimal import Decimal, Inexact, localcontext
 from souqsort.compliance import ExcludedProduct
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
 from souqsort.models import (
+    SHIPPING_MODELS,
     Catalogue,
     DeMinimisRule,
     GccConfig,
@@ -20,7 +21,7 @@ from souqsort.pipeline import (
     duty_adjustment_from_points,
     localise_and_summarise,
 )
-from souqsort.pricing.customs import SHIPPING_MODELS, parcel_fee_due, travels
+from souqsort.pricing.customs import parcel_fee_due, travels
 from souqsort.pricing.landed_cost import PriceQuote
 
 # The tariff rises the report stress-tests, in whole percentage points (§9.2.3).
