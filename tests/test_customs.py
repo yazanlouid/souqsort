@@ -24,6 +24,7 @@ from souqsort.pricing.customs import (
     DutyAssessment,
     assess_duty,
     de_minimis_applies,
+    parcel_fee_due,
     require_shipping,
     travels,
 )
@@ -251,6 +252,39 @@ def test_price_product_rejects_an_unknown_shipping_model(
 ) -> None:
     with pytest.raises(ValueError, match="shipping"):
         price_product(products[HEADPHONES], ksa, fx, Decimal("0"), shipping)
+
+
+# --- parcel_fee_due (SPEC §7.10.1 rule 6, M15) ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("code", "shipping", "anything_travels", "expected"),
+    [
+        ("KSA", "parcel", True, Decimal("15.00")),
+        ("KSA", "consolidated", True, None),
+        ("KSA", "parcel", False, None),  # nothing travels, so no parcel is sent
+        ("UAE", "parcel", True, None),
+        ("KWT", "parcel", True, None),
+    ],
+)
+def test_parcel_fee_due(
+    config: GccConfig,
+    code: str,
+    shipping: Any,
+    anything_travels: bool,
+    expected: Decimal | None,
+) -> None:
+    fee = parcel_fee_due(config.markets[code], shipping, anything_travels)
+
+    assert fee == expected
+    if fee is not None:
+        assert str(fee) == "15.00"  # exactly as the config writes it
+
+
+@pytest.mark.parametrize("shipping", BAD_SHIPPING)
+def test_parcel_fee_due_rejects_an_unknown_shipping_model(ksa: MarketConfig, shipping: Any) -> None:
+    with pytest.raises(ValueError, match="one of consolidated, parcel"):
+        parcel_fee_due(ksa, shipping, True)
 
 
 # --- a product that weighs nothing (SPEC §7.7.2 rule 4, M15) --------------------------------

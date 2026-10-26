@@ -235,11 +235,21 @@ def de_minimis_sentence(comparison: ShippingComparison) -> str:
 
 
 def shipping_market_sentences(comparison: ShippingComparison) -> str:
-    """A market's parcel subsection: its rule, then its counts, or that nothing is for sale.
+    """A market's parcel subsection: its rule and fee, then its counts, or that nothing is
+    for sale.
 
-    The waived count is given only when the market has a de minimis rule.
+    The fee is given only when the market has one, and the waived count only when it has a
+    de minimis rule.
     """
     sentences = [de_minimis_sentence(comparison)]
+    if comparison.parcel_fee is not None:
+        fee = money_text(
+            comparison.parcel_fee, comparison.minor_units, figure=f"{comparison.code}: parcel fee"
+        )
+        sentences.append(
+            f"Each parcel also pays a {fee} {one_line(comparison.currency)} customs fee, "
+            "included in the prices below."
+        )
     if not comparison.products:
         sentences.append("No products are for sale.")
         return " ".join(sentences)
@@ -265,6 +275,14 @@ def shipping_sentence(comparisons: Sequence[ShippingComparison]) -> str:
         for position, c in enumerate(selling)
     ]
     return f"Direct parcels are cheaper than consolidated imports for {join_list(phrases)}."
+
+
+def parcel_delivery_sentence(comparisons: Sequence[ShippingComparison]) -> str:
+    """When direct parcels arrive: every market, in config order, even one that sells nothing."""
+    deliveries = [
+        f"{date_text(c.parcel_delivery.delivery_date)} in {one_line(c.code)}" for c in comparisons
+    ]
+    return f"For this order, direct parcels arrive on {join_list(deliveries)}."
 
 
 def tariff_sentence(tariffs: Sequence[TariffExposure]) -> str:
@@ -312,15 +330,15 @@ def build_up_sentences(
 ) -> list[str]:
     """The sentences of "How a price is built": the sample product, then its parcel change.
 
-    The change is ``parcel / consolidated - 1`` of the shelf prices, every market in config
-    order (each sells the sample product).
+    The change compares one-item orders, ``parcel order / consolidated - 1``, so it counts the
+    parcel fee; every market in config order (each sells the sample product).
     """
     if sample is None:
         return ["No product is sold in every market, so there is no price to break down."]
     changes = [
         (
             signed_percent_text(
-                b.parcel.shelf_price / b.consolidated.shelf_price - 1,
+                b.parcel_order / b.consolidated.shelf_price - 1,
                 figure=f"{b.code}: {sample.sku} parcel change",
             ),
             one_line(b.code),
@@ -331,8 +349,8 @@ def build_up_sentences(
     return [
         f"{one_line(sample.name_en)} ({one_line(sample.sku)}) is the first product every "
         "market sells.",
-        "Shipped as a direct parcel instead of a consolidated import, its price changes by "
-        f"{join_list(phrases)}.",
+        "Ordered on its own as a direct parcel instead of a consolidated import, its total "
+        f"changes by {join_list(phrases)}.",
     ]
 
 
@@ -399,7 +417,7 @@ def _parcel_row(comparison: ShippingComparison, product: ProductComparison) -> d
         "consolidated": money_text(
             product.consolidated_price, minor_units, figure=f"{figure} consolidated price"
         ),
-        "parcel": money_text(product.parcel_price, minor_units, figure=f"{figure} parcel price"),
+        "parcel": money_text(product.parcel_order, minor_units, figure=f"{figure} parcel order"),
         "change": signed_percent_text(product.change_pct, figure=f"{figure} parcel change"),
         "duty": (
             WAIVED
@@ -465,6 +483,10 @@ def _build_up_market(build_up: PriceBuildUp) -> dict[str, ContextValue]:
     parcel = build_up_column(build_up.parcel, build_up.minor_units, figure=f"{figure} parcel")
     *import_steps, import_shelf = consolidated
     *parcel_steps, parcel_shelf = parcel
+    # The fee rows appear only when the one-item parcel order pays a fee: the template tests
+    # whether fee.parcel is empty.
+    fee = build_up.parcel_fee
+    minor_units = build_up.minor_units
     return {
         "heading": one_line(f"{build_up.code} ({build_up.currency})"),
         "rows": [
@@ -474,6 +496,16 @@ def _build_up_market(build_up: PriceBuildUp) -> dict[str, ContextValue]:
             )
         ],
         "shelf": {"consolidated": import_shelf, "parcel": parcel_shelf},
+        "fee": {
+            "consolidated": _NO_VALUE,
+            "parcel": "" if fee is None else money_text(fee, minor_units, figure=f"{figure} fee"),
+        },
+        "one_item": {
+            "consolidated": import_shelf,
+            "parcel": money_text(
+                build_up.parcel_order, minor_units, figure=f"{figure} one-item parcel order"
+            ),
+        },
     }
 
 
@@ -512,7 +544,7 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
     """
     ordered_at = report.ordered_at.astimezone(UTC)
     markets = markets_sentences(report.markets)
-    shipping = shipping_sentence(report.shipping)
+    shipping = [shipping_sentence(report.shipping), parcel_delivery_sentence(report.shipping)]
     tariffs = tariff_sentence(report.tariffs)
     build_up = " ".join(build_up_sentences(report.sample_product, report.build_ups))
     risks = pricing_risks_sentence(report.pricing_risks)
@@ -524,13 +556,13 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
             "fx_as_of": report.fx_as_of.isoformat(),
             "catalogue_version": one_line(report.catalogue_version),
         },
-        "summary": [*markets, shipping, tariffs, build_up, risks, not_sold],
+        "summary": [*markets, *shipping, tariffs, build_up, risks, not_sold],
         "markets": {
             "sentences": " ".join(markets),
             "rows": [_market_row(market) for market in report.markets],
         },
         "shipping": {
-            "sentence": shipping,
+            "sentences": " ".join(shipping),
             "markets": [_shipping_market(comparison) for comparison in report.shipping],
         },
         "tariffs": {

@@ -15,6 +15,7 @@ from helpers import (
     VANILLA,
     only_products,
 )
+from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
 from souqsort.models import Catalogue, GccConfig, ShippingModel
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
@@ -187,6 +188,9 @@ def test_an_order_time_beyond_the_calendar_raises_localisation_error(
         build_report(catalogue, config, datetime(9999, 12, 31, 23, 0, tzinfo=UTC))
 
 
+LICENCE = "DIGI-LIC-050"
+
+
 # --- consolidated or parcel (§9.2.2) ------------------------------------------------------
 
 # SPEC §7.9.1 and §7.9.2 for the products each market sells, in catalogue order:
@@ -275,7 +279,7 @@ def test_the_product_rows_number_34(report: ExpansionReport) -> None:
 
 @pytest.mark.parametrize(
     ("code", "counts"),
-    [("KSA", (6, 4, 1, 9)), ("UAE", (5, 5, 2, 9)), ("KWT", (0, 6, 5, 0))],
+    [("KSA", (3, 7, 1, 9)), ("UAE", (5, 5, 2, 9)), ("KWT", (0, 6, 5, 0))],
 )
 def test_counts_of_the_parcel_table(
     report: ExpansionReport, code: str, counts: tuple[int, int, int, int]
@@ -285,10 +289,63 @@ def test_counts_of_the_parcel_table(
     assert (market.cheaper, market.dearer, market.unchanged, market.waived) == counts
 
 
-def test_change_is_the_full_precision_ratio(report: ExpansionReport) -> None:
+def test_change_is_the_full_precision_ratio_of_one_item_orders(report: ExpansionReport) -> None:
     for market in report.shipping:
         for product in market.products:
-            assert product.change_pct == product.parcel_price / product.consolidated_price - 1
+            assert product.change_pct == product.parcel_order / product.consolidated_price - 1
+
+
+# SPEC §9.2.2: the market's fee and when its parcels arrive, for the order of §9.5.
+PARCEL_TERMS: dict[str, tuple[Decimal | None, date]] = {
+    "KSA": (Decimal("15.00"), date(2026, 10, 21)),
+    "UAE": (None, date(2026, 10, 20)),
+    "KWT": (None, date(2026, 10, 21)),
+}
+
+
+@pytest.mark.parametrize("code", list(PARCEL_TERMS))
+def test_each_market_s_fee_and_parcel_delivery(
+    report: ExpansionReport, config: GccConfig, code: str
+) -> None:
+    market = _shipping(report, code)
+    fee, delivered = PARCEL_TERMS[code]
+
+    assert market.parcel_fee == fee
+    assert market.parcel_delivery == estimate_delivery(
+        REPORT_ORDERED_AT, config.markets[code], "parcel"
+    )
+    assert market.parcel_delivery.delivery_date == delivered
+
+
+@pytest.mark.parametrize("code", list(PRICE_LISTS))
+def test_a_parcel_order_is_the_shelf_price_plus_the_fee_when_it_travels(
+    report: ExpansionReport, code: str
+) -> None:
+    fee = PARCEL_TERMS[code][0]
+    for product in _shipping(report, code).products:
+        expected = None if product.sku == LICENCE else fee
+        assert product.parcel_fee == expected, product.sku
+        assert product.parcel_order == product.parcel_price + (expected or 0)
+
+
+def test_ksa_parcel_orders_cost_the_price_list_plus_15(report: ExpansionReport) -> None:
+    orders = {p.sku: p.parcel_order for p in _shipping(report, "KSA").products}
+
+    assert orders["ELEC-HP-001"] == Decimal("675.95")
+    assert orders["ELEC-CHG-002"] == Decimal("194.95")  # dearer than 184.95 consolidated
+    assert orders["BEAU-LIP-040"] == Decimal("30.95")
+    assert orders[LICENCE] == Decimal("340.95")  # it never travels, so no fee
+
+
+def test_a_market_that_sells_nothing_still_has_its_fee(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    ksa = _shipping(report, "KSA")
+
+    assert ksa.products == ()
+    assert ksa.parcel_fee == Decimal("15.00")
+    assert ksa.parcel_delivery.delivery_date == date(2026, 10, 21)
 
 
 def test_parcel_duty_rate_is_the_parcel_quote_s(report: ExpansionReport) -> None:
@@ -328,20 +385,27 @@ def test_comparisons_come_from_localise_and_summarise(
         ]
 
 
-def test_counts_compare_prices_not_the_rounded_change() -> None:
-    # +0.04% rounds to 0.0%, but the parcel is still dearer.
+def test_counts_compare_one_item_orders_not_the_rounded_change() -> None:
+    # +0.04% rounds to 0.0%, but the parcel order is still dearer.
     comparison = ShippingComparison(
         code="A",
         name="A name",
         currency="XXX",
         minor_units=2,
         de_minimis=None,
+        parcel_fee=Decimal("10.00"),
+        parcel_delivery=DeliveryEstimate(
+            ordered_at_local=REPORT_ORDERED_AT,
+            dispatch_date=date(2026, 10, 15),
+            delivery_date=date(2026, 10, 21),
+        ),
         products=(
             ProductComparison(
                 "SKU-1",
                 "One",
                 Decimal("2500.00"),
-                Decimal("2501.00"),
+                Decimal("2491.00"),
+                Decimal("10.00"),
                 Decimal("0.0004"),
                 Decimal("0.05"),
                 False,
@@ -349,6 +413,7 @@ def test_counts_compare_prices_not_the_rounded_change() -> None:
         ),
     )
 
+    # The shelf price is cheaper, but the one-item order, with the fee, is dearer.
     assert (comparison.cheaper, comparison.dearer, comparison.unchanged) == (0, 1, 0)
 
 
@@ -374,8 +439,10 @@ def test_pairs_of_different_products_are_rejected(catalogue: Catalogue, config: 
         for sku in ("ELEC-HP-001", "ELEC-CHG-002")
     )
 
+    products = {product.sku: product for product in catalogue.products}
+
     with pytest.raises(ValueError, match="parcel view has ELEC-CHG-002 where ELEC-HP-001"):
-        figures._shipping(market, consolidated, parcel)
+        figures._shipping(market, consolidated, parcel, products, REPORT_ORDERED_AT)
 
 
 # --- tariff exposure (§9.2.3) -------------------------------------------------------------
@@ -543,6 +610,30 @@ def test_the_six_columns_of_the_build_up(report: ExpansionReport, code: str) -> 
         assert shown == tuple(Decimal(amount) for amount in expected)
     assert build_up.consolidated.shipping == "consolidated"
     assert build_up.parcel.shipping == "parcel"
+
+
+def test_only_ksa_s_build_up_pays_a_fee(report: ExpansionReport) -> None:
+    assert [(b.code, b.parcel_fee) for b in report.build_ups] == [
+        ("KSA", Decimal("15.00")),
+        ("UAE", None),
+        ("KWT", None),
+    ]
+    assert [b.parcel_order for b in report.build_ups] == [
+        Decimal("675.95"),
+        Decimal("589.99"),
+        Decimal("49.950"),
+    ]
+
+
+def test_a_sample_product_that_does_not_travel_pays_no_fee(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    report = build_report(only_products(catalogue, LICENCE), config, REPORT_ORDERED_AT)
+
+    assert [(b.consolidated.sku, b.parcel_fee) for b in report.build_ups] == [(LICENCE, None)] * 3
+    assert [b.parcel_order for b in report.build_ups] == [
+        b.parcel.shelf_price for b in report.build_ups
+    ]
 
 
 def test_duty_is_waived_on_the_sample_parcels_in_ksa_and_uae(report: ExpansionReport) -> None:
@@ -787,4 +878,4 @@ def test_a_build_up_names_a_view_missing_the_sample_product(
     )
 
     with pytest.raises(ValueError, match=r"^KSA: the parcel view has no ELEC-HP-001$"):
-        figures._build_up(views, HEADPHONES)
+        figures._build_up(views, next(p for p in catalogue.products if p.sku == HEADPHONES))

@@ -388,6 +388,46 @@ def test_delivery_column_follows_the_shipping_model(
     assert {cells[DELIVERY] for cells in rows.values()} == {delivery}
 
 
+KSA_FEE_NOTE = "Each parcel order also pays a customs fee of 15.00 SAR at checkout."
+
+
+def test_a_ksa_parcel_run_names_the_fee_before_what_is_not_sold(
+    run: Callable[..., Result],
+) -> None:
+    result = run(*PRICE_KSA, *THU_EVENING, "--shipping", "parcel")
+
+    assert result.code == 0
+    _, _, rows = _table_lines(result.out)
+    assert f"{rows[-1]}\n\n{KSA_FEE_NOTE}\n\nNot sold in KSA (2):\n" in result.out
+
+
+@pytest.mark.parametrize(
+    ("market", "shipping"),
+    [
+        ("KSA", "consolidated"),
+        ("UAE", "parcel"),
+        ("UAE", "consolidated"),
+        ("KWT", "parcel"),
+        ("KWT", "consolidated"),
+    ],
+)
+def test_no_fee_line_elsewhere(run: Callable[..., Result], market: str, shipping: str) -> None:
+    result = run(*_price(market), *THU_EVENING, "--shipping", shipping)
+
+    assert result.code == 0
+    assert "customs fee" not in result.out
+
+
+def test_shipping_help_names_the_fee_and_the_transit_time(run: Callable[..., Result]) -> None:
+    result = run("price", "--help")
+
+    assert (
+        "shipping model: consolidated (one commercial import, no de minimis) or parcel "
+        "(each order cleared on its own, with its own freight rate, transit time and customs "
+        "fee; duty-free under the market's de minimis threshold) (default: consolidated)"
+    ) in " ".join(result.out.split())
+
+
 def test_shipping_defaults_to_consolidated(run: Callable[..., Result]) -> None:
     default = run(*PRICE_KSA, *THU_EVENING)
     explicit = run(*PRICE_KSA, *THU_EVENING, "--shipping", "consolidated")

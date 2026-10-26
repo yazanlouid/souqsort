@@ -1,5 +1,6 @@
 """The expansion report's figures: everything ``Decimal``, nothing formatted (SPEC §9.2)."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal, Inexact, localcontext
@@ -19,7 +20,7 @@ from souqsort.pipeline import (
     duty_adjustment_from_points,
     localise_and_summarise,
 )
-from souqsort.pricing.customs import SHIPPING_MODELS
+from souqsort.pricing.customs import SHIPPING_MODELS, parcel_fee_due, travels
 from souqsort.pricing.landed_cost import PriceQuote
 
 # The tariff rises the report stress-tests, in whole percentage points (§9.2.3).
@@ -68,9 +69,12 @@ class MarketOverview:
 
 @dataclass(frozen=True)
 class ProductComparison:
-    """One product for sale, priced as a consolidated import and as a direct parcel.
+    """One product for sale as a one-item order: a consolidated import and a direct parcel.
 
-    ``change_pct`` is the full-precision ``parcel_price / consolidated_price - 1``.
+    The consolidated order costs ``consolidated_price``. The parcel order costs
+    ``parcel_price``, the parcel shelf price, plus ``parcel_fee``, the customs fee it pays at
+    checkout (``None`` when the market has none or the product does not travel).
+    ``change_pct`` is the full-precision ``parcel_order / consolidated_price - 1``.
     ``parcel_duty_rate`` and ``parcel_duty_waived`` are the parcel quote's.
     """
 
@@ -78,17 +82,25 @@ class ProductComparison:
     name_en: str
     consolidated_price: Decimal
     parcel_price: Decimal
+    parcel_fee: Decimal | None
     change_pct: Decimal
     parcel_duty_rate: Decimal
     parcel_duty_waived: bool
+
+    @property
+    def parcel_order(self) -> Decimal:
+        """What the one-item parcel order costs at checkout, exactly."""
+        return self.parcel_price + (self.parcel_fee or 0)
 
 
 @dataclass(frozen=True)
 class ShippingComparison:
     """One market's products for sale in both shipping models, in catalogue order.
 
-    A product is cheaper, dearer or unchanged as a parcel by comparing the two shelf prices
-    themselves, never the rounded change.
+    A product is cheaper, dearer or unchanged as a parcel by comparing the two one-item
+    orders themselves, never the rounded change. ``parcel_fee`` is the fee the market charges
+    a parcel in which something travels, and ``parcel_delivery`` is when its parcels arrive;
+    a market that sells nothing still has both.
     """
 
     code: str
@@ -96,19 +108,21 @@ class ShippingComparison:
     currency: str
     minor_units: int
     de_minimis: DeMinimisRule | None
+    parcel_fee: Decimal | None
+    parcel_delivery: DeliveryEstimate
     products: tuple[ProductComparison, ...]
 
     @property
     def cheaper(self) -> int:
-        return sum(1 for p in self.products if p.parcel_price < p.consolidated_price)
+        return sum(1 for p in self.products if p.parcel_order < p.consolidated_price)
 
     @property
     def dearer(self) -> int:
-        return sum(1 for p in self.products if p.parcel_price > p.consolidated_price)
+        return sum(1 for p in self.products if p.parcel_order > p.consolidated_price)
 
     @property
     def unchanged(self) -> int:
-        return sum(1 for p in self.products if p.parcel_price == p.consolidated_price)
+        return sum(1 for p in self.products if p.parcel_order == p.consolidated_price)
 
     @property
     def waived(self) -> int:
@@ -143,6 +157,7 @@ class PriceBuildUp:
     """The sample product's two quotes in one market, at today's duty rates.
 
     The quotes keep full precision; the report rounds their components for display only.
+    ``parcel_fee`` is what the one-item parcel order adds at checkout, or ``None``.
     """
 
     code: str
@@ -150,6 +165,12 @@ class PriceBuildUp:
     minor_units: int
     consolidated: PriceQuote
     parcel: PriceQuote
+    parcel_fee: Decimal | None
+
+    @property
+    def parcel_order(self) -> Decimal:
+        """What the one-item parcel order costs at checkout, exactly."""
+        return self.parcel.shelf_price + (self.parcel_fee or 0)
 
 
 @dataclass(frozen=True)
@@ -252,22 +273,33 @@ def _overview(
 
 
 def _shipping(
-    market: MarketConfig, consolidated: LocalisedCatalogue, parcel: LocalisedCatalogue
+    market: MarketConfig,
+    consolidated: LocalisedCatalogue,
+    parcel: LocalisedCatalogue,
+    products: Mapping[str, Product],
+    ordered_at: datetime,
 ) -> ShippingComparison:
-    """Both views are of the same products at today's duty rates, one per shipping model."""
-    products: list[ProductComparison] = []
+    """Both views are of the same products at today's duty rates, one per shipping model.
+
+    Each product is compared as a one-item order (§7.10.1 rule 10), so a parcel pays the fee
+    when the product travels. ``products`` finds a product by its SKU.
+    """
+    comparisons: list[ProductComparison] = []
     for by_import, by_parcel in zip(consolidated.items, parcel.items, strict=True):
         # strict=True checks the lengths only; the pairs must also be the same product.
         if by_import.sku != by_parcel.sku:
             raise ValueError(f"parcel view has {by_parcel.sku} where {by_import.sku} is expected")
         import_price, parcel_quote = by_import.quote.shelf_price, by_parcel.quote
-        products.append(
+        fee = parcel_fee_due(market, "parcel", travels(products[by_import.sku]))
+        parcel_order = parcel_quote.shelf_price + (fee or 0)
+        comparisons.append(
             ProductComparison(
                 sku=by_import.sku,
                 name_en=by_import.name_en,
                 consolidated_price=import_price,
                 parcel_price=parcel_quote.shelf_price,
-                change_pct=parcel_quote.shelf_price / import_price - 1,
+                parcel_fee=fee,
+                change_pct=parcel_order / import_price - 1,
                 parcel_duty_rate=parcel_quote.duty_rate,
                 parcel_duty_waived=parcel_quote.duty_waived,
             )
@@ -278,7 +310,11 @@ def _shipping(
         currency=market.currency.code,
         minor_units=market.currency.minor_units,
         de_minimis=market.customs.de_minimis,
-        products=tuple(products),
+        parcel_fee=parcel_fee_due(market, "parcel", anything_travels=True),
+        # localise_and_summarise has already made a parcel estimate for the same order and
+        # market, so it cannot fail here.
+        parcel_delivery=estimate_delivery(ordered_at, market, "parcel"),
+        products=tuple(comparisons),
     )
 
 
@@ -313,12 +349,13 @@ def _sample_product(products: list[Product], views: list[_MarketViews]) -> Sampl
     return None
 
 
-def _build_up(view: _MarketViews, sku: str) -> PriceBuildUp:
-    """``sku``'s two quotes in one market, taken from the views already localised.
+def _build_up(view: _MarketViews, product: Product) -> PriceBuildUp:
+    """The product's two quotes in one market, taken from the views already localised.
 
     Raises ``ValueError`` naming the market, the shipping model and the SKU if a view does not
     sell it.
     """
+    sku = product.sku
     by_model: tuple[tuple[ShippingModel, LocalisedCatalogue], ...] = (
         ("consolidated", view.consolidated),
         ("parcel", view.parcel),
@@ -336,6 +373,7 @@ def _build_up(view: _MarketViews, sku: str) -> PriceBuildUp:
         minor_units=view.market.currency.minor_units,
         consolidated=consolidated,
         parcel=parcel,
+        parcel_fee=parcel_fee_due(view.market, "parcel", travels(product)),
     )
 
 
@@ -401,6 +439,7 @@ def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) 
         _localise(catalogue.products, config, market, ordered_at)
         for market in config.markets.values()
     ]
+    by_sku = {product.sku: product for product in catalogue.products}
     sample = _sample_product(catalogue.products, views)
     return ExpansionReport(
         ordered_at=ordered_at,
@@ -409,13 +448,18 @@ def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) 
         catalogue_version=catalogue.catalogue_version,
         product_count=len(catalogue.products),
         markets=tuple(_overview(view.market, view.consolidated, ordered_at) for view in views),
-        shipping=tuple(_shipping(view.market, view.consolidated, view.parcel) for view in views),
+        shipping=tuple(
+            _shipping(view.market, view.consolidated, view.parcel, by_sku, ordered_at)
+            for view in views
+        ),
         tariffs=tuple(
             exposure
             for market in config.markets.values()
             for exposure in _tariffs(catalogue.products, config, market, ordered_at)
         ),
         sample_product=sample,
-        build_ups=() if sample is None else tuple(_build_up(view, sample.sku) for view in views),
+        build_ups=(
+            () if sample is None else tuple(_build_up(view, by_sku[sample.sku]) for view in views)
+        ),
         pricing_risks=tuple(risk for view in views for risk in _pricing_risks(view)),
     )

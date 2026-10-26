@@ -11,6 +11,7 @@ from souqsort.display import (
     display_summary,
     excluded_grid_rows,
     grid_rows,
+    parcel_fee_note,
     search_products,
 )
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
@@ -64,8 +65,8 @@ with st.sidebar:
         format_func=SHIPPING_LABELS.__getitem__,
         help=(
             "Consolidated: orders travel as one commercial import, so de minimis never applies. "
-            "Direct parcel: each order is cleared on its own; under the market's threshold it "
-            "pays no duty, but parcel freight costs more per kg."
+            "Direct parcel: each order is cleared on its own, with its own freight rate, transit "
+            "time and customs fee; under the market's threshold it pays no duty."
         ),
         key="shipping",
     )
@@ -141,6 +142,7 @@ try:
     headline = display_summary(summary)
     rows = grid_rows(search_products(localised.items, query))
     not_sold = excluded_grid_rows(localised.excluded)
+    fee_note = parcel_fee_note(market) if shipping == "parcel" else None
 except LocalisationError as exc:
     st.error(str(exc))
     st.stop()
@@ -191,6 +193,9 @@ st.dataframe(
         "Flags": st.column_config.TextColumn(width="medium"),
     },
 )
+
+if fee_note is not None:
+    st.caption(fee_note)
 
 if summary.product_count == 0 and not localised.excluded:
     st.info("The catalogue has no products.")

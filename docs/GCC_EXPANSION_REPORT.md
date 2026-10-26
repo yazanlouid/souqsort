@@ -8,9 +8,10 @@ An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the co
 
 - On average, shelf prices sit 24.7% above the catalogue price in UAE, 33.1% in KWT and 41.2% in KSA.
 - For this order, delivery is on Thu 2026-10-22 in KSA, Wed 2026-10-21 in UAE and Thu 2026-10-22 in KWT.
-- Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
+- Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
+- For this order, direct parcels arrive on Wed 2026-10-21 in KSA, Tue 2026-10-20 in UAE and Wed 2026-10-21 in KWT.
 - A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 1.8% for direct parcels in KSA; 9.3% and 2.4% in UAE; and 7.6% and 9.4% in KWT.
-- Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT.
+- Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Ordered on its own as a direct parcel instead of a consolidated import, its total changes by -1.6% in KSA, -3.8% in UAE and +2.0% in KWT.
 - The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) and GROC-TEA-060 in KWT (+20.0%).
 - Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2.
 
@@ -26,25 +27,25 @@ On average, shelf prices sit 24.7% above the catalogue price in UAE, 33.1% in KW
 
 ## Consolidated or parcel
 
-Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
+Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT. For this order, direct parcels arrive on Wed 2026-10-21 in KSA, Tue 2026-10-20 in UAE and Wed 2026-10-21 in KWT.
 
 ### KSA (Saudi Arabia)
 
-No duty on a parcel whose CIF is below 1,000.00 SAR. Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1. Duty is waived on 9 of them.
+No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR customs fee, included in the prices below. Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1. Duty is waived on 9 of them.
 
 | SKU | Product | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel duty |
 |---|---|---:|---:|---:|---|
-| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 686.95 | 660.95 | -3.8% | waived |
-| ELEC-CHG-002 | 65W USB-C Charger | 184.95 | 179.95 | -2.7% | waived |
-| FASH-BAG-014 | Leather Crossbody Bag | 594.95 | 546.95 | -8.1% | waived |
-| FASH-SCF-015 | Silk Scarf | 293.95 | 264.95 | -9.9% | waived |
-| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 593.95 | 875.95 | +47.5% | waived |
-| HOME-KTL-030 | Electric Kettle 1.7 L | 237.95 | 249.95 | +5.0% | waived |
-| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 4,144.95 | 4,344.95 | +4.8% | 5.0% |
-| BEAU-LIP-040 | Lip Balm | 16.95 | 15.95 | -5.9% | waived |
-| BEAU-SRM-041 | Vitamin C Serum 30 ml | 111.95 | 108.95 | -2.7% | waived |
+| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 686.95 | 675.95 | -1.6% | waived |
+| ELEC-CHG-002 | 65W USB-C Charger | 184.95 | 194.95 | +5.4% | waived |
+| FASH-BAG-014 | Leather Crossbody Bag | 594.95 | 561.95 | -5.5% | waived |
+| FASH-SCF-015 | Silk Scarf | 293.95 | 279.95 | -4.8% | waived |
+| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 593.95 | 890.95 | +50.0% | waived |
+| HOME-KTL-030 | Electric Kettle 1.7 L | 237.95 | 264.95 | +11.3% | waived |
+| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 4,144.95 | 4,359.95 | +5.2% | 5.0% |
+| BEAU-LIP-040 | Lip Balm | 16.95 | 30.95 | +82.6% | waived |
+| BEAU-SRM-041 | Vitamin C Serum 30 ml | 111.95 | 123.95 | +10.7% | waived |
 | DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 340.95 | 340.95 | 0.0% | 0.0% |
-| GROC-TEA-060 | English Breakfast Tea, 80 bags | 34.95 | 37.95 | +8.6% | waived |
+| GROC-TEA-060 | English Breakfast Tea, 80 bags | 34.95 | 52.95 | +51.5% | waived |
 
 ### UAE (United Arab Emirates)
 
@@ -98,7 +99,7 @@ A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 1.
 
 ## How a price is built
 
-Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT.
+Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Ordered on its own as a direct parcel instead of a consolidated import, its total changes by -1.6% in KSA, -3.8% in UAE and +2.0% in KWT.
 
 ### KSA (SAR)
 
@@ -110,6 +111,8 @@ Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every ma
 | VAT | 89.52 | 86.14 |
 | Rounding and price ending | 0.64 | 0.54 |
 | **Shelf price** | **686.95** | **660.95** |
+| Customs fee, at checkout | - | 15.00 |
+| **One-item order** | **686.95** | **675.95** |
 
 ### UAE (AED)
 
@@ -156,8 +159,9 @@ Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2.
 
 ## How these figures are made
 
-- Each product is priced as a one-item order, and every cost is passed on to the customer.
-- Prices use today's duty rates. A tariff rise adds percentage points to every duty rate.
+- Products are compared as one-item orders, and every cost is passed on to the customer.
+- A direct parcel pays the market's customs fee at checkout, and parcel prices include it. A product that weighs nothing, such as a download, never travels in a parcel, so it pays no fee and de minimis never applies to it.
+- Prices use today's duty rates. A tariff rise adds percentage points to every duty rate. Tariff exposure compares shelf prices, without the customs fee.
 - Above catalogue price compares the shelf price with the catalogue price converted at the config's FX rates, so it includes freight, duty, VAT and the price ending.
 - Averages are unweighted means over the products a market sells.
 - Price components are rounded for display, and the rounding line makes each column add up to the shelf price, which is exact.

@@ -21,9 +21,10 @@ from souqsort.display import (
     duty_text,
     excluded_grid_rows,
     grid_rows,
+    parcel_fee_note,
     search_products,
 )
-from souqsort.models import AttributeName, Catalogue, GccConfig, ShippingModel
+from souqsort.models import AttributeName, Catalogue, GccConfig, ParcelFee, ShippingModel
 from souqsort.pipeline import (
     CatalogueSummary,
     LocalisationError,
@@ -164,6 +165,33 @@ def test_margin_too_large_to_display_names_the_sku(headphones: LocalisedProduct)
 
     assert str(excinfo.value).startswith(f"{HEADPHONES}: ")
     assert isinstance(excinfo.value.__cause__, ArithmeticError)
+
+
+# --- the parcel fee note (SPEC §10.5, M15) ------------------------------------------------
+
+KSA_FEE_NOTE = "Each parcel order also pays a customs fee of 15.00 SAR at checkout."
+
+
+def test_parcel_fee_note_names_ksa_s_fee(config: GccConfig) -> None:
+    assert parcel_fee_note(config.markets["KSA"]) == KSA_FEE_NOTE
+
+
+@pytest.mark.parametrize("code", ["UAE", "KWT"])
+def test_no_parcel_fee_note_without_a_fee(config: GccConfig, code: str) -> None:
+    assert parcel_fee_note(config.markets[code]) is None
+
+
+@pytest.mark.parametrize(("amount", "shown"), [("15", "15.000"), ("1234.5", "1234.500")])
+def test_parcel_fee_note_shows_the_currency_s_minor_units(
+    config: GccConfig, amount: str, shown: str
+) -> None:
+    kwt = config.markets["KWT"]
+    fee = ParcelFee(amount=Decimal(amount), source="test fee")
+    market = kwt.model_copy(update={"customs": kwt.customs.model_copy(update={"parcel_fee": fee})})
+
+    assert parcel_fee_note(market) == (
+        f"Each parcel order also pays a customs fee of {shown} KWD at checkout."
+    )
 
 
 # --- duty (SPEC §7.1 and §9.1, M10) -------------------------------------------------------

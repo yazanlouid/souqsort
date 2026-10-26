@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from souqsort.compliance import ExcludedProduct
-from souqsort.display import DisplayRow, display_rows, duty_text
+from souqsort.display import DisplayRow, display_rows, duty_text, parcel_fee_note
 from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
 from souqsort.logistics.calendar import in_market_time, to_market_time
 from souqsort.models import Catalogue, GccConfig, MarketConfig, ShippingModel
@@ -143,8 +143,9 @@ def _build_parser() -> tuple[
         default="consolidated",
         help=(
             "shipping model: consolidated (one commercial import, no de minimis) or parcel "
-            "(each order cleared on its own, duty-free under the market's de minimis "
-            "threshold, dearer freight) (default: %(default)s)"
+            "(each order cleared on its own, with its own freight rate, transit time and "
+            "customs fee; duty-free under the market's de minimis threshold) "
+            "(default: %(default)s)"
         ),
     )
     price.add_argument(
@@ -386,6 +387,11 @@ def _price(
     _print(_summary_line(market, ordered_at_local, duty_points, shipping))
     _print()
     _print("\n".join(_price_table(rows, market.currency.code)))
+
+    fee_note = parcel_fee_note(market) if shipping == "parcel" else None
+    if fee_note is not None:
+        _print()
+        _print(fee_note)
 
     if localised.excluded:
         _print()

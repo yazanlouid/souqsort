@@ -1,4 +1,4 @@
-"""Customs duty: the rate a product pays, and when de minimis waives it."""
+"""Customs: the duty rate a product pays, when de minimis waives it, and the parcel fee."""
 
 from dataclasses import dataclass
 from decimal import Decimal
@@ -56,6 +56,22 @@ def de_minimis_applies(
             return cif <= rule.threshold
         case unknown:
             assert_never(unknown)
+
+
+def parcel_fee_due(
+    market: MarketConfig, shipping: ShippingModel, anything_travels: bool
+) -> Decimal | None:
+    """The customs fee an order pays at checkout, as the config writes it, or ``None``.
+
+    Only a direct parcel pays it, and only when something in the order travels: otherwise no
+    parcel is sent. A market without a fee charges none. No VAT is charged on it. Raises
+    ``ValueError`` for an unknown ``shipping``.
+    """
+    require_shipping(shipping)
+    fee = market.customs.parcel_fee
+    if shipping != "parcel" or not anything_travels or fee is None:
+        return None
+    return fee.amount
 
 
 def assess_duty(

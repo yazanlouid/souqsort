@@ -69,9 +69,10 @@ SCOPE_NOTE = "All 11 products for sale in KSA; search filters the table only"
 
 SHIPPING_HELP = (
     "Consolidated: orders travel as one commercial import, so de minimis never applies. "
-    "Direct parcel: each order is cleared on its own; under the market's threshold it pays no "
-    "duty, but parcel freight costs more per kg."
+    "Direct parcel: each order is cleared on its own, with its own freight rate, transit time "
+    "and customs fee; under the market's threshold it pays no duty."
 )
+KSA_FEE_NOTE = "Each parcel order also pays a customs fee of 15.00 SAR at checkout."
 
 # The report download button in the sidebar (SPEC §9.6).
 REPORT_LABEL = "Download expansion report"
@@ -336,6 +337,19 @@ def test_caption_names_the_shipping_model(app: AppTest) -> None:
 
     assert "Shipping: Direct parcel" in _captions(app)
     assert "Consolidated import" not in _captions(app)
+
+
+def test_the_fee_caption_shows_for_ksa_parcels_only(app: AppTest) -> None:
+    assert KSA_FEE_NOTE not in _captions(app)  # consolidated
+
+    _ship(app, "parcel")
+    assert KSA_FEE_NOTE in _captions(app)
+
+    _select_market(app, "UAE")
+    assert "customs fee" not in _captions(app)
+
+    _select_market(app, "KWT")
+    assert "customs fee" not in _captions(app)
 
 
 def test_switching_markets_keeps_the_shipping_model(app: AppTest) -> None:
