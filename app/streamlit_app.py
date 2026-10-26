@@ -142,7 +142,7 @@ try:
     headline = display_summary(summary)
     rows = grid_rows(search_products(localised.items, query))
     not_sold = excluded_grid_rows(localised.excluded)
-    fee_note = parcel_fee_note(market) if shipping == "parcel" else None
+    fee_note = parcel_fee_note(market, shipping)
 except LocalisationError as exc:
     st.error(str(exc))
     st.stop()

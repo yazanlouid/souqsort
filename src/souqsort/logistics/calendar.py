@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import assert_never
 from zoneinfo import ZoneInfo
 
 from souqsort.models import MarketConfig, ShippingModel, Weekday, require_shipping
@@ -152,11 +153,14 @@ def estimate_delivery(
     else:
         dispatch_date = add_business_days(local_date, 1, weekend, holidays)
 
-    linehaul = (
-        logistics.parcel_linehaul_business_days
-        if shipping == "parcel"
-        else logistics.linehaul_business_days
-    )
+    # A match, not an if: mypy fails here if ShippingModel gains a value with no case.
+    match shipping:
+        case "consolidated":
+            linehaul = logistics.linehaul_business_days
+        case "parcel":
+            linehaul = logistics.parcel_linehaul_business_days
+        case unknown:
+            assert_never(unknown)
     transit_days = linehaul + logistics.last_mile_business_days
     delivery_date = add_business_days(dispatch_date, transit_days, weekend, holidays)
 

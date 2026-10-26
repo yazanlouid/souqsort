@@ -66,10 +66,14 @@ def parcel_fee_due(
     ``ValueError`` for an unknown ``shipping``.
     """
     require_shipping(shipping)
-    fee = market.customs.parcel_fee
-    if shipping != "parcel" or not anything_travels or fee is None:
-        return None
-    return fee.amount
+    match shipping:
+        case "consolidated":
+            return None
+        case "parcel":
+            fee = market.customs.parcel_fee
+            return fee.amount if anything_travels and fee is not None else None
+        case unknown:
+            assert_never(unknown)
 
 
 def assess_duty(
@@ -87,11 +91,16 @@ def assess_duty(
     """
     require_shipping(shipping)
     customs = market.customs
-    if (
-        shipping == "parcel"
-        and travels(product)
-        and de_minimis_applies(cif, customs.de_minimis, product.attributes)
-    ):
+    match shipping:
+        case "consolidated":
+            waived = False
+        case "parcel":
+            waived = travels(product) and de_minimis_applies(
+                cif, customs.de_minimis, product.attributes
+            )
+        case unknown:
+            assert_never(unknown)
+    if waived:
         return DutyAssessment(rate=Decimal(0), waived=True)
     category_rate = customs.category_overrides.get(product.category, customs.default_duty_rate)
     return DutyAssessment(rate=category_rate + duty_adjustment, waived=False)

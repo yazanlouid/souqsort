@@ -3,7 +3,7 @@
 from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 
@@ -172,13 +172,28 @@ def test_margin_too_large_to_display_names_the_sku(headphones: LocalisedProduct)
 KSA_FEE_NOTE = "Each parcel order also pays a customs fee of 15.00 SAR at checkout."
 
 
-def test_parcel_fee_note_names_ksa_s_fee(config: GccConfig) -> None:
-    assert parcel_fee_note(config.markets["KSA"]) == KSA_FEE_NOTE
+def test_parcel_fee_note_names_ksa_s_fee_for_a_direct_parcel(config: GccConfig) -> None:
+    assert parcel_fee_note(config.markets["KSA"], "parcel") == KSA_FEE_NOTE
 
 
+def test_no_parcel_fee_note_for_a_consolidated_import(config: GccConfig) -> None:
+    assert parcel_fee_note(config.markets["KSA"], "consolidated") is None
+
+
+@pytest.mark.parametrize("shipping", ["consolidated", "parcel"])
 @pytest.mark.parametrize("code", ["UAE", "KWT"])
-def test_no_parcel_fee_note_without_a_fee(config: GccConfig, code: str) -> None:
-    assert parcel_fee_note(config.markets[code]) is None
+def test_no_parcel_fee_note_without_a_fee(
+    config: GccConfig, code: str, shipping: ShippingModel
+) -> None:
+    assert parcel_fee_note(config.markets[code], shipping) is None
+
+
+@pytest.mark.parametrize("shipping", ["bulk", "Parcel", "", None])
+def test_parcel_fee_note_rejects_an_unknown_shipping_model(
+    config: GccConfig, shipping: Any
+) -> None:
+    with pytest.raises(ValueError, match="one of consolidated, parcel"):
+        parcel_fee_note(config.markets["KSA"], shipping)
 
 
 @pytest.mark.parametrize(("amount", "shown"), [("15", "15.000"), ("1234.5", "1234.500")])
@@ -189,7 +204,7 @@ def test_parcel_fee_note_shows_the_currency_s_minor_units(
     fee = ParcelFee(amount=Decimal(amount), source="test fee")
     market = kwt.model_copy(update={"customs": kwt.customs.model_copy(update={"parcel_fee": fee})})
 
-    assert parcel_fee_note(market) == (
+    assert parcel_fee_note(market, "parcel") == (
         f"Each parcel order also pays a customs fee of {shown} KWD at checkout."
     )
 

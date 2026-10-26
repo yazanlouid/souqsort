@@ -75,7 +75,6 @@ class ProductComparison:
     The consolidated order costs ``consolidated_price``. The parcel order costs
     ``parcel_price``, the parcel shelf price, plus ``parcel_fee``, the customs fee it pays at
     checkout (``None`` when the market has none or the product does not travel).
-    ``change_pct`` is the full-precision ``parcel_order / consolidated_price - 1``.
     ``parcel_duty_rate`` and ``parcel_duty_waived`` are the parcel quote's.
     """
 
@@ -84,7 +83,6 @@ class ProductComparison:
     consolidated_price: Decimal
     parcel_price: Decimal
     parcel_fee: Decimal | None
-    change_pct: Decimal
     parcel_duty_rate: Decimal
     parcel_duty_waived: bool
 
@@ -92,6 +90,14 @@ class ProductComparison:
     def parcel_order(self) -> Decimal:
         """What the one-item parcel order costs at checkout, exactly."""
         return self.parcel_price + (self.parcel_fee or 0)
+
+    @property
+    def change_pct(self) -> Decimal:
+        """The full-precision ``parcel_order / consolidated_price - 1``.
+
+        Catalogue prices are above zero, so the consolidated price never is zero.
+        """
+        return self.parcel_order / self.consolidated_price - 1
 
 
 @dataclass(frozen=True)
@@ -290,17 +296,14 @@ def _shipping(
         # strict=True checks the lengths only; the pairs must also be the same product.
         if by_import.sku != by_parcel.sku:
             raise ValueError(f"parcel view has {by_parcel.sku} where {by_import.sku} is expected")
-        import_price, parcel_quote = by_import.quote.shelf_price, by_parcel.quote
-        fee = parcel_fee_due(market, "parcel", travels(products[by_import.sku]))
-        parcel_order = parcel_quote.shelf_price + (fee or 0)
+        parcel_quote = by_parcel.quote
         comparisons.append(
             ProductComparison(
                 sku=by_import.sku,
                 name_en=by_import.name_en,
-                consolidated_price=import_price,
+                consolidated_price=by_import.quote.shelf_price,
                 parcel_price=parcel_quote.shelf_price,
-                parcel_fee=fee,
-                change_pct=parcel_order / import_price - 1,
+                parcel_fee=parcel_fee_due(market, "parcel", travels(products[by_import.sku])),
                 parcel_duty_rate=parcel_quote.duty_rate,
                 parcel_duty_waived=parcel_quote.duty_waived,
             )

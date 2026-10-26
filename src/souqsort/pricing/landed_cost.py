@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import assert_never
 
 from souqsort.models import FxTable, MarketConfig, Product, ShippingModel, require_shipping
 from souqsort.pricing.customs import assess_duty
@@ -75,11 +76,14 @@ def price_product(
     vat_rate = market.tax.vat_rate
 
     goods = convert(product.base_price, product.currency, currency.code, fx)
-    freight_per_kg = (
-        logistics.parcel_freight_per_kg_usd
-        if shipping == "parcel"
-        else logistics.freight_per_kg_usd
-    )
+    # A match, not an if: mypy fails here if ShippingModel gains a value with no case.
+    match shipping:
+        case "consolidated":
+            freight_per_kg = logistics.freight_per_kg_usd
+        case "parcel":
+            freight_per_kg = logistics.parcel_freight_per_kg_usd
+        case unknown:
+            assert_never(unknown)
     freight = convert(freight_per_kg * product.weight_kg, "USD", currency.code, fx)
     cif = goods + freight
 

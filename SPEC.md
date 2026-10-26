@@ -1203,7 +1203,9 @@ def quote_order(lines: Sequence[OrderLine], catalogue: Catalogue, config: GccCon
 # in the catalogue ("ELEC-HP-999: not in the catalogue"), or for a line that cannot be priced.
 
 # display.py
-def parcel_fee_note(market: MarketConfig) -> str | None: ...             # M15: §10.5
+def parcel_fee_note(market: MarketConfig, shipping: ShippingModel) -> str | None: ...
+# M15: §10.5. None unless a direct parcel in a market with a fee, so neither the CLI nor the
+# dashboard checks the shipping model itself.
 CHECKOUT_LABELS: dict[CheckoutKind, str]  # M17: {"customs_fee": "Customs fee", "duty": "Duty and VAT"}
 @dataclass(frozen=True)
 class OrderRow:                           # M17: one row of the order table, both models
@@ -1216,8 +1218,9 @@ def order_rows(consolidated: OrderQuote, parcel: OrderQuote) -> list[OrderRow]: 
 def parcel_note(market: MarketConfig, parcel: OrderQuote) -> str: ...                # M17: §10.5
 
 # report/figures.py
-class ProductComparison: ...              # M15: + parcel_fee: Decimal | None and a parcel_order
-                                          # property; change_pct and the counts use parcel_order
+class ProductComparison: ...              # M15: + parcel_fee: Decimal | None; parcel_order and
+                                          # change_pct (parcel_order / consolidated_price - 1) are
+                                          # properties, and the counts use parcel_order
 class ShippingComparison: ...             # M15: + parcel_fee: Decimal | None, parcel_delivery: DeliveryEstimate
 class PriceBuildUp: ...                   # M15: + parcel_fee: Decimal | None (the one-item parcel order's)
 

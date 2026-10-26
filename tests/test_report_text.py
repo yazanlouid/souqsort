@@ -715,7 +715,6 @@ def _comparison(
             consolidated_price=Decimal(consolidated),
             parcel_price=Decimal(parcel),
             parcel_fee=parcel_fee,
-            change_pct=(Decimal(parcel) + (parcel_fee or 0)) / Decimal(consolidated) - 1,
             parcel_duty_rate=Decimal(0) if waived else Decimal("0.05"),
             parcel_duty_waived=waived,
         )

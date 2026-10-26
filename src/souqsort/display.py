@@ -187,13 +187,13 @@ def excluded_grid_rows(excluded: Sequence[ExcludedProduct]) -> list[ExcludedGrid
     ]
 
 
-def parcel_fee_note(market: MarketConfig) -> str | None:
-    """The sentence that names the market's parcel fee, or ``None`` when it has none.
+def parcel_fee_note(market: MarketConfig, shipping: ShippingModel) -> str | None:
+    """The sentence that names the market's parcel fee, for the CLI and the dashboard.
 
-    The CLI and the dashboard show it with direct parcels. The amount has the currency's
-    minor units, as prices do.
+    ``None`` unless ``shipping`` is a direct parcel in a market with a fee. The amount has the
+    currency's minor units, as prices do. Raises ``ValueError`` for an unknown ``shipping``.
     """
-    fee = parcel_fee_due(market, "parcel", anything_travels=True)
+    fee = parcel_fee_due(market, shipping, anything_travels=True)
     if fee is None:
         return None
     amount = format_money(fee, market.currency.minor_units)

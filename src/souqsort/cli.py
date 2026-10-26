@@ -387,7 +387,7 @@ def _price(
     _print()
     _print("\n".join(_price_table(rows, market.currency.code)))
 
-    fee_note = parcel_fee_note(market) if shipping == "parcel" else None
+    fee_note = parcel_fee_note(market, shipping)
     if fee_note is not None:
         _print()
         _print(fee_note)

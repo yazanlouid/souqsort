@@ -405,7 +405,6 @@ def test_counts_compare_one_item_orders_not_the_rounded_change() -> None:
                 Decimal("2500.00"),
                 Decimal("2491.00"),
                 Decimal("10.00"),
-                Decimal("0.0004"),
                 Decimal("0.05"),
                 False,
             ),
@@ -414,6 +413,7 @@ def test_counts_compare_one_item_orders_not_the_rounded_change() -> None:
 
     # The shelf price is cheaper, but the one-item order, with the fee, is dearer.
     assert (comparison.cheaper, comparison.dearer, comparison.unchanged) == (0, 1, 0)
+    assert comparison.products[0].change_pct == Decimal("0.0004")  # 2501 / 2500 - 1
 
 
 def test_a_market_that_sells_nothing_compares_nothing(

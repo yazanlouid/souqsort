@@ -197,6 +197,48 @@ def test_logistics_does_not_import_pricing() -> None:
     assert _violations(_python_files(LOGISTICS_DIR), find) == []
 
 
+# --- branches on the shipping model ---------------------------------------------------------
+
+_MODEL_NAMES = frozenset({"consolidated", "parcel"})
+
+
+def _shipping_model_comparisons(source: str) -> Found:
+    """Comparisons with a shipping model's name, such as ``shipping == "parcel"``.
+
+    Code that branches on the model uses ``match`` with ``assert_never`` instead, so mypy
+    flags a model that a branch forgets.
+    """
+    found: Found = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Compare):
+            operands = [node.left, *node.comparators]
+            if any(
+                isinstance(operand, ast.Constant) and operand.value in _MODEL_NAMES
+                for operand in operands
+            ):
+                found.append((node.lineno, ast.get_source_segment(source, node) or ""))
+    return found
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('shipping == "parcel"', ['shipping == "parcel"']),
+        ('model != "consolidated"', ['model != "consolidated"']),
+        ('"parcel" == x', ['"parcel" == x']),
+        ('x in ("parcel",)', []),
+        ('match shipping:\n    case "parcel":\n        pass', []),
+        ('name == "parcels"', []),
+    ],
+)
+def test_shipping_model_guard_recognises_comparisons(source: str, expected: list[str]) -> None:
+    assert [text for _, text in _shipping_model_comparisons(source)] == expected
+
+
+def test_src_and_app_never_compare_with_a_shipping_model_name() -> None:
+    assert _violations(_python_files(SRC_DIR, APP_DIR), _shipping_model_comparisons) == []
+
+
 # --- report templates ---------------------------------------------------------------------
 
 # Filters that would turn a value into a number or format one inside the template (§9.4.1).
