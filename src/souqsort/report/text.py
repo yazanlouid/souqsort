@@ -247,8 +247,8 @@ def shipping_market_sentences(comparison: ShippingComparison) -> str:
             comparison.parcel_fee, comparison.minor_units, figure=f"{comparison.code}: parcel fee"
         )
         sentences.append(
-            f"Each parcel also pays a {fee} {one_line(comparison.currency)} customs fee, "
-            "included in the prices below."
+            f"Each parcel also pays a {fee} {one_line(comparison.currency)} customs fee at "
+            "checkout, included in the parcel price of every product that travels."
         )
     if not comparison.products:
         sentences.append("No products are for sale.")

@@ -31,7 +31,7 @@ Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA
 
 ### KSA (Saudi Arabia)
 
-No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR customs fee, included in the prices below. Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1. Duty is waived on 9 of them.
+No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR customs fee at checkout, included in the parcel price of every product that travels. Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1. Duty is waived on 9 of them.
 
 | SKU | Product | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel duty |
 |---|---|---:|---:|---:|---|

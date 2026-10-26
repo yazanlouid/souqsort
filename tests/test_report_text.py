@@ -98,7 +98,7 @@ Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA
 
 ### KSA (Saudi Arabia)
 
-No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR customs fee, included in the prices below. Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1. Duty is waived on 9 of them.
+No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR customs fee at checkout, included in the parcel price of every product that travels. Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1. Duty is waived on 9 of them.
 
 | SKU | Product | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel duty |
 |---|---|---:|---:|---:|---|
@@ -811,8 +811,9 @@ def test_market_sentences_with_a_fee() -> None:
 
     assert shipping_market_sentences(comparison) == (
         "No duty on a parcel whose CIF is below 1,000.00 XXX. Each parcel also pays a 15.00 XXX "
-        "customs fee, included in the prices below. Parcels are cheaper for 0 of 1 product, "
-        "dearer for 1 and unchanged for 0. Duty is waived on 1 of them."
+        "customs fee at checkout, included in the parcel price of every product that travels. "
+        "Parcels are cheaper for 0 of 1 product, dearer for 1 and unchanged for 0. "
+        "Duty is waived on 1 of them."
     )
 
 
@@ -822,7 +823,8 @@ def test_a_market_that_sells_nothing_still_gives_its_fee(rule: DeMinimisRule | N
 
     assert sentences == (
         f"{de_minimis_sentence(_comparison('A', rule))} Each parcel also pays a 1,234.50 XXX "
-        "customs fee, included in the prices below. No products are for sale."
+        "customs fee at checkout, included in the parcel price of every product that travels. "
+        "No products are for sale."
     )
 
 
@@ -896,7 +898,8 @@ def test_a_market_that_sells_nothing_has_no_parcel_table(
         f"{PARCEL_DELIVERY_SENTENCE}\n\n"
         "### KSA (Saudi Arabia)\n\n"
         "No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR "
-        "customs fee, included in the prices below. No products are for sale.\n\n"
+        "customs fee at checkout, included in the parcel price of every product that travels. "
+        "No products are for sale.\n\n"
         "### UAE (United Arab Emirates)\n\n"
     )
     assert "| GROC-VAN-061 | Pure Vanilla Extract | 55.99 | 57.99 | +3.6% | 5.0% |\n" in section

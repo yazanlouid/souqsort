@@ -813,7 +813,7 @@ Each section opens with its sentences. The summary at the top repeats them all a
    - "Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT." Config order; markets that sell nothing are left out; none: "No market has products for sale."
    - "For this order, direct parcels arrive on Wed 2026-10-21 in KSA, Tue 2026-10-20 in UAE and Wed 2026-10-21 in KWT." Every market, config order (M15).
    - Each market's subsection opens with its rule: "No duty on a parcel whose CIF is below 1,000.00 SAR." / "No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol." / "No de minimis rule, so every parcel pays duty." Excluded attributes read as "alcohol", "pork" and "a lithium battery", several joined with "or".
-   - Then, only for a market with a fee (M15): "Each parcel also pays a 15.00 SAR customs fee, included in the prices below."
+   - Then, only for a market with a fee (M15): "Each parcel also pays a 15.00 SAR customs fee at checkout, included in the parcel price of every product that travels."
    - Then "Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1." and, only when the market has a rule, "Duty is waived on 9 of them." A market that sells nothing: its rule and fee, then "No products are for sale.", and no table.
 3. **Orders** (M18): "Direct parcels are cheaper than consolidated imports for 1 of 3 sample orders in KSA, 1 of 3 in UAE and 0 of 3 in KWT." Config order; markets that sell nothing in any order are left out; if none sells anything in them: "No market sells anything in the sample orders."; with no sample orders at all: "There are no sample orders.", and the section has no tables.
    - Each market's subsection opens with "Parcels are cheaper for 1 of 3 orders, dearer for 2 and unchanged for 0." and, only when the market has a rule, "Duty is added at checkout to 1 of them." A market that sells nothing in the orders: "No product in the sample orders is for sale." Its table still lists every order, with `-`.
@@ -1771,7 +1771,7 @@ Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA
 
 ### KSA (Saudi Arabia)
 
-No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR customs fee, included in the prices below. Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1. Duty is waived on 9 of them.
+No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR customs fee at checkout, included in the parcel price of every product that travels. Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1. Duty is waived on 9 of them.
 
 | SKU | Product | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel duty |
 |---|---|---:|---:|---:|---|
