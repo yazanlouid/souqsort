@@ -1,6 +1,6 @@
 """M10: de minimis, duty assessment and direct-parcel pricing (SPEC §7.7 and §7.8 E-H)."""
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any, get_args
 
@@ -25,6 +25,7 @@ from souqsort.pricing.customs import (
     assess_duty,
     de_minimis_applies,
     require_shipping,
+    travels,
 )
 from souqsort.pricing.landed_cost import price_product
 
@@ -32,6 +33,7 @@ HEADPHONES = "ELEC-HP-001"
 BAG = "FASH-BAG-014"
 ESPRESSO = "HOME-ESP-031"
 VANILLA = "GROC-VAN-061"
+LICENCE = "DIGI-LIC-050"
 
 BELOW = "TEST-BELOW"
 AT_OR_BELOW = "TEST-AT-OR-BELOW"
@@ -63,8 +65,15 @@ def _rule(applies: str, *excluded: AttributeName) -> DeMinimisRule:
     )
 
 
-def _usd_product(base_price: str, attributes: ProductAttributes = NO_ATTRIBUTES) -> Product:
-    """A weightless USD product, so its CIF in the boundary markets is 4 x its price."""
+def _usd_product(
+    base_price: str,
+    attributes: ProductAttributes = NO_ATTRIBUTES,
+    weight_kg: str = "1",
+) -> Product:
+    """A USD product. Freight is 0 in the boundary markets, so its CIF there is 4 x its price.
+
+    It weighs 1 kg by default, so it travels in a parcel (SPEC §7.8 H, from M15).
+    """
     return Product(
         sku="TEST-H",
         name=ProductName(en="Boundary test product", ar=None),
@@ -73,7 +82,7 @@ def _usd_product(base_price: str, attributes: ProductAttributes = NO_ATTRIBUTES)
         base_price=Decimal(base_price),
         currency="USD",
         unit_cost=Decimal("1.00"),
-        weight_kg=Decimal("0"),
+        weight_kg=Decimal(weight_kg),
         attributes=attributes,
     )
 
@@ -162,6 +171,18 @@ def test_if_it_applies_at_a_cif_it_applies_at_every_lower_cif(
         assert de_minimis_applies(lower, rule, attributes)
 
 
+# --- travels (SPEC §7.7.2, M15) ------------------------------------------------------------
+
+
+def test_only_the_licence_does_not_travel(catalogue: Catalogue) -> None:
+    assert [p.sku for p in catalogue.products if not travels(p)] == [LICENCE]
+
+
+@pytest.mark.parametrize(("weight", "expected"), [("0", False), ("0.000", False), ("0.001", True)])
+def test_a_product_travels_when_it_weighs_more_than_nothing(weight: str, expected: bool) -> None:
+    assert travels(_usd_product("10.00", weight_kg=weight)) is expected
+
+
 # --- assess_duty ---------------------------------------------------------------------------
 
 
@@ -230,6 +251,62 @@ def test_price_product_rejects_an_unknown_shipping_model(
 ) -> None:
     with pytest.raises(ValueError, match="shipping"):
         price_product(products[HEADPHONES], ksa, fx, Decimal("0"), shipping)
+
+
+# --- a product that weighs nothing (SPEC §7.7.2 rule 4, M15) --------------------------------
+
+
+@pytest.mark.parametrize("code", ["KSA", "UAE"])
+def test_the_licence_as_a_parcel_is_not_waived(
+    products: dict[str, Product], config: GccConfig, code: str
+) -> None:
+    quote = price_product(products[LICENCE], config.markets[code], config.fx, shipping="parcel")
+
+    assert (quote.duty_rate, quote.duty_waived) == (Decimal("0"), False)
+
+
+def test_the_licence_as_a_uae_parcel_pays_the_adjustment(
+    products: dict[str, Product], uae: MarketConfig, fx: FxTable
+) -> None:
+    at_zero = price_product(products[LICENCE], uae, fx, shipping="parcel")
+    plus_three = price_product(products[LICENCE], uae, fx, Decimal("0.03"), "parcel")
+
+    assert str(at_zero.shelf_price) == "304.99"
+    assert (plus_three.duty_rate, plus_three.duty_waived) == (Decimal("0.03"), False)
+    assert str(plus_three.shelf_price) == "313.99"
+
+
+def test_a_weightless_product_under_the_threshold_is_not_waived(
+    de_minimis_boundary_config: GccConfig,
+) -> None:
+    quote = price_product(
+        _usd_product("10.00", weight_kg="0"),
+        de_minimis_boundary_config.markets[AT_OR_BELOW],
+        de_minimis_boundary_config.fx,
+        shipping="parcel",
+    )
+
+    assert (quote.duty_rate, quote.duty_waived) == (Decimal("0.05"), False)
+    assert str(quote.shelf_price) == "42.00"  # 40.00 CIF + 5% duty
+
+
+@given(
+    base_price=st.decimals(min_value=Decimal("0.01"), max_value=Decimal("5000"), places=2),
+    points=st.integers(0, 20),
+    market_index=st.integers(0, 2),
+)
+@example(base_price=Decimal("90.85"), points=3, market_index=1)
+def test_a_weightless_product_gets_the_same_quote_in_both_models(
+    config: GccConfig, base_price: Decimal, points: int, market_index: int
+) -> None:
+    product = _usd_product(str(base_price), weight_kg="0")
+    market = list(config.markets.values())[market_index]
+    adjustment = Decimal(points) / 100
+
+    consolidated = price_product(product, market, config.fx, adjustment, "consolidated")
+    parcel = price_product(product, market, config.fx, adjustment, "parcel")
+
+    assert replace(parcel, shipping="consolidated") == consolidated
 
 
 # --- worked examples E, F and G (SPEC §7.8) ------------------------------------------------

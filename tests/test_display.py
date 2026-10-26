@@ -179,7 +179,8 @@ def test_margin_too_large_to_display_names_the_sku(headphones: LocalisedProduct)
         (HEADPHONES, "0.20", "parcel", "0.0", True, "waived"),  # whatever the adjustment
         (BAG, "0.03", "parcel", "0.0", True, "waived"),
         (ESPRESSO, "0.03", "parcel", "8.0", False, "8.0%"),  # above the threshold
-        (LICENCE, "0", "parcel", "0.0", True, "waived"),  # SPEC §7.9.2: waived though 0%
+        (LICENCE, "0", "parcel", "0.0", False, "0.0%"),  # SPEC §7.9.2: never travels
+        (LICENCE, "0.03", "parcel", "3.0", False, "3.0%"),  # so the adjustment applies
     ],
 )
 def test_duty_cells(

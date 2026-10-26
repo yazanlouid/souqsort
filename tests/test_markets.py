@@ -116,7 +116,7 @@ PARCEL_PRICE_LISTS: dict[str, dict[str, tuple[str, bool]]] = {
         "HOME-ESP-031": ("4344.95", False),
         "BEAU-LIP-040": ("15.95", W),
         "BEAU-SRM-041": ("108.95", W),
-        "DIGI-LIC-050": ("340.95", W),
+        "DIGI-LIC-050": ("340.95", False),  # weighs nothing, so never travels
         "GROC-TEA-060": ("37.95", W),
         "GROC-VAN-061": ("61.95", W),
         "GROC-GUM-062": ("25.95", W),
@@ -131,7 +131,7 @@ PARCEL_PRICE_LISTS: dict[str, dict[str, tuple[str, bool]]] = {
         "HOME-ESP-031": ("3844.99", False),
         "BEAU-LIP-040": ("14.99", W),
         "BEAU-SRM-041": ("96.99", W),
-        "DIGI-LIC-050": ("304.99", W),
+        "DIGI-LIC-050": ("304.99", False),
         "GROC-TEA-060": ("32.99", W),
         "GROC-VAN-061": ("57.99", False),  # alcohol is excluded from the UAE's de minimis
         "GROC-GUM-062": ("21.99", W),

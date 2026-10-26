@@ -202,7 +202,7 @@ PRICE_LISTS: dict[str, list[tuple[str, str, str, bool]]] = {
         ("HOME-ESP-031", "4144.95", "4344.95", False),
         ("BEAU-LIP-040", "16.95", "15.95", True),
         ("BEAU-SRM-041", "111.95", "108.95", True),
-        ("DIGI-LIC-050", "340.95", "340.95", True),
+        ("DIGI-LIC-050", "340.95", "340.95", False),  # never travels
         ("GROC-TEA-060", "34.95", "37.95", True),
     ],
     "UAE": [
@@ -215,7 +215,7 @@ PRICE_LISTS: dict[str, list[tuple[str, str, str, bool]]] = {
         ("HOME-ESP-031", "3685.99", "3844.99", False),
         ("BEAU-LIP-040", "14.99", "14.99", True),
         ("BEAU-SRM-041", "99.99", "96.99", True),
-        ("DIGI-LIC-050", "304.99", "304.99", True),
+        ("DIGI-LIC-050", "304.99", "304.99", False),
         ("GROC-TEA-060", "29.99", "32.99", True),
         (VANILLA, "55.99", "57.99", False),
     ],
@@ -275,7 +275,7 @@ def test_the_product_rows_number_34(report: ExpansionReport) -> None:
 
 @pytest.mark.parametrize(
     ("code", "counts"),
-    [("KSA", (6, 4, 1, 10)), ("UAE", (5, 5, 2, 10)), ("KWT", (0, 6, 5, 0))],
+    [("KSA", (6, 4, 1, 9)), ("UAE", (5, 5, 2, 9)), ("KWT", (0, 6, 5, 0))],
 )
 def test_counts_of_the_parcel_table(
     report: ExpansionReport, code: str, counts: tuple[int, int, int, int]
@@ -383,9 +383,9 @@ def test_pairs_of_different_products_are_rejected(catalogue: Catalogue, config: 
 # SPEC §9.2.3: the average price change at +5, +10 and +20 pp, rounded for display.
 TARIFF_CELLS: dict[tuple[str, ShippingModel], tuple[str, str, str]] = {
     ("KSA", "consolidated"): ("4.6", "9.0", "18.6"),
-    ("KSA", "parcel"): ("0.4", "0.9", "1.7"),
+    ("KSA", "parcel"): ("0.9", "1.8", "3.5"),
     ("UAE", "consolidated"): ("4.9", "9.3", "19.2"),
-    ("UAE", "parcel"): ("0.8", "1.5", "3.2"),
+    ("UAE", "parcel"): ("1.2", "2.4", "4.8"),
     ("KWT", "consolidated"): ("3.8", "7.6", "16.0"),
     ("KWT", "parcel"): ("6.3", "9.4", "17.7"),
 }

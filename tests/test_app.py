@@ -291,7 +291,7 @@ def test_duty_column_shows_waived_for_a_waived_parcel(app: AppTest) -> None:
     duty = _column(app, DUTY)
 
     assert duty[HEADPHONES] == "waived"
-    assert duty[LICENCE] == "waived"  # SPEC §7.9.2: waived although its rate is already 0
+    assert duty[LICENCE] == "0.0%"  # SPEC §7.9.2: it weighs nothing, so it never travels
     assert duty[ESPRESSO] == "5.0%"  # above the threshold
 
 

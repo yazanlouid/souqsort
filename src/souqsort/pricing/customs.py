@@ -28,6 +28,15 @@ def require_shipping(shipping: object) -> None:
         raise ValueError(f"shipping must be one of {allowed}, got {shipping!r}")
 
 
+def travels(product: Product) -> bool:
+    """Whether the product goes in a parcel: it weighs more than 0 kg.
+
+    A product that weighs nothing, such as a download, never travels, so de minimis never
+    applies to it.
+    """
+    return product.weight_kg > 0
+
+
 def de_minimis_applies(
     cif: Decimal, rule: DeMinimisRule | None, attributes: ProductAttributes
 ) -> bool:
@@ -59,12 +68,16 @@ def assess_duty(
     """The duty rate for a product's CIF in the market currency.
 
     A consolidated import always pays its category rate plus ``duty_adjustment``. A direct
-    parcel pays nothing when de minimis applies, whatever the adjustment; otherwise the same.
-    Raises ``ValueError`` for an unknown ``shipping``.
+    parcel pays nothing when the product travels and de minimis applies, whatever the
+    adjustment; otherwise the same. Raises ``ValueError`` for an unknown ``shipping``.
     """
     require_shipping(shipping)
     customs = market.customs
-    if shipping == "parcel" and de_minimis_applies(cif, customs.de_minimis, product.attributes):
+    if (
+        shipping == "parcel"
+        and travels(product)
+        and de_minimis_applies(cif, customs.de_minimis, product.attributes)
+    ):
         return DutyAssessment(rate=Decimal(0), waived=True)
     category_rate = customs.category_overrides.get(product.category, customs.default_duty_rate)
     return DutyAssessment(rate=category_rate + duty_adjustment, waived=False)

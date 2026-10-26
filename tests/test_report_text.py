@@ -97,7 +97,7 @@ Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA
 
 ### KSA (Saudi Arabia)
 
-No duty on a parcel whose CIF is below 1,000.00 SAR. Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1. Duty is waived on 10 of them.
+No duty on a parcel whose CIF is below 1,000.00 SAR. Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1. Duty is waived on 9 of them.
 
 | SKU | Product | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel duty |
 |---|---|---:|---:|---:|---|
@@ -110,12 +110,12 @@ No duty on a parcel whose CIF is below 1,000.00 SAR. Parcels are cheaper for 6 o
 | HOME-ESP-031 | Bean-to-Cup Espresso Machine | 4,144.95 | 4,344.95 | +4.8% | 5.0% |
 | BEAU-LIP-040 | Lip Balm | 16.95 | 15.95 | -5.9% | waived |
 | BEAU-SRM-041 | Vitamin C Serum 30 ml | 111.95 | 108.95 | -2.7% | waived |
-| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 340.95 | 340.95 | 0.0% | waived |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 340.95 | 340.95 | 0.0% | 0.0% |
 | GROC-TEA-060 | English Breakfast Tea, 80 bags | 34.95 | 37.95 | +8.6% | waived |
 
 ### UAE (United Arab Emirates)
 
-No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol. Parcels are cheaper for 5 of 12 products, dearer for 5 and unchanged for 2. Duty is waived on 10 of them.
+No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol. Parcels are cheaper for 5 of 12 products, dearer for 5 and unchanged for 2. Duty is waived on 9 of them.
 
 | SKU | Product | Consolidated (AED) | Direct parcel (AED) | Change | Parcel duty |
 |---|---|---:|---:|---:|---|
@@ -128,7 +128,7 @@ No duty on a parcel whose CIF is at or below 1,000.00 AED, except products conta
 | HOME-ESP-031 | Bean-to-Cup Espresso Machine | 3,685.99 | 3,844.99 | +4.3% | 5.0% |
 | BEAU-LIP-040 | Lip Balm | 14.99 | 14.99 | 0.0% | waived |
 | BEAU-SRM-041 | Vitamin C Serum 30 ml | 99.99 | 96.99 | -3.0% | waived |
-| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 304.99 | 304.99 | 0.0% | waived |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 304.99 | 304.99 | 0.0% | 0.0% |
 | GROC-TEA-060 | English Breakfast Tea, 80 bags | 29.99 | 32.99 | +10.0% | waived |
 | GROC-VAN-061 | Pure Vanilla Extract | 55.99 | 57.99 | +3.6% | 5.0% |
 
@@ -155,14 +155,14 @@ No de minimis rule, so every parcel pays duty. Parcels are cheaper for 0 of 11 p
 TARIFF_SECTION = """\
 ## Tariff exposure
 
-A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT.
+A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 1.8% for direct parcels in KSA; 9.3% and 2.4% in UAE; and 7.6% and 9.4% in KWT.
 
 | Market | Shipping model | +5 pp | +10 pp | +20 pp |
 |---|---|---:|---:|---:|
 | KSA | Consolidated import | +4.6% | +9.0% | +18.6% |
-| KSA | Direct parcel | +0.4% | +0.9% | +1.7% |
+| KSA | Direct parcel | +0.9% | +1.8% | +3.5% |
 | UAE | Consolidated import | +4.9% | +9.3% | +19.2% |
-| UAE | Direct parcel | +0.8% | +1.5% | +3.2% |
+| UAE | Direct parcel | +1.2% | +2.4% | +4.8% |
 | KWT | Consolidated import | +3.8% | +7.6% | +16.0% |
 | KWT | Direct parcel | +6.3% | +9.4% | +17.7% |
 
@@ -854,8 +854,8 @@ def test_parcel_rows_escape_cells_from_the_data(catalogue: Catalogue, config: Gc
 # --- tariff exposure (§9.3.2 item 3) ------------------------------------------------------
 
 TARIFF_SENTENCE = (
-    "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for "
-    "direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT."
+    "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 1.8% for "
+    "direct parcels in KSA; 9.3% and 2.4% in UAE; and 7.6% and 9.4% in KWT."
 )
 
 
