@@ -848,13 +848,19 @@ def test_shipping_defaults_to_consolidated(
     assert {item.quote.shipping for item in localised} == {"consolidated"}
 
 
-def test_shipping_does_not_change_delivery(
+def test_parcels_get_the_parcel_delivery_estimate(
     catalogue: Catalogue, config: GccConfig, localised: list[LocalisedProduct]
 ) -> None:
     parcels = localise_catalogue(
         catalogue.products, config, "KSA", THU_EVENING, Decimal("0"), "parcel"
     )
-    assert [item.delivery for item in parcels] == [item.delivery for item in localised]
+    expected = estimate_delivery(THU_EVENING, config.markets["KSA"], "parcel")
+
+    assert {item.delivery for item in parcels} == {expected}
+    # SPEC §8.3: dispatch Sun 18 in both models, one business day less on the road.
+    assert expected.dispatch_date == date(2026, 10, 18)
+    assert expected.delivery_date == date(2026, 10, 22)
+    assert {item.delivery.delivery_date for item in localised} == {date(2026, 10, 25)}
 
 
 def test_localise_and_summarise_compares_with_the_same_shipping_model_at_0_points(

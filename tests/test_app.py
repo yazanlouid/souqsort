@@ -347,12 +347,13 @@ def test_switching_markets_keeps_the_shipping_model(app: AppTest) -> None:
     assert _column(app, "Shelf price (AED)")[HEADPHONES] == Decimal("589.99")  # SPEC §7.9.2
 
 
-def test_shipping_model_does_not_change_delivery_dates(app: AppTest) -> None:
-    before = _column(app, DELIVERY)
+def test_delivery_column_follows_the_shipping_model(app: AppTest) -> None:
+    _order(app, date(2026, 10, 15), time(12, 0))  # Thu 12:00 in Riyadh
+    assert set(_column(app, DELIVERY).values()) == {"2026-10-22"}
 
     _ship(app, "parcel")
 
-    assert _column(app, DELIVERY) == before
+    assert set(_column(app, DELIVERY).values()) == {"2026-10-21"}  # SPEC §8.3
 
 
 # --- the duty slider changes prices -------------------------------------------------------

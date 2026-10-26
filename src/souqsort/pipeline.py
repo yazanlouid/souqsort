@@ -141,9 +141,10 @@ def localise_catalogue(
     require_shipping(shipping)
     market = find_market(config, market_code)
 
-    # The estimate depends only on the order time and the market, so every product shares it.
+    # The estimate depends only on the order time, the market and the shipping model, so every
+    # product shares it.
     try:
-        delivery = estimate_delivery(ordered_at, market)
+        delivery = estimate_delivery(ordered_at, market, shipping)
     except (ValueError, ArithmeticError) as exc:
         raise _about(market.code, exc) from exc
 

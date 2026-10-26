@@ -192,7 +192,7 @@ METHOD_SECTION = """\
 - Averages are unweighted means over the products a market sells.
 - Price components are rounded for display, and the rounding line makes each column add up to the shelf price, which is exact.
 - Markets side by side and pricing risks use consolidated imports, the default shipping model.
-- Delivery dates are the same for both shipping models.
+- Direct parcels have their own linehaul time, so they can arrive on a different day.
 """  # noqa: E501
 
 PRICE_SENTENCE = (

@@ -16,7 +16,7 @@ from souqsort.logistics.calendar import (
     is_business_day,
     to_market_time,
 )
-from souqsort.models import GccConfig, Holiday, MarketConfig
+from souqsort.models import GccConfig, Holiday, MarketConfig, ShippingModel
 
 WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")  # position = date.weekday()
 EVERY_DAY = frozenset(range(7))
@@ -49,11 +49,17 @@ def _with_calendar(market: MarketConfig, **changes: Any) -> MarketConfig:
     return market.model_copy(update={"calendar": market.calendar.model_copy(update=changes)})
 
 
-def _with_business_days(market: MarketConfig, linehaul: int, last_mile: int) -> MarketConfig:
-    """A copy of the market with different transit times; the original is untouched."""
-    logistics = market.logistics.model_copy(
-        update={"linehaul_business_days": linehaul, "last_mile_business_days": last_mile}
-    )
+def _with_business_days(
+    market: MarketConfig, linehaul: int, last_mile: int, parcel_linehaul: int | None = None
+) -> MarketConfig:
+    """A copy of the market with different transit times; the original is untouched.
+
+    ``parcel_linehaul`` keeps the market's own when it is ``None``.
+    """
+    changes = {"linehaul_business_days": linehaul, "last_mile_business_days": last_mile}
+    if parcel_linehaul is not None:
+        changes["parcel_linehaul_business_days"] = parcel_linehaul
+    logistics = market.logistics.model_copy(update=changes)
     return market.model_copy(update={"logistics": logistics})
 
 
@@ -585,6 +591,14 @@ class Scenario:
     holiday_offsets: frozenset[int]  # days from the order's UTC date
     linehaul: int
     last_mile: int
+    parcel_linehaul: int = 2
+    shipping: ShippingModel = "consolidated"
+
+    @property
+    def transit(self) -> int:
+        """Business days from dispatch to delivery in this scenario's shipping model."""
+        linehaul = self.parcel_linehaul if self.shipping == "parcel" else self.linehaul
+        return linehaul + self.last_mile
 
     def holidays(self, ordered_at: datetime) -> frozenset[date]:
         return frozenset(ordered_at.date() + timedelta(days=n) for n in self.holiday_offsets)
@@ -601,7 +615,7 @@ class Scenario:
             order_cutoff_local=self.cutoff,
             holidays=holidays,
         )
-        return _with_business_days(market, self.linehaul, self.last_mile)
+        return _with_business_days(market, self.linehaul, self.last_mile, self.parcel_linehaul)
 
 
 SCENARIOS = st.builds(
@@ -612,6 +626,8 @@ SCENARIOS = st.builds(
     holiday_offsets=HOLIDAY_OFFSETS,
     linehaul=st.integers(0, 10),
     last_mile=st.integers(0, 10),
+    parcel_linehaul=st.integers(0, 10),
+    shipping=st.sampled_from(["consolidated", "parcel"]),
 )
 
 # Always tried: a cutoff inside the hour London repeats on Sun 2026-10-25.
@@ -663,7 +679,7 @@ def test_dispatch_and_delivery_are_never_on_a_weekend_day_or_holiday(
     market = scenario.market(config.markets["KSA"], ordered_at)
     weekend, holidays = scenario.weekend, scenario.holidays(ordered_at)
 
-    estimate = estimate_delivery(ordered_at, market)
+    estimate = estimate_delivery(ordered_at, market, scenario.shipping)
 
     local_date = estimate.ordered_at_local.date()
     dispatch, delivery = estimate.dispatch_date, estimate.delivery_date
@@ -672,14 +688,14 @@ def test_dispatch_and_delivery_are_never_on_a_weekend_day_or_holiday(
     assert _is_working(dispatch, weekend, holidays)
     assert _is_working(delivery, weekend, holidays)
     # Dispatch is the order's local date or the first business day after it, and delivery
-    # is exactly linehaul + last-mile business days after dispatch.
+    # is exactly the model's linehaul + last-mile business days after dispatch.
     assert dispatch >= local_date
     moved = int(dispatch != local_date)
     assert _business_days_in(local_date, dispatch, weekend, holidays) == moved
-    assert (
-        _business_days_in(dispatch, delivery, weekend, holidays)
-        == scenario.linehaul + scenario.last_mile
-    )
+    assert _business_days_in(dispatch, delivery, weekend, holidays) == scenario.transit
+    # Both models share the dispatch rule.
+    other: ShippingModel = "consolidated" if scenario.shipping == "parcel" else "parcel"
+    assert estimate_delivery(ordered_at, market, other).dispatch_date == dispatch
 
 
 @given(scenario=SCENARIOS, first=ORDER_TIMES, gap=GAPS)
@@ -694,8 +710,37 @@ def test_later_order_never_gets_an_earlier_delivery_date(
     market = scenario.market(config.markets["KSA"], first)
     second = min(first + gap, LAST_ORDER_TIME)
 
-    earlier = estimate_delivery(first, market)
-    later = estimate_delivery(second, market)
+    earlier = estimate_delivery(first, market, scenario.shipping)
+    later = estimate_delivery(second, market, scenario.shipping)
 
     assert later.dispatch_date >= earlier.dispatch_date
     assert later.delivery_date >= earlier.delivery_date
+
+
+# --- direct parcels (SPEC §8.3, M15) ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("parcel_linehaul", "delivery"),
+    [(0, date(2026, 10, 19)), (2, date(2026, 10, 21)), (3, date(2026, 10, 22))],
+)
+def test_a_parcel_takes_the_parcel_linehaul(
+    config: GccConfig, parcel_linehaul: int, delivery: date
+) -> None:
+    # Thu 12:00 in Riyadh, before the cutoff: dispatch Thu 15, then parcel linehaul + 2.
+    market = _with_business_days(config.markets["KSA"], 3, 2, parcel_linehaul)
+
+    parcel = estimate_delivery(_utc("2026-10-15 09:00"), market, "parcel")
+    consolidated = estimate_delivery(_utc("2026-10-15 09:00"), market, "consolidated")
+
+    assert parcel.dispatch_date == consolidated.dispatch_date == date(2026, 10, 15)
+    assert parcel.delivery_date == delivery
+    assert consolidated.delivery_date == date(2026, 10, 22)
+
+
+@pytest.mark.parametrize("shipping", ["bulk", "Parcel", "", None])
+def test_estimate_delivery_rejects_an_unknown_shipping_model(
+    config: GccConfig, shipping: Any
+) -> None:
+    with pytest.raises(ValueError, match="one of consolidated, parcel"):
+        estimate_delivery(_utc("2026-10-15 09:00"), config.markets["KSA"], shipping)

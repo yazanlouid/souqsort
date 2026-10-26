@@ -375,6 +375,19 @@ def test_shipping_parcel_prices_direct_parcels(run: Callable[..., Result]) -> No
     assert rows[ESPRESSO][DUTY] == "5.0%"
 
 
+@pytest.mark.parametrize(
+    ("shipping", "delivery"), [("parcel", "2026-10-21"), ("consolidated", "2026-10-22")]
+)
+def test_delivery_column_follows_the_shipping_model(
+    run: Callable[..., Result], shipping: str, delivery: str
+) -> None:
+    # Thu 12:00 in Riyadh, before the cutoff (SPEC §8.3).
+    result = run(*PRICE_KSA, "--ordered-at", "2026-10-15T12:00", "--shipping", shipping)
+
+    _, rows = _table(result.out)
+    assert {cells[DELIVERY] for cells in rows.values()} == {delivery}
+
+
 def test_shipping_defaults_to_consolidated(run: Callable[..., Result]) -> None:
     default = run(*PRICE_KSA, *THU_EVENING)
     explicit = run(*PRICE_KSA, *THU_EVENING, "--shipping", "consolidated")
