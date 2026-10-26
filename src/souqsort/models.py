@@ -181,12 +181,23 @@ class DeMinimisRule(_Model):
         return _reject_duplicate_attributes(value, "excluded")
 
 
+class ParcelFee(_Model):
+    """A flat customs fee, in the market currency, that every direct parcel pays at checkout."""
+
+    amount: PositiveDecimal
+    source: NonEmptyStr
+
+
 class CustomsConfig(_Model):
-    """Duty rates and the de minimis rule; ``de_minimis`` is required and ``None`` means none."""
+    """Duty rates, the de minimis rule and the parcel fee.
+
+    ``de_minimis`` and ``parcel_fee`` are required keys; ``None`` means none.
+    """
 
     default_duty_rate: NonNegativeDecimal
     category_overrides: dict[CategoryName, NonNegativeDecimal]
     de_minimis: DeMinimisRule | None
+    parcel_fee: ParcelFee | None
 
 
 class ComplianceConfig(_Model):
@@ -241,11 +252,15 @@ class CalendarConfig(_Model):
 
 
 class LogisticsConfig(_Model):
-    """Freight per kg for a consolidated import and for a direct parcel, and transit days."""
+    """Freight per kg and linehaul days for a consolidated import and for a direct parcel.
+
+    Both models share the last mile.
+    """
 
     freight_per_kg_usd: NonNegativeDecimal
     parcel_freight_per_kg_usd: NonNegativeDecimal
     linehaul_business_days: NonNegativeInt
+    parcel_linehaul_business_days: NonNegativeInt
     last_mile_business_days: NonNegativeInt
 
 
@@ -273,15 +288,26 @@ class MarketConfig(_Model):
     logistics: LogisticsConfig
 
     @model_validator(mode="after")
-    def _threshold_fits_currency(self) -> Self:
-        """A de minimis threshold is whole minor units, so the report states it exactly."""
-        rule = self.customs.de_minimis
+    def _amounts_fit_currency(self) -> Self:
+        """A de minimis threshold and a parcel fee are whole minor units.
+
+        The report then states the threshold exactly, and the fee is charged as it is written.
+        """
+        customs = self.customs
         minor_units = self.currency.minor_units
-        if rule is not None and _decimal_places(rule.threshold) > minor_units:
-            raise ValueError(
-                f"{self.code}: de minimis threshold {rule.threshold} has more decimals than "
-                f"minor_units ({minor_units})"
-            )
+        amounts = (
+            (
+                "de minimis threshold",
+                None if customs.de_minimis is None else customs.de_minimis.threshold,
+            ),
+            ("parcel fee", None if customs.parcel_fee is None else customs.parcel_fee.amount),
+        )
+        for name, amount in amounts:
+            if amount is not None and _decimal_places(amount) > minor_units:
+                raise ValueError(
+                    f"{self.code}: {name} {amount} has more decimals than "
+                    f"minor_units ({minor_units})"
+                )
         return self
 
 

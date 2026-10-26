@@ -71,7 +71,7 @@ from souqsort.report.text import (
 HEADER = """\
 # GCC expansion report
 
-An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-10-01, FX rates as of 2026-10-01 and catalogue 2026-10-01.
+An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-11-01, FX rates as of 2026-10-01 and catalogue 2026-10-01.
 
 > All market data is illustrative. Do not use it to quote real prices or delivery dates.
 

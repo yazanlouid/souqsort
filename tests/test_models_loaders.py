@@ -103,7 +103,7 @@ def test_sample_catalogue_loads(catalogue_path: Path) -> None:
 def test_sample_config_loads(config_path: Path) -> None:
     config = load_gcc_config(config_path)
 
-    assert config.config_version == "2026-10-01"
+    assert config.config_version == "2026-11-01"
     assert config.fx.as_of == date(2026, 10, 1)
     assert config.fx.per_usd["SAR"] == Decimal("3.7500")
     assert config.fx.per_usd["GBP"] == Decimal("0.7450")
@@ -590,6 +590,81 @@ def test_zero_parcel_freight_accepted(write_json: WriteJson, raw_config: Raw) ->
     assert ksa.logistics.parcel_freight_per_kg_usd == 0
 
 
+def test_sample_markets_have_the_parcel_fees_and_linehauls_in_the_spec(config_path: Path) -> None:
+    markets = load_gcc_config(config_path).markets
+    ksa_fee = markets["KSA"].customs.parcel_fee
+    assert ksa_fee is not None
+    assert str(ksa_fee.amount) == "15.00"  # exactly, as written
+    assert ksa_fee.source.startswith("illustrative, modelled on ZATCA: SAR 15 to declare")
+    assert markets["UAE"].customs.parcel_fee is None
+    assert markets["KWT"].customs.parcel_fee is None
+    assert {code: m.logistics.parcel_linehaul_business_days for code, m in markets.items()} == {
+        "KSA": 2,
+        "UAE": 2,
+        "KWT": 2,
+    }
+
+
+def test_market_without_parcel_fee_key_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    del _ksa(raw_config)["customs"]["parcel_fee"]
+    _reject_config(write_json, raw_config, "parcel_fee", "Field required")
+
+
+def test_null_parcel_fee_accepted(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["customs"]["parcel_fee"] = None
+    assert _load_config(write_json, raw_config).markets["KSA"].customs.parcel_fee is None
+
+
+@pytest.mark.parametrize(
+    ("amount", "fragments"),
+    [
+        ("0", ("amount", "greater than 0")),
+        ("-15.00", ("amount", "greater than 0")),
+        (15, ("amount", "decimal string")),
+        (15.0, ("amount", "decimal string")),
+        ("15.001", ("KSA:", "parcel fee 15.001", "minor_units (2)")),
+    ],
+)
+def test_bad_parcel_fee_amount_rejected(
+    write_json: WriteJson, raw_config: Raw, amount: Any, fragments: tuple[str, ...]
+) -> None:
+    _ksa(raw_config)["customs"]["parcel_fee"]["amount"] = amount
+    _reject_config(write_json, raw_config, *fragments)
+
+
+@pytest.mark.parametrize("amount", ["15", "15.00", "15.000"])
+def test_parcel_fee_in_whole_minor_units_accepted(
+    write_json: WriteJson, raw_config: Raw, amount: str
+) -> None:
+    _ksa(raw_config)["customs"]["parcel_fee"]["amount"] = amount
+    fee = _load_config(write_json, raw_config).markets["KSA"].customs.parcel_fee
+    assert fee is not None
+    assert fee.amount == Decimal("15")
+
+
+def test_parcel_fee_with_three_minor_units_accepted(write_json: WriteJson, raw_config: Raw) -> None:
+    fee = {**_ksa(raw_config)["customs"]["parcel_fee"], "amount": "1.125"}
+    raw_config["markets"]["KWT"]["customs"]["parcel_fee"] = fee
+    loaded = _load_config(write_json, raw_config).markets["KWT"].customs.parcel_fee
+    assert loaded is not None
+    assert loaded.amount == Decimal("1.125")
+
+
+def test_empty_parcel_fee_source_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["customs"]["parcel_fee"]["source"] = ""
+    _reject_config(write_json, raw_config, "parcel_fee.source")
+
+
+def test_unknown_parcel_fee_key_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    _ksa(raw_config)["customs"]["parcel_fee"]["vat"] = "0"
+    _reject_config(write_json, raw_config, "parcel_fee.vat")
+
+
+def test_market_without_parcel_linehaul_rejected(write_json: WriteJson, raw_config: Raw) -> None:
+    del _ksa(raw_config)["logistics"]["parcel_linehaul_business_days"]
+    _reject_config(write_json, raw_config, "parcel_linehaul_business_days", "Field required")
+
+
 def test_de_minimis_boundary_fixture_loads(de_minimis_boundary_config: GccConfig) -> None:
     markets = de_minimis_boundary_config.markets
     assert list(markets) == ["TEST-BELOW", "TEST-AT-OR-BELOW"]
@@ -610,12 +685,16 @@ def test_de_minimis_boundary_fixture_loads(de_minimis_boundary_config: GccConfig
         assert market.compliance.banned_attributes == ()
         assert market.logistics.freight_per_kg_usd == 0
         assert market.logistics.parcel_freight_per_kg_usd == 0
+        assert market.customs.parcel_fee is None
+        assert market.logistics.parcel_linehaul_business_days == 2
 
 
 def test_zero_vat_fixture_has_no_de_minimis(zero_vat_config: GccConfig) -> None:
     market = zero_vat_config.markets["TEST-KWD"]
     assert market.customs.de_minimis is None
     assert market.logistics.parcel_freight_per_kg_usd == Decimal("9.00")
+    assert market.customs.parcel_fee is None
+    assert market.logistics.parcel_linehaul_business_days == 2
 
 
 @pytest.mark.parametrize("key", ["Fashion", "FASHION", "fashion wear"])
@@ -751,7 +830,10 @@ def test_cutoff_boundaries_accepted(
 # --- LogisticsConfig ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("field", ["linehaul_business_days", "last_mile_business_days"])
+@pytest.mark.parametrize(
+    "field",
+    ["linehaul_business_days", "parcel_linehaul_business_days", "last_mile_business_days"],
+)
 @pytest.mark.parametrize("value", [-1, "3", 3.0])
 def test_bad_business_day_count_rejected(
     write_json: WriteJson, raw_config: Raw, field: str, value: Any

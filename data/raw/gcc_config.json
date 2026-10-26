@@ -1,5 +1,5 @@
 {
-  "config_version": "2026-10-01",
+  "config_version": "2026-11-01",
   "fx": {
     "as_of": "2026-10-01",
     "source": "manual snapshot (illustrative)",
@@ -13,7 +13,8 @@
       "customs": {
         "default_duty_rate": "0.05",
         "category_overrides": { "fashion": "0.12", "digital": "0.00" },
-        "de_minimis": { "threshold": "1000.00", "applies": "below", "excluded_attributes": [], "source": "illustrative, modelled on ZATCA: no customs duty on e-store purchases under SAR 1,000 including shipping and insurance; VAT still due" }
+        "de_minimis": { "threshold": "1000.00", "applies": "below", "excluded_attributes": [], "source": "illustrative, modelled on ZATCA: no customs duty on e-store purchases under SAR 1,000 including shipping and insurance; VAT still due" },
+        "parcel_fee": { "amount": "15.00", "source": "illustrative, modelled on ZATCA: SAR 15 to declare an e-store shipment valued up to SAR 1,000, and a minimum import fee of SAR 15 above that; no VAT is charged on the fee here" }
       },
       "compliance": { "banned_attributes": ["contains_alcohol", "contains_pork"], "source": "illustrative - alcohol and pork products are not allowed; verify before quoting" },
       "calendar": {
@@ -27,7 +28,7 @@
           { "date": "2027-03-11", "name": "Eid al-Fitr", "provisional": true }
         ]
       },
-      "logistics": { "freight_per_kg_usd": "4.50", "parcel_freight_per_kg_usd": "9.00", "linehaul_business_days": 3, "last_mile_business_days": 2 }
+      "logistics": { "freight_per_kg_usd": "4.50", "parcel_freight_per_kg_usd": "9.00", "linehaul_business_days": 3, "parcel_linehaul_business_days": 2, "last_mile_business_days": 2 }
     },
     "UAE": {
       "name": "United Arab Emirates",
@@ -36,7 +37,8 @@
       "customs": {
         "default_duty_rate": "0.05",
         "category_overrides": { "digital": "0.00" },
-        "de_minimis": { "threshold": "1000.00", "applies": "at_or_below", "excluded_attributes": ["contains_alcohol"], "source": "illustrative, modelled on Dubai Customs from 2026-08-03: no customs duty on e-commerce goods not exceeding AED 1,000, except tobacco, nicotine and alcohol, including food preparations containing alcohol" }
+        "de_minimis": { "threshold": "1000.00", "applies": "at_or_below", "excluded_attributes": ["contains_alcohol"], "source": "illustrative, modelled on Dubai Customs from 2026-08-03: no customs duty on e-commerce goods not exceeding AED 1,000, except tobacco, nicotine and alcohol, including food preparations containing alcohol" },
+        "parcel_fee": null
       },
       "compliance": { "banned_attributes": ["contains_pork"], "source": "illustrative - the retailer holds no licence to sell pork products in the UAE; verify before quoting" },
       "calendar": {
@@ -52,13 +54,13 @@
           { "date": "2027-03-11", "name": "Eid al-Fitr", "provisional": true }
         ]
       },
-      "logistics": { "freight_per_kg_usd": "4.00", "parcel_freight_per_kg_usd": "8.00", "linehaul_business_days": 3, "last_mile_business_days": 1 }
+      "logistics": { "freight_per_kg_usd": "4.00", "parcel_freight_per_kg_usd": "8.00", "linehaul_business_days": 3, "parcel_linehaul_business_days": 2, "last_mile_business_days": 1 }
     },
     "KWT": {
       "name": "Kuwait",
       "currency": { "code": "KWD", "minor_units": 3, "charm_ending": "0.950" },
       "tax": { "vat_rate": "0", "source": "illustrative - Kuwait has no VAT; verify before quoting", "effective_from": "2026-10-01" },
-      "customs": { "default_duty_rate": "0.05", "category_overrides": { "digital": "0.00" }, "de_minimis": null },
+      "customs": { "default_duty_rate": "0.05", "category_overrides": { "digital": "0.00" }, "de_minimis": null, "parcel_fee": null },
       "compliance": { "banned_attributes": ["contains_alcohol", "contains_pork"], "source": "illustrative - alcohol and pork products are not allowed; verify before quoting" },
       "calendar": {
         "timezone": "Asia/Kuwait",
@@ -73,7 +75,7 @@
           { "date": "2027-03-11", "name": "Eid al-Fitr", "provisional": true }
         ]
       },
-      "logistics": { "freight_per_kg_usd": "5.00", "parcel_freight_per_kg_usd": "10.00", "linehaul_business_days": 3, "last_mile_business_days": 2 }
+      "logistics": { "freight_per_kg_usd": "5.00", "parcel_freight_per_kg_usd": "10.00", "linehaul_business_days": 3, "parcel_linehaul_business_days": 2, "last_mile_business_days": 2 }
     }
   }
 }

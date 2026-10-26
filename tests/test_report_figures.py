@@ -147,7 +147,7 @@ def test_not_sold_lists_and_reasons(report: ExpansionReport) -> None:
 
 def test_report_names_its_data_and_order(report: ExpansionReport) -> None:
     assert report.ordered_at == REPORT_ORDERED_AT
-    assert report.config_version == "2026-10-01"
+    assert report.config_version == "2026-11-01"
     assert report.fx_as_of == date(2026, 10, 1)
     assert report.catalogue_version == "2026-10-01"
     assert report.product_count == SAMPLE_PRODUCT_COUNT

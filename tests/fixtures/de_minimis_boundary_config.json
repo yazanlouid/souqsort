@@ -13,7 +13,8 @@
       "customs": {
         "default_duty_rate": "0.05",
         "category_overrides": {},
-        "de_minimis": { "threshold": "1000.00", "applies": "below", "excluded_attributes": [], "source": "test fixture - below the threshold" }
+        "de_minimis": { "threshold": "1000.00", "applies": "below", "excluded_attributes": [], "source": "test fixture - below the threshold" },
+        "parcel_fee": null
       },
       "compliance": { "banned_attributes": [], "source": "test fixture - nothing banned" },
       "calendar": {
@@ -22,7 +23,7 @@
         "order_cutoff_local": "14:00",
         "holidays": []
       },
-      "logistics": { "freight_per_kg_usd": "0", "parcel_freight_per_kg_usd": "0", "linehaul_business_days": 3, "last_mile_business_days": 2 }
+      "logistics": { "freight_per_kg_usd": "0", "parcel_freight_per_kg_usd": "0", "linehaul_business_days": 3, "parcel_linehaul_business_days": 2, "last_mile_business_days": 2 }
     },
     "TEST-AT-OR-BELOW": {
       "name": "Test market (de minimis at or below 1,000)",
@@ -31,7 +32,8 @@
       "customs": {
         "default_duty_rate": "0.05",
         "category_overrides": {},
-        "de_minimis": { "threshold": "1000.00", "applies": "at_or_below", "excluded_attributes": [], "source": "test fixture - at or below the threshold" }
+        "de_minimis": { "threshold": "1000.00", "applies": "at_or_below", "excluded_attributes": [], "source": "test fixture - at or below the threshold" },
+        "parcel_fee": null
       },
       "compliance": { "banned_attributes": [], "source": "test fixture - nothing banned" },
       "calendar": {
@@ -40,7 +42,7 @@
         "order_cutoff_local": "14:00",
         "holidays": []
       },
-      "logistics": { "freight_per_kg_usd": "0", "parcel_freight_per_kg_usd": "0", "linehaul_business_days": 3, "last_mile_business_days": 2 }
+      "logistics": { "freight_per_kg_usd": "0", "parcel_freight_per_kg_usd": "0", "linehaul_business_days": 3, "parcel_linehaul_business_days": 2, "last_mile_business_days": 2 }
     }
   }
 }
