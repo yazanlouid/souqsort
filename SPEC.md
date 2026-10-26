@@ -1,14 +1,14 @@
-# SouqSort — Specification (v0.3)
+# SouqSort — Specification (v0.4)
 
 > The single source of truth for building SouqSort with Claude Code.
-> Work one milestone at a time (M0 → M14). Each milestone lists its acceptance tests.
-> v0.1 (M0–M6) is done and tagged `v0.1.0`. v0.2 (**M7 → Fix #2 → M8 → M9 → M10 → Release**) is done and tagged `v0.2.0`. v0.3 (**M11 → M12 → M13 → M14 → Release**) is done and tagged `v0.3.0`. Each step has its own branch and reaches `main` through a pull request with green CI.
+> Work one milestone at a time (M0 → M18). Each milestone lists its acceptance tests.
+> v0.1 (M0–M6) is done and tagged `v0.1.0`. v0.2 (**M7 → Fix #2 → M8 → M9 → M10 → Release**) is done and tagged `v0.2.0`. v0.3 (**M11 → M12 → M13 → M14 → Release**) is done and tagged `v0.3.0`. v0.4 runs **M15 → M16 → M17 → M18 → Release**. Each step has its own branch and reaches `main` through a pull request with green CI.
 
 ## 1. What SouqSort is
 
-SouqSort is a localisation and pricing engine for a UK-based retailer launching its catalogue in three GCC markets: Saudi Arabia (KSA), the UAE and Kuwait. It turns a global catalogue priced in USD/GBP into market-ready shelf prices and delivery promises, and shows the result in a Streamlit dashboard. v0.2 added the UAE and Kuwait, compliance rules and de minimis. v0.3 adds `GCC_EXPANSION_REPORT.md`, which puts every market and both shipping models side by side for one order. Later versions add a data pipeline.
+SouqSort is a localisation and pricing engine for a UK-based retailer launching its catalogue in three GCC markets: Saudi Arabia (KSA), the UAE and Kuwait. It turns a global catalogue priced in USD/GBP into market-ready shelf prices and delivery promises, and shows the result in a Streamlit dashboard. v0.2 added the UAE and Kuwait, compliance rules and de minimis. v0.3 added `GCC_EXPANSION_REPORT.md`, which puts every market and both shipping models side by side for one order. v0.4 prices real orders: several items, the de minimis threshold on the whole order, and what a direct parcel adds at checkout. Later versions add pricing decisions and a data pipeline.
 
-**Demo user:** an expansion director who picks a market and a shipping model, adjusts tariffs and sees what happens to prices, margins and delivery dates, then downloads a report that compares the markets.
+**Demo user:** an expansion director who picks a market and a shipping model, adjusts tariffs and sees what happens to prices, margins and delivery dates, prices a customer's basket both ways, then downloads a report that compares the markets.
 
 ## 2. Scope
 
@@ -32,22 +32,29 @@ SouqSort is a localisation and pricing engine for a UK-based retailer launching 
 - **Reproducible:** the same catalogue, config and order time give the same bytes on every OS. A sample for a fixed order lives in `docs/`, and a test keeps it current.
 - **Claude Code:** a `/release` skill that turns the release steps into one command, used to ship v0.3.0.
 
-### Later (do NOT build in v0.3)
-- **Pricing refinements:** per-parcel fees and minimum charges (for example ZATCA's SAR 15 declaration fee on e-store shipments up to SAR 1,000); different transit times for parcels; orders of several items (a threshold applies to a whole order, while v0.2 prices each product as a one-item order); VAT relief for low-value imports; tobacco and nicotine attributes; insurance in CIF; a price ladder for KWD (§7.9.4).
-- **Mid-project upgrades:** calculation traces (`PriceStep`) and a price waterfall in the dashboard; data pipeline (catalogue generator, DuckDB bronze/silver/gold tables, quarantine, run manifest, reconciliation check); a tariff pass-through slider and breakeven analysis. (v0.3's report covers tariff sensitivity and a market scorecard.)
+### v0.4: real orders
+- **Orders of several items** (§7.10): an order ships as one parcel, and the de minimis threshold applies to its whole CIF. Shelf prices never change with the basket. What an order adds is charged at checkout: a customs fee and, when the parcel fails the threshold, the duty its shelf prices left out, with the VAT on it.
+- **Parcel costs** (§6.2, §7.7, §8.3): a flat customs fee per parcel in KSA (SAR 15) and a linehaul of their own for direct parcels. A product that weighs nothing, such as a download, never travels in a parcel.
+- **Everywhere:** an `order` CLI command and an Order tab in the dashboard, both showing the two shipping models side by side, and an Orders section in the report for three sample orders (§6.3). The report compares products as one-item orders, so the fee counts: in KSA, parcels are cheaper for 3 of 11 products, not 6.
+- **Claude Code:** the money-reviewer learns the parcel and order rules, and `/release` ships v0.4.0, its second use.
+
+### Later (do NOT build in v0.4)
+- **Pricing decisions (next, v0.5):** a price ladder for KWD (§7.9.4); a tariff pass-through slider and breakeven analysis, so that a cost can come out of margin instead of reaching the customer; calculation traces (`PriceStep`) and a price waterfall in the dashboard.
+- **Pricing refinements:** minimum parcel charges; splitting an order into several parcels; Saudi Arabia's percentage import fee (0.15% of the value, at least SAR 15 and at most SAR 500 per declaration) for consolidated imports and large parcels; VAT relief for low-value imports; tobacco and nicotine attributes; insurance in CIF.
+- **Data pipeline:** catalogue generator, DuckDB bronze/silver/gold tables, quarantine, run manifest, reconciliation check.
 - **An AI-written summary** for the report, as its own milestone: written only from the report's figures, with a check that rejects any number that is not among them.
 - **Late:** FastAPI adapter, deployment and a live demo, README polish, ADRs.
 
 ## 3. Non-negotiables (also in CLAUDE.md)
 
 1. Money, rates and weights are `decimal.Decimal`, never `float`. In JSON they are strings.
-2. Keep full precision through every step; round once, at the shelf price.
+2. Keep full precision through every step; round once, at the shelf price. From v0.4, each amount an order adds at checkout is also rounded once, with no price ending, and an order's totals are exact sums.
 3. `app/` contains no business logic. It calls `souqsort` and displays results.
 4. Markets are data, including their compliance, customs and de minimis rules. No code branches on a market code.
 5. No code in `src/` reads the clock except the CLI entry point in `cli.py`, which defaults `--ordered-at` to now through an injectable `now` callable. Everything else is passed a timezone-aware `ordered_at`.
 6. Engine functions return result objects (e.g. `PriceQuote`), not bare numbers.
 7. A product that a market does not allow is never priced for that market and never silently dropped. It is reported as not sold, with the reason.
-8. The expansion report is a pure function of the catalogue, the config and the order time: the same inputs give the same bytes on every OS. Its template only places text; every number is formatted in Python, from `Decimal`.
+8. The expansion report is a pure function of the catalogue, the config, the sample orders and the order time: the same inputs give the same bytes on every OS. Its template only places text; every number is formatted in Python, from `Decimal`.
 
 ## 4. Tech stack
 
@@ -56,9 +63,9 @@ SouqSort is a localisation and pricing engine for a UK-based retailer launching 
   - `tzdata` is required on Windows, which has no system timezone database for `zoneinfo`.
 - Dev dependencies: `pytest`, `hypothesis`, `ruff`, `mypy`.
 - Standard library: `decimal`, `zoneinfo`, `datetime`, `argparse`, `json`, `dataclasses`.
-- CI (from M7): GitHub Actions on Ubuntu and Windows (`.github/workflows/ci.yml`). v0.2 added no dependencies. v0.3 makes `jinja2` a direct one; Streamlit already installs it, so `uv.lock` gains no package.
+- CI (from M7): GitHub Actions on Ubuntu and Windows (`.github/workflows/ci.yml`). v0.2 added no dependencies. v0.3 makes `jinja2` a direct one; Streamlit already installs it, so `uv.lock` gains no package. v0.4 adds none.
 
-## 5. Project structure (v0.3)
+## 5. Project structure (v0.4)
 
 ```
 souqsort/
@@ -82,7 +89,7 @@ souqsort/
 │   │   ├── add-market/SKILL.md  # M8
 │   │   └── release/SKILL.md  # M14
 │   └── agents/
-│       └── money-reviewer.md # M10; widened to the report in M11
+│       └── money-reviewer.md # M10; widened to the report in M11 and to orders in M16
 ├── docs/
 │   ├── dashboard.png         # the README screenshot
 │   └── GCC_EXPANSION_REPORT.md  # M13: the sample report (§9.5)
@@ -90,7 +97,8 @@ souqsort/
 ├── data/
 │   └── raw/
 │       ├── global_products.json
-│       └── gcc_config.json
+│       ├── gcc_config.json
+│       └── sample_orders.json  # M16 (§6.3)
 ├── src/
 │   └── souqsort/
 │       ├── __init__.py
@@ -108,6 +116,7 @@ souqsort/
 │       │   ├── __init__.py
 │       │   └── calendar.py   # business days, delivery estimate
 │       ├── pipeline.py       # localise_catalogue(), localise_and_summarise()
+│       ├── orders.py         # M16: quote_order() -> OrderQuote (§7.10)
 │       ├── display.py        # display rows shared by the CLI and the dashboard
 │       ├── report/           # M11–M13: the expansion report (§9)
 │       │   ├── __init__.py   # build_report(), render_report()
@@ -115,7 +124,7 @@ souqsort/
 │       │   ├── text.py       # formatting, sentences, render_report()
 │       │   └── templates/
 │       │       └── expansion_report.md.j2
-│       └── cli.py            # the price and report commands
+│       └── cli.py            # the price, order and report commands
 ├── app/
 │   └── streamlit_app.py
 └── tests/
@@ -137,6 +146,7 @@ souqsort/
     ├── test_compliance.py    # M9
     ├── test_format_hook.py   # M9
     ├── test_customs.py       # M10
+    ├── test_orders.py        # M16: §7.10
     ├── test_report_figures.py  # M11–M13
     ├── test_report_text.py   # M11–M13: formatting, sentences, the template context
     └── test_report_sample.py # M13: docs/GCC_EXPANSION_REPORT.md stays current
@@ -167,7 +177,7 @@ souqsort/
 
 Rules:
 - `sku` is unique. `currency` is `USD` or `GBP`.
-- `base_price` and `unit_cost` are > 0; `weight_kg` is ≥ 0. All three are strings.
+- `base_price` and `unit_cost` are > 0; `weight_kg` is ≥ 0. All three are strings. A product that weighs 0 kg, such as a download, never travels in a parcel (§7.7.2, §7.10).
 - `base_price` is the global retail price before any tax or duty. `unit_cost` is what the retailer pays, in the same currency.
 - `name.ar` may be `null`. Flag it; never crash.
 - A money or weight field given as a JSON number (e.g. `149.99` without quotes) must be rejected with a clear error.
@@ -201,13 +211,13 @@ The catalogue has **13 hand-written products** (12 in v0.1; the 13th arrives in 
 
 M8 also fixes `HOME-KTL-030`'s `hs_code` from `851671` to `851679`: heading 8516.71 is coffee and tea makers, and electric kettles are 8516.79. HS codes are not used in any calculation.
 
-### 6.2 `data/raw/gcc_config.json` (v0.2: KSA, UAE, Kuwait)
+### 6.2 `data/raw/gcc_config.json` (v0.2: KSA, UAE, Kuwait; parcel costs from v0.4)
 
-The top of the file is as in v0.1:
+The top of the file is as in v0.1, except that `config_version` is 2026-11-01 from M15:
 
 ```json
 {
-  "config_version": "2026-10-01",
+  "config_version": "2026-11-01",
   "fx": {
     "as_of": "2026-10-01",
     "source": "manual snapshot (illustrative)",
@@ -217,7 +227,7 @@ The top of the file is as in v0.1:
 }
 ```
 
-The final v0.2 shape of a market, shown for the UAE. Fields marked M9 or M10 arrive in those milestones; until then a market has the v0.1 fields only. (JSON has no comments: the `// M9` marks are for this document only.)
+The v0.4 shape of a market, shown for the UAE. Fields marked M9, M10 or M15 arrive in those milestones; before them a market has the v0.1 fields only. (JSON has no comments: the `// M9` marks are for this document only.)
 
 ```json
 "UAE": {
@@ -232,7 +242,8 @@ The final v0.2 shape of a market, shown for the UAE. Fields marked M9 or M10 arr
       "applies": "at_or_below",
       "excluded_attributes": ["contains_alcohol"],
       "source": "illustrative, modelled on Dubai Customs from 2026-08-03: no customs duty on e-commerce goods not exceeding AED 1,000, except tobacco, nicotine and alcohol, including food preparations containing alcohol"
-    }
+    },
+    "parcel_fee": null                                                     // M15
   },
   "compliance": {                                                          // M9
     "banned_attributes": ["contains_pork"],
@@ -255,6 +266,7 @@ The final v0.2 shape of a market, shown for the UAE. Fields marked M9 or M10 arr
     "freight_per_kg_usd": "4.00",
     "parcel_freight_per_kg_usd": "8.00",                                   // M10
     "linehaul_business_days": 3,
+    "parcel_linehaul_business_days": 2,                                    // M15
     "last_mile_business_days": 1
   }
 }
@@ -269,17 +281,20 @@ All three markets:
 | VAT, `effective_from` | `0.15`, 2020-07-01 | `0.05`, 2018-01-01 | `0`, 2026-10-01 (Kuwait has no VAT) |
 | default duty; overrides | `0.05`; fashion `0.12`, digital `0.00` | `0.05`; digital `0.00` | `0.05`; digital `0.00` |
 | de minimis (M10) | `1000.00`, `below`, none excluded | `1000.00`, `at_or_below`, `contains_alcohol` | `null` |
+| parcel fee (M15) | `15.00` | `null` | `null` |
 | banned attributes (M9) | `contains_alcohol`, `contains_pork` | `contains_pork` | `contains_alcohol`, `contains_pork` |
 | timezone | Asia/Riyadh (UTC+3) | Asia/Dubai (UTC+4) | Asia/Kuwait (UTC+3) |
 | weekend | FRI SAT | SAT SUN | FRI SAT |
 | order cutoff | 14:00 | 15:00 | 13:00 |
 | freight; parcel freight (USD/kg, M10) | `4.50`; `9.00` | `4.00`; `8.00` | `5.00`; `10.00` |
 | linehaul + last mile (business days) | 3 + 2 | 3 + 1 | 3 + 2 |
+| parcel linehaul (business days, M15) | 2 | 2 | 2 |
 
 `source` strings not shown above:
 - KSA and UAE tax: "illustrative - verify before quoting" (as in v0.1). KWT tax: "illustrative - Kuwait has no VAT; verify before quoting".
 - KSA and KWT compliance: "illustrative - alcohol and pork products are not allowed; verify before quoting".
 - KSA de minimis: "illustrative, modelled on ZATCA: no customs duty on e-store purchases under SAR 1,000 including shipping and insurance; VAT still due".
+- KSA parcel fee (M15): "illustrative, modelled on ZATCA: SAR 15 to declare an e-store shipment valued up to SAR 1,000, and a minimum import fee of SAR 15 above that; no VAT is charged on the fee here".
 
 Holidays. Every market lists its public holidays up to 2027-03-31. Eid dates depend on the moon and are provisional.
 
@@ -302,8 +317,32 @@ Rules:
 - `compliance` is required in every market (M9). `banned_attributes` may be empty; each name must be an attribute from §6.1, with no duplicates. `source` is not empty.
 - `customs.de_minimis` is required in every market (M10) and may be `null`, meaning no de minimis. When set: `threshold` > 0, in the market currency, with no more decimals than the currency's minor units; `applies` is `"below"` or `"at_or_below"`; `excluded_attributes` follows the rule for `banned_attributes`; `source` is not empty.
 - `logistics.parcel_freight_per_kg_usd` is required (M10) and ≥ 0.
-- These fields are required rather than defaulted, so a market cannot end up with "nothing banned" or "no de minimis" because a field was left out.
-- Test fixtures get the same fields. `tests/fixtures/zero_vat_config.json`: an empty banned list (M9), `"de_minimis": null` and parcel freight `9.00` (M10).
+- `customs.parcel_fee` is required (M15) and may be `null`, meaning no fee. When set: `amount` > 0, in the market currency, with no more decimals than the currency's minor units, as for the threshold; `source` is not empty.
+- `logistics.parcel_linehaul_business_days` is required (M15), a whole number ≥ 0.
+- These fields are required rather than defaulted, so a market cannot end up with "nothing banned", "no de minimis" or "no fee" because a field was left out.
+- Test fixtures get the same fields. `tests/fixtures/zero_vat_config.json`: an empty banned list (M9), `"de_minimis": null` and parcel freight `9.00` (M10). From M15 every fixture market has `"parcel_fee": null` and a parcel linehaul of 2.
+
+### 6.3 `data/raw/sample_orders.json` (v0.4, M16)
+
+Three orders that the report prices in every market (§9.2.7), and that the `order` command and the dashboard offer by name (§10.5).
+
+```json
+{
+  "orders_version": "2026-11-01",
+  "orders": [
+    { "id": "two-lip-balms", "name": "Two lip balms", "lines": [ { "sku": "BEAU-LIP-040", "quantity": 2 } ] },
+    { "id": "scarf-and-serum", "name": "A silk scarf and a serum", "lines": [ { "sku": "FASH-SCF-015", "quantity": 1 }, { "sku": "BEAU-SRM-041", "quantity": 1 } ] },
+    { "id": "headphones-and-bag", "name": "Headphones and a bag", "lines": [ { "sku": "ELEC-HP-001", "quantity": 1 }, { "sku": "FASH-BAG-014", "quantity": 1 } ] }
+  ]
+}
+```
+
+Rules:
+- `orders_version` is not empty. `orders` may be empty, and the report then says there are none (§9.3.2).
+- `id` matches `^[a-z0-9][a-z0-9-]*$` and is unique. `name` is not empty.
+- `lines` has at least one line and no SKU twice. `quantity` is a JSON integer from 1 to 99. Quantities are counts, not money, so they are not strings, and `"2"`, `2.0` and `true` are rejected.
+- The loader does not know the catalogue. `build_report` checks that every SKU is in it before it prices anything (§9.1).
+- The three orders each show one effect (§7.10): the fee on a small order, a medium order where a parcel pays off, and an order whose CIF crosses 1,000 in KSA and the UAE. Every market sells every product in them.
 
 ## 7. Pricing rules (all costs are passed through to the customer)
 
@@ -385,17 +424,20 @@ Product: `FASH-BAG-014`, "Leather Crossbody Bag", category `fashion` (12% overri
 
 #### 7.7.1 Shipping models
 - `consolidated` (default): orders travel together as one commercial import, so de minimis never applies. Freight is `freight_per_kg_usd`. Prices are exactly the v0.1 prices.
-- `parcel`: each order is shipped and cleared on its own, as a one-item parcel. Freight is `parcel_freight_per_kg_usd`, and duty is waived when the market's de minimis rule applies.
-- Delivery dates are the same in both models in v0.2.
+- `parcel`: each order is shipped and cleared on its own, as one parcel. Freight is `parcel_freight_per_kg_usd`, and duty is waived when the market's de minimis rule applies. A shelf price treats the product as a one-item parcel; an order of several items is tested again, as a whole, at checkout, where a parcel also pays the market's customs fee (§7.10).
+- From M15 a direct parcel has its own linehaul (§8.3). In v0.2 and v0.3 delivery was the same in both models.
 - The model is a scenario parameter, like `duty_adjustment`: the CLI takes `--shipping`, the dashboard has a radio, and the config never stores it.
 
 #### 7.7.2 When de minimis applies
-In parcel mode, de minimis applies to a product when all three hold:
+In parcel mode, de minimis applies to a product when all four hold:
 1. the market's `de_minimis` is not `null`;
 2. none of the product's `true` attributes is in `excluded_attributes`;
-3. its `cif`, in the market currency at full precision, is below the threshold (`"below"`) or at or below it (`"at_or_below"`).
+3. its `cif`, in the market currency at full precision, is below the threshold (`"below"`) or at or below it (`"at_or_below"`);
+4. it weighs more than 0 kg (M15): a product that weighs nothing, such as a download, never travels in a parcel.
 
 When it applies, the duty rate is 0, whatever the category and the duty adjustment: the slider never changes whether a product is waived, or what a waived product pays. VAT is still charged, on CIF since there is no duty.
+
+This decides a product's parcel shelf price, as a one-item order. An order of several items is tested once more, as a whole, at checkout (§7.10).
 
 ### 7.8 Worked examples (v0.2)
 
@@ -471,7 +513,7 @@ When it applies, the duty rate is 0, whatever the category and the duty adjustme
 
 #### H: the threshold itself (test fixture)
 
-`tests/fixtures/de_minimis_boundary_config.json` has two markets, `TEST-BELOW` (`"applies": "below"`) and `TEST-AT-OR-BELOW` (`"applies": "at_or_below"`). Both use currency `XTS` (the ISO 4217 code reserved for testing) at `per_usd` `"4.0000"`, 2 minor units, no charm ending, VAT 0, duty 0.05, threshold `1000.00`, no excluded attributes, nothing banned, and freight and parcel freight `0`. The calendar can copy KSA's. A zero-weight USD product then has CIF = 4 × its price, exactly. Parcel mode:
+`tests/fixtures/de_minimis_boundary_config.json` has two markets, `TEST-BELOW` (`"applies": "below"`) and `TEST-AT-OR-BELOW` (`"applies": "at_or_below"`). Both use currency `XTS` (the ISO 4217 code reserved for testing) at `per_usd` `"4.0000"`, 2 minor units, no charm ending, VAT 0, duty 0.05, threshold `1000.00`, no excluded attributes, nothing banned, and freight and parcel freight `0`. The calendar can copy KSA's. A USD product that weighs 1 kg then has CIF = 4 × its price, exactly, because freight is 0 in this fixture. (Until M15 these products weighed nothing. From M15 a product that weighs nothing is never waived, §7.7.2.) Parcel mode:
 
 | `base_price` (USD) | cif (XTS) | `below` | `at_or_below` |
 |---|---|---|---|
@@ -516,20 +558,89 @@ w = duty waived by de minimis.
 | HOME-ESP-031 | 4344.95 | 3844.99 | 312.950 |
 | BEAU-LIP-040 | 15.95 w | 14.99 w | 1.950 |
 | BEAU-SRM-041 | 108.95 w | 96.99 w | 8.950 |
-| DIGI-LIC-050 | 340.95 w | 304.99 w | 24.950 |
+| DIGI-LIC-050 | 340.95 | 304.99 | 24.950 |
 | GROC-TEA-060 | 37.95 w | 32.99 w | 2.950 |
 | GROC-VAN-061 | 61.95 w † | 57.99 | 4.950 † |
 | GROC-GUM-062 | 25.95 w † | 21.99 w † | 1.950 † |
 
-A digital licence counts as waived even though its duty rate is already 0: "waived" means only that de minimis applied.
+From M15 the digital licence is never waived: it weighs nothing, so it never travels in a parcel (§7.7.2). Its rate is 0, so none of its prices at 0 pp change. In v0.2 and v0.3 it counted as waived.
 
 #### 7.9.3 What the switch shows
 
-Light, valuable items get cheaper as parcels (headphones in KSA: 686.95 → 660.95). Heavy or cheap items get dearer, because parcel freight costs twice as much per kg (kettlebell: 593.95 → 875.95; tea: 34.95 → 37.95). The espresso machine pays duty either way, plus the extra freight (4144.95 → 4344.95). In Kuwait a parcel is never cheaper, because there is no de minimis. This is the comparison the v0.3 report builds on.
+Light, valuable items get cheaper as parcels (headphones in KSA: 686.95 → 660.95). Heavy or cheap items get dearer, because parcel freight costs twice as much per kg (kettlebell: 593.95 → 875.95; tea: 34.95 → 37.95). The espresso machine pays duty either way, plus the extra freight (4144.95 → 4344.95). In Kuwait a parcel is never cheaper, because there is no de minimis. This is the comparison the v0.3 report builds on. From v0.4 a KSA parcel also pays a 15.00 SAR customs fee at checkout, so as one-item orders only the headphones, the bag and the scarf stay cheaper there (§9.2.2).
 
 #### 7.9.4 Kuwait's charm ending
 
 One dinar is about 3.26 USD, so ending every KWD price in `.950` can add almost a whole dinar. Lip balm: 1.157 → 1.950 (+69%), with a 0.844 margin against 0.741 in KSA. This is kept on purpose (§12) as a finding for the v0.3 report: KWD needs a finer price ladder for cheap items.
+
+### 7.10 Orders (v0.4, M16)
+
+An order is a list of lines, each a product and a whole quantity from 1 to 99, with no product listed twice. `quote_order` prices it in one market, for one shipping model, duty adjustment and order time. Shelf prices never depend on what else is in the order: what an order changes is added at checkout.
+
+#### 7.10.1 Rules
+1. **Lines.** A line whose product the market does not allow is reported as not sold, with its reasons, and is never priced (§3 rule 7). Every other line is priced exactly as `price_product` prices its product (§7.1), and its total is quantity × shelf price, exact.
+2. **A consolidated import** adds nothing at checkout: its total is the sum of the line totals.
+3. **A direct parcel** holds every line whose product weighs more than 0 kg. A download never travels, so it stays out of the parcel. When no line travels, no parcel is sent and nothing is added at checkout.
+4. **The parcel's value** is the sum of quantity × CIF over the lines that travel, at full precision in the market currency, with CIF as in §7.1 step 3 (parcel freight).
+5. **De minimis decides once, for the whole order.** The market's rule tests the parcel's value, by its own test (`below` or `at_or_below`).
+   - When the value passes, the shelf prices already carry the right duty: a line priced with the waiver pays none, and a product with an excluded attribute already includes its duty.
+   - When it fails, the duty that the waived lines' shelf prices left out is added at checkout, with the VAT on it: the sum over the lines whose quote has `duty_waived` of quantity × CIF × duty rate × (1 + VAT rate). The duty rate is the category's rate, or the market default, plus the duty adjustment (§7.4). Every other line's shelf price already includes its duty.
+   - A market with no rule waives nothing, so it never adds duty.
+6. **The customs fee.** A parcel pays the market's `customs.parcel_fee` at checkout, whatever its value. No fee for a consolidated import, for a market without one, or when no parcel is sent. There is no VAT on it.
+7. **Checkout lines** come in this order: the customs fee, then the duty. Each is rounded once, `ROUND_HALF_UP` to the currency's minor units, with no price ending. The duty line appears whenever the parcel fails the test and at least one travelling line was priced with the waiver.
+8. **The order total** is the line totals plus the checkout lines, exact.
+9. **Delivery** is `estimate_delivery(ordered_at, market, shipping)` (§8). It does not depend on the lines.
+10. **A one-item order** costs the product's shelf price, plus the customs fee when it travels as a parcel. Its parcel value is the product's own CIF, which already decided its shelf price, so a one-item order never adds duty. The report compares products this way (§9.2.2).
+
+#### 7.10.2 Worked examples (today's duty rates; the order of §9.5)
+
+**I: headphones and a bag in KSA, direct parcel (the order fails the test)**
+
+| Step | Value (SAR) |
+|---|---|
+| headphones | 660.95, CIF 574.275, waived |
+| bag | 546.95, CIF 474.98657718…, waived |
+| items | 1,207.90 |
+| parcel value | 1,049.26157718…, not below 1,000.00 |
+| duty | 574.275 × 5% + 474.98657718… × 12% = 85.71213926… |
+| duty and VAT | 85.71213926… × 1.15 = 98.56896015… → **98.57** |
+| customs fee | **15.00** |
+| **total** | **1,321.47** (consolidated: 686.95 + 594.95 = 1,281.90, nothing added) |
+
+At +3 pp the shelf prices stay put (both lines are waived, §7.4), and the duty line becomes (574.275 × 8% + 474.98657718… × 15%) × 1.15 = 134.76848456… → **134.77**, so the total becomes 1,357.67.
+
+**J: the same order in the UAE (`at_or_below`, no fee)**
+
+Lines 589.99 (CIF 561.121275) and 485.99 (CIF 462.23218791…), both waived; items 1,075.98. The parcel value is 1,023.35346291…, which is not at or below 1,000.00. The duty line is 1,023.35346291… × 5% × 1.05 = 53.72605680… → **53.73**. The total is **1,129.71** (consolidated: 1,109.98).
+
+**K: two lip balms in KSA (under the threshold)**
+
+The line is 2 × 15.95 = 31.90, and the parcel value is 2 × 13.7625 = 27.525, below 1,000.00, so no duty is added. The customs fee is 15.00, and the total is **46.90** (consolidated: 2 × 16.95 = 33.90). The report shows that value as 27.53, rounded for display (§9.3.1).
+
+**L: the cliff, chargers in KSA**
+
+| Chargers | Items | Parcel value | Duty and VAT | Fee | Parcel total | Consolidated |
+|---|---|---|---|---|---|---|
+| 6 | 1,079.70 | 936.225, below | – | 15.00 | **1,094.70** | 1,109.70 |
+| 7 | 1,259.65 | 1,092.2625, not below | 1,092.2625 × 5% × 1.15 = 62.80509375 → 62.81 | 15.00 | **1,337.46** | 1,294.65 |
+
+As a parcel, the seventh charger adds 242.76 to the order; consolidated, it adds 184.95.
+
+**M: an excluded product in a duty-free parcel (UAE)**
+
+Vanilla extract and headphones: 57.99 (CIF 52.112775, `contains_alcohol` is excluded, so its 5% duty is in its shelf price) and 589.99 (waived). The parcel value is 613.23405, at or below 1,000.00, so nothing is added and the total is **647.98** (consolidated: 668.98). In KSA the same order reports the vanilla extract as not sold (`contains_alcohol`), and the parcel holds the headphones alone: 660.95 + 15.00 = **675.95**.
+
+**N: a download**
+
+The licence alone as a KSA parcel: 340.95, and nothing travels, so no parcel is sent: no fee and no parcel value. With two lip balms: 31.90 + 340.95 = 372.85, a parcel value of 27.525 (the licence stays out), the customs fee of 15.00 and a total of **387.85**.
+
+**O: the threshold itself (test fixture, §7.8 example H)**
+
+Two USD products at 125.00 that weigh 1 kg each (freight is 0 in this fixture) have a CIF of 500.00 each, so the parcel value is 1,000.00 exactly. In `TEST-BELOW` the value is not below the threshold, so the duty line is 1,000.00 × 5% = **50.00** (VAT is 0) and the total is 1,050.00. In `TEST-AT-OR-BELOW` it passes, and the total is **1,000.00**. With 125.00 and 125.01, the value is 1,000.04, and both markets add 50.00 (50.002 rounded), for a total of 1,050.04.
+
+**P: Kuwait (no rule, no fee)**
+
+A silk scarf and a serum as a parcel: 19.950 + 8.950 = **28.900**, with nothing added (consolidated: 19.950 + 7.950 = 27.900). The parcel value, 26.58702416…, is reported but decides nothing.
 
 ## 8. Delivery rules (destination calendar only)
 
@@ -537,9 +648,9 @@ One dinar is about 3.26 USD, so ending every KWD price in `.950` can add almost 
 - Convert `ordered_at` to the market timezone.
 - A business day is not a weekend day and not a listed holiday (provisional holidays count as holidays).
 - **Dispatch day** = the local order date if it is a business day and the local time is before the cutoff; otherwise the next business day. An order at exactly the cutoff time misses it.
-- The cutoff is compared as a moment in time, not as a clock reading: an order makes it only if it comes before the moment the cutoff time is reached on the local order date. On a clock-change day, a cutoff in a repeated hour is its first occurrence, and a cutoff in a skipped hour falls an hour later on the clock (01:30 in `Europe/London` on a spring-forward day behaves as 02:30 BST). A later order therefore never gets an earlier dispatch day. The GCC timezones have no clock changes, so §8.1 and §8.2 are unaffected.
-- **Delivery date** = the Nth business day after the dispatch day, where N = `linehaul_business_days + last_mile_business_days` (5 for KSA and Kuwait, 4 for the UAE).
-- Both shipping models (§7.7.1) use the same calendar and transit days in v0.2.
+- The cutoff is compared as a moment in time, not as a clock reading: an order makes it only if it comes before the moment the cutoff time is reached on the local order date. On a clock-change day, a cutoff in a repeated hour is its first occurrence, and a cutoff in a skipped hour falls an hour later on the clock (01:30 in `Europe/London` on a spring-forward day behaves as 02:30 BST). A later order therefore never gets an earlier dispatch day. The GCC timezones have no clock changes, so §8.1 to §8.3 are unaffected.
+- **Delivery date** = the Nth business day after the dispatch day, where N = `linehaul_business_days + last_mile_business_days` (5 for KSA and Kuwait, 4 for the UAE). For a direct parcel, from M15, N uses `parcel_linehaul_business_days` instead (§8.3).
+- Both shipping models (§7.7.1) use the same calendar, dispatch rule and last mile. From M15 their linehaul differs (§8.3); in v0.2 and v0.3 delivery was the same in both.
 - Keep `add_business_days(start, n, weekend, holidays)` generic. A later two-leg version (UK origin calendar, then destination calendar) should only need to chain two calls.
 
 ### 8.1 Worked examples (KSA: Fri–Sat weekend, Asia/Riyadh = UTC+3, cutoff 14:00, N = 5)
@@ -568,15 +679,30 @@ The same moment in all three markets. Each cell: local order time → dispatch �
 
 The second row's KSA cell is §8.1's third row, unchanged.
 
-## 9. The expansion report (v0.3)
+### 8.3 Direct parcels (v0.4, M15)
 
-`GCC_EXPANSION_REPORT.md` answers the demo user's real question: which market, which shipping model, and what goes wrong with prices. It puts every market and both shipping models side by side for one order. Appendix A is the report for the sample data, exactly.
+A direct parcel takes `parcel_linehaul_business_days` instead of `linehaul_business_days`: 2 against 3 in every market, so N is 4 for KSA and Kuwait and 3 for the UAE. Dispatch is the same in both models. The same moments as §8.2, as parcels:
+
+| Order (UTC) | KSA | UAE | KWT |
+|---|---|---|---|
+| Thu 2026-10-15 09:30 | **Wed 10-21** (consolidated Thu 22) | **Tue 10-20** (Wed 21) | **Wed 10-21** (Thu 22) |
+| Thu 2026-10-15 10:30 | **Wed 10-21** (Thu 22) | **Tue 10-20** (Wed 21) | dispatch Sun 18 → **Thu 10-22** (Sun 25) |
+| Fri 2026-10-16 07:00 | dispatch Sun 18 → **Thu 10-22** (Sun 25) | **Wed 10-21** (Thu 22) | dispatch Sun 18 → **Thu 10-22** (Sun 25) |
+| Tue 2026-12-01 08:00 | **Mon 12-07** (Tue 12-08) | **Tue 12-08** (Wed 12-09) | **Mon 12-07** (Tue 12-08) |
+| Wed 2027-02-24 07:00 | **Tue 03-02** (Wed 03-03) | **Mon 03-01** (Tue 03-02) | **Wed 03-03** (Thu 03-04) |
+| Mon 2027-03-08 07:00 | **Wed 03-17** (Thu 03-18) | **Tue 03-16** (Wed 03-17) | **Wed 03-17** (Thu 03-18) |
+
+With the sample data a parcel always arrives one business day before a consolidated import: the same dispatch day, and one business day less on the road. That follows from the data, not from a rule; the code only reads the two linehauls.
+
+## 9. The expansion report (v0.3; orders and parcel costs from v0.4)
+
+`GCC_EXPANSION_REPORT.md` answers the demo user's real question: which market, which shipping model, and what goes wrong with prices. It puts every market and both shipping models side by side for one order time. From v0.4 it compares products as one-item orders, so a parcel's customs fee counts, and it prices a few sample orders as wholes. Appendix A is the report for the sample data, exactly.
 
 ### 9.1 Scope
-- **One input:** `ordered_at`, a timezone-aware instant. The report prices the catalogue for that order in every market in the config, in config order, under both shipping models (§7.7.1).
-- **Duty rates:** today's (no duty adjustment), plus the rises in `TARIFF_RISES_POINTS = (5, 10, 20)` percentage points as stress tests (§9.2.3). The dashboard's slider, shipping model and search never change the report.
-- **One source of numbers:** every market view comes from `localise_and_summarise`, so the report, the CLI and the dashboard always agree, and products a market does not allow are never priced (§3 rule 7).
-- **Provenance:** the report names the data it was built from (`config_version`, `fx.as_of`, `catalogue_version`), not the SouqSort version, so a release does not change it.
+- **Inputs:** the catalogue, the config, the sample orders (§6.3, from M18) and `ordered_at`, a timezone-aware instant. The report prices for that order time in every market in the config, in config order, under both shipping models (§7.7.1). Before anything is priced, every SKU in the sample orders must be in the catalogue; otherwise `build_report` raises `LocalisationError("headphones-and-bag: ELEC-HP-999 is not in the catalogue")`.
+- **Duty rates:** today's (no duty adjustment), plus the rises in `TARIFF_RISES_POINTS = (5, 10, 20)` percentage points as stress tests (§9.2.3). The dashboard's slider, shipping model, search and Order tab never change the report.
+- **One source of numbers:** every market view comes from `localise_and_summarise`, and every order from `quote_order` (§7.10), so the report, the CLI and the dashboard always agree, and products a market does not allow are never priced (§3 rule 7).
+- **Provenance:** the report names the data it was built from (`config_version`, `fx.as_of`, `catalogue_version`, and from M18 `orders_version`), not the SouqSort version, so a release does not change it.
 - **Format:** Markdown, UTF-8, `\n` line endings on every OS, ending with a single newline. No timestamp other than the order's.
 
 ### 9.2 Figures
@@ -588,7 +714,7 @@ Per market, with consolidated imports and today's rates:
 - **products for sale and not sold** (§7.6);
 - **average margin:** `summary.average_margin_pct`;
 - **above catalogue price:** the mean of `shelf_price / goods − 1`. `goods` is the catalogue price converted to the market currency (§7.1 step 1), so the ratio is free of currency and markets compare directly. It includes freight, duty, VAT and the price ending. Base prices are > 0, so `goods` is never 0.
-- **VAT rate, the order's local time, the cut-off and the delivery date.** The delivery comes from `estimate_delivery(ordered_at, market)` (§8), which needs no product, so a market that sells nothing still has one. Delivery is the same in both shipping models (§8).
+- **VAT rate, the order's local time, the cut-off and the delivery date.** The delivery comes from `estimate_delivery(ordered_at, market)` (§8), the consolidated estimate, which needs no product, so a market that sells nothing still has one. The parcel estimate is in §9.2.2.
 
 | Market | For sale | Not sold | Average margin | Above catalogue price | Ordered (local) | Delivered |
 |---|---|---|---|---|---|---|
@@ -598,43 +724,44 @@ Per market, with consolidated imports and today's rates:
 
 (Order at 2026-10-15 09:00 UTC, before every cut-off. The delivery dates are those of §8.2's first row.)
 
-#### 9.2.2 Consolidated or parcel (M12)
-- Per market, for each product for sale in catalogue order: the consolidated and the parcel shelf prices, the change `parcel / consolidated − 1`, and the parcel quote's `duty_rate` and `duty_waived`.
-- A product is **cheaper**, **dearer** or **unchanged** by comparing the two shelf prices themselves, never the rounded change.
-- Per market: the three counts, and how many parcel quotes have `duty_waived`.
+#### 9.2.2 Consolidated or parcel (M12; one-item orders from M15)
+- Per market, for each product for sale in catalogue order, as a **one-item order** (§7.10.1 rule 10): the consolidated shelf price; the parcel shelf price plus the customs fee when the product travels; the change `parcel order / consolidated − 1`; and the parcel quote's `duty_rate` and `duty_waived`.
+- A product is **cheaper**, **dearer** or **unchanged** by comparing the two one-item orders themselves, never the rounded change.
+- Per market: the three counts, how many parcel quotes have `duty_waived`, the market's fee, and the parcel delivery date, `estimate_delivery(ordered_at, market, "parcel")` (§8.3).
 
-| Market | Cheaper | Dearer | Unchanged | Duty waived |
-|---|---|---|---|---|
-| KSA | 6 | 4 | 1 | 10 of 11 |
-| UAE | 5 | 5 | 2 | 10 of 12 |
-| KWT | 0 | 6 | 5 | 0 of 11 |
+| Market | Cheaper | Dearer | Unchanged | Duty waived | Fee | Parcels delivered |
+|---|---|---|---|---|---|---|
+| KSA | 3 | 7 | 1 | 9 of 11 | 15.00 | Wed 2026-10-21 |
+| UAE | 5 | 5 | 2 | 9 of 12 | – | Tue 2026-10-20 |
+| KWT | 0 | 6 | 5 | 0 of 11 | – | Wed 2026-10-21 |
 
-Every price in this section is in §7.9.1 (consolidated) or §7.9.2 (parcel).
+In KSA the fee makes the charger (194.95 against 184.95), the lip balm (30.95 against 16.95) and the serum (123.95 against 111.95) dearer as parcels: v0.3 counted 6 cheaper products, v0.4 counts 3. The licence never travels, so it is neither waived nor charged the fee (§7.7.2): 340.95 either way, "0.0%" in the duty column. Every shelf price in this section is in §7.9.1 (consolidated) or §7.9.2 (parcel).
 
 #### 9.2.3 Tariff exposure (M12)
-- Per market and shipping model, for each rise in `TARIFF_RISES_POINTS`: `summary.average_price_change_pct` of `localise_and_summarise(..., duty_adjustment_from_points(rise), shipping)`. That figure already compares each product with its price at 0 pp in the same model (§11.1, M6).
+- Per market and shipping model, for each rise in `TARIFF_RISES_POINTS`: `summary.average_price_change_pct` of `localise_and_summarise(..., duty_adjustment_from_points(rise), shipping)`. That figure already compares each product with its price at 0 pp in the same model (§11.1, M6). It compares shelf prices: the customs fee does not change with tariffs, and the method notes say so.
 - `HEADLINE_TARIFF_RISE_POINTS = 10` is the rise the opening sentence quotes. It must be one of `TARIFF_RISES_POINTS`.
-- Parcels in KSA and the UAE barely move, because de minimis waives duty at any adjustment (§7.4).
+- Parcels in KSA and the UAE move far less, because de minimis waives duty at any adjustment (§7.4). What moves is the espresso machine, which is over the threshold, the UAE's vanilla extract, which is excluded, and, from M15, the licence, which never travels, so de minimis never applies to it. That is why the parcel rows rose from v0.3's +0.9% (KSA) and +1.5% (UAE) at 10 pp.
 - Kuwait has no VAT and no de minimis, so before the price ending both of its models rise by exactly the same amount: 4.78%, 9.57% and 19.13% on average. The gaps in the table come only from KWD prices stepping in whole dinars (§7.9.4). The price ending absorbs some rises and turns others into a jump of a whole dinar.
 
 | Market | Shipping | +5 pp | +10 pp | +20 pp |
 |---|---|---|---|---|
 | KSA | consolidated | +4.6% | +9.0% | +18.6% |
-| KSA | parcel | +0.4% | +0.9% | +1.7% |
+| KSA | parcel | +0.9% | +1.8% | +3.5% |
 | UAE | consolidated | +4.9% | +9.3% | +19.2% |
-| UAE | parcel | +0.8% | +1.5% | +3.2% |
+| UAE | parcel | +1.2% | +2.4% | +4.8% |
 | KWT | consolidated | +3.8% | +7.6% | +16.0% |
 | KWT | parcel | +6.3% | +9.4% | +17.7% |
 
-#### 9.2.4 How a price is built (M13)
+#### 9.2.4 How a price is built (M13; the fee rows from M15)
 - **The sample product** is the first product in catalogue order that every market sells. In the sample data that is `ELEC-HP-001`, the headphones of worked examples A, C, D and E. If no product is sold everywhere, the section has no tables.
 - Per market: the sample product's consolidated and parcel quotes, shown as goods ("Catalogue price, converted"), freight, duty, VAT, a "Rounding and price ending" line and the shelf price.
 - Each component is rounded for display (§7.1, display rule). The rounding line is `shelf_price` minus the sum of the four displayed components, so every column adds up exactly to the shelf price. In KSA's parcel column it is 660.95 − (562.46 + 11.81 + 0.00 + 86.14) = **0.54**, although `shelf_price − gross` is 0.53375. The report's method notes say so. When the rounded gross already has the price ending, the line can be a minor unit or two below zero (`-0.01`); it is shown as it is.
 - A waived duty shows as `0.00 (waived)`.
+- When the sample product's one-item parcel order pays a customs fee, two rows follow the shelf price: "Customs fee, at checkout" (`-` for the consolidated import) and a bold "One-item order". Markets without a fee have no such rows.
 
-| Market (headphones) | Consolidated: freight, duty, VAT, rounding → shelf | Parcel: freight, duty, VAT, rounding → shelf |
+| Market (headphones) | Consolidated: freight, duty, VAT, rounding → shelf | Parcel: freight, duty, VAT, rounding → shelf (→ one-item order) |
 |---|---|---|
-| KSA | 5.91, 28.42, 89.52, 0.64 → **686.95** | 11.81, 0.00 (waived), 86.14, 0.54 → **660.95** |
+| KSA | 5.91, 28.42, 89.52, 0.64 → **686.95** | 11.81, 0.00 (waived), 86.14, 0.54 → **660.95**, + 15.00 → **675.95** |
 | UAE | 5.14, 27.80, 29.19, 0.02 → **612.99** | 10.28, 0.00 (waived), 28.06, 0.81 → **589.99** |
 | KWT | 0.537, 2.329, 0.000, 0.037 → **48.950** | 1.075, 2.356, 0.000, 0.472 → **49.950** |
 
@@ -648,6 +775,20 @@ Goods: 562.46 SAR, 550.84 AED, 46.047 KWD.
 #### 9.2.6 Not sold (M11)
 Every market's excluded products (§7.6), in market order then catalogue order, with their reasons as labels ("Contains alcohol"). Sample data: KSA and Kuwait exclude `GROC-VAN-061` and `GROC-GUM-062`; the UAE excludes `GROC-GUM-062`.
 
+#### 9.2.7 Orders (M18)
+- Per market, each sample order in file order, through `quote_order` as a consolidated import and as a direct parcel at today's duty rates: the two totals, the change `parcel total / consolidated total − 1`, the parcel's value and its checkout lines (§7.10).
+- An order of which the market sells nothing has no prices: its row shows `-`, and it is left out of the counts.
+- Per market: how many orders are **cheaper**, **dearer** or **unchanged** as a parcel, comparing the totals themselves, and how many parcel orders have a duty line.
+- The lines a market does not sell are listed after its table.
+
+| Market | Two lip balms | A silk scarf and a serum | Headphones and a bag | Cheaper / dearer / unchanged | Duty added |
+|---|---|---|---|---|---|
+| KSA | 33.90 → 46.90 (+38.3%) | 405.90 → 388.90 (-4.2%) | 1,281.90 → 1,321.47 (+3.1%) | 1 / 2 / 0 | 1 of 3 |
+| UAE | 29.98 → 29.98 (0.0%) | 346.98 → 333.98 (-3.7%) | 1,109.98 → 1,129.71 (+1.8%) | 1 / 1 / 1 | 1 of 3 |
+| KWT | 3.900 → 3.900 (0.0%) | 27.900 → 28.900 (+3.6%) | 88.900 → 91.900 (+3.4%) | 0 / 2 / 1 | – |
+
+Worked examples I, J, K and P (§7.10.2) are four of these cells. The parcel values, in file order, are 27.525, 323.93506711… and 1,049.26157718… in KSA; 26.80925, 316.43245906… and 1,023.35346291… in the UAE; and 2.26566, 26.58702416… and 86.25259778… in Kuwait. Appendix A shows them rounded half up (27.525 → 27.53).
+
 ### 9.3 Text
 
 #### 9.3.1 Formatting
@@ -655,57 +796,68 @@ Every market's excluded products (§7.6), in market order then catalogue order, 
 - **Percentages:** one decimal, `ROUND_HALF_UP`. A change, and the figure above the catalogue price, take a `+` when they are positive after rounding (`+41.2%`, `-3.8%`, `0.0%`); nothing ever shows as `-0.0%`. Rates (VAT, duty, the 10% alert) and margins have no sign (`15.0%`, `64.6%`).
 - **Dates and times:** `Thu 2026-10-22`; a local order time `Thu 2026-10-15 12:00`; a cut-off `14:00`. The header gives the order in UTC.
 - **Markets:** the code in sentences and in most tables (`KSA`); code and name in per-market headings and in the first column of the markets table (`KSA (Saudi Arabia)`); code and currency in the build-up headings (`KSA (SAR)`).
-- **Lists in a sentence** join with commas and a final "and": "6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT". Clauses that already contain "and" join with semicolons and a final "; and".
-- **Counts:** "1 product", otherwise "products".
+- **Lists in a sentence** join with commas and a final "and": "3 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT". Clauses that already contain "and" join with semicolons and a final "; and".
+- **Counts:** "1 product", otherwise "products"; the same for "order" and "sample order".
+- **Order items (M18):** a line of one unit is its SKU, more units read `2 × BEAU-LIP-040`; lines join with commas, in the order's order. The sign is U+00D7, written `×` in the source, so ruff's check for ambiguous characters stays quiet.
+- **No value:** `-` in a table cell with nothing to show: an average for a market that sells nothing, the consolidated import's fee row, a parcel with no value, an order that adds no fee or no duty, an order the market sells nothing of.
 - **Table cells** that come from the data escape `|` as `\|` and turn line breaks into spaces.
 - **Shipping models** in tables use the dashboard labels: "Consolidated import", "Direct parcel".
 
 #### 9.3.2 Sentences
-Each section opens with its sentences. The summary at the top repeats them all as bullets, in section order. With the sample data:
+Each section opens with its sentences. The summary at the top repeats them all as bullets, in section order: each sentence of "Markets side by side" and of "Consolidated or parcel" is its own bullet, and the two sentences of "How a price is built" share one. With the sample data:
 
 1. **Markets side by side**, two sentences:
    - "On average, shelf prices sit 24.7% above the catalogue price in UAE, 33.1% in KWT and 41.2% in KSA." Lowest first, comparing the full-precision averages; exact ties keep config order; markets that sell nothing are left out. If none sells anything: "No market has products for sale."
    - "For this order, delivery is on Thu 2026-10-22 in KSA, Wed 2026-10-21 in UAE and Thu 2026-10-22 in KWT." Every market, config order.
-2. **Consolidated or parcel:** "Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT." Config order; markets that sell nothing are left out; none: "No market has products for sale."
+2. **Consolidated or parcel**, two sentences:
+   - "Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT." Config order; markets that sell nothing are left out; none: "No market has products for sale."
+   - "For this order, direct parcels arrive on Wed 2026-10-21 in KSA, Tue 2026-10-20 in UAE and Wed 2026-10-21 in KWT." Every market, config order (M15).
    - Each market's subsection opens with its rule: "No duty on a parcel whose CIF is below 1,000.00 SAR." / "No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol." / "No de minimis rule, so every parcel pays duty." Excluded attributes read as "alcohol", "pork" and "a lithium battery", several joined with "or".
-   - Then "Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1." and, only when the market has a rule, "Duty is waived on 10 of them." A market that sells nothing: its rule, then "No products are for sale.", and no table.
-3. **Tariff exposure:** "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT." Config order; markets that sell nothing are left out; none: "No market has products for sale."
-4. **How a price is built:** "Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT." None sold everywhere: "No product is sold in every market, so there is no price to break down."
-5. **Pricing risks:** "The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) and GROC-TEA-060 in KWT (+20.0%)." None: "No price ending adds more than 10.0% to any product."
-6. **Not sold:** "Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2." Every market, config order. Nothing excluded anywhere: "Every market can sell every product."
+   - Then, only for a market with a fee (M15): "Each parcel also pays a 15.00 SAR customs fee, included in the prices below."
+   - Then "Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1." and, only when the market has a rule, "Duty is waived on 9 of them." A market that sells nothing: its rule and fee, then "No products are for sale.", and no table.
+3. **Orders** (M18): "Direct parcels are cheaper than consolidated imports for 1 of 3 sample orders in KSA, 1 of 3 in UAE and 0 of 3 in KWT." Config order; markets that sell nothing in any order are left out; if none sells anything in them: "No market sells anything in the sample orders."; with no sample orders at all: "There are no sample orders.", and the section has no tables.
+   - Each market's subsection opens with "Parcels are cheaper for 1 of 3 orders, dearer for 2 and unchanged for 0." and, only when the market has a rule, "Duty is added at checkout to 1 of them." A market that sells nothing in the orders: "No product in the sample orders is for sale." Its table still lists every order, with `-`.
+   - After a market's table, only when it leaves lines out: "Not sold in KSA, so left out: GROC-VAN-061 from Baking set." Each line is "SKU from order name", in order.
+4. **Tariff exposure:** "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 1.8% for direct parcels in KSA; 9.3% and 2.4% in UAE; and 7.6% and 9.4% in KWT." Config order; markets that sell nothing are left out; none: "No market has products for sale."
+5. **How a price is built:** "Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Ordered on its own as a direct parcel instead of a consolidated import, its total changes by -1.6% in KSA, -3.8% in UAE and +2.0% in KWT." The change compares one-item orders (M15). None sold everywhere: "No product is sold in every market, so there is no price to break down."
+6. **Pricing risks:** "The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) and GROC-TEA-060 in KWT (+20.0%)." None: "No price ending adds more than 10.0% to any product."
+7. **Not sold:** "Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2." Every market, config order. Nothing excluded anywhere: "Every market can sell every product."
 
 ### 9.4 Layout
 Appendix A shows the layout exactly. In order:
-1. `# GCC expansion report`, the scenario sentence (the order in UTC and the data it was built from) and the illustrative-data warning as a quote.
+1. `# GCC expansion report`, the scenario sentence (the order in UTC, and the data it was built from: market config, FX rates, catalogue and, from M18, sample orders) and the illustrative-data warning as a quote.
 2. `## Summary`: the sentences of §9.3.2 as bullets.
 3. `## Markets side by side`: the sentences, then one row per market: Market, Currency, VAT, For sale, Not sold, Above catalogue price, Average margin, Ordered (local time), Cut-off, Delivered.
-4. `## Consolidated or parcel`: the sentence, then per market `### KSA (Saudi Arabia)`, its rule and counts, and SKU, Product, Consolidated (SAR), Direct parcel (SAR), Change, Parcel duty ("waived" or the rate).
-5. `## Tariff exposure`: the sentence, then Market, Shipping model and one column per rise (`+5 pp` …), two rows per market.
-6. `## How a price is built`: the sentence, then per market `### KSA (SAR)` and a table of Step, Consolidated import, Direct parcel. The shelf price row is bold.
-7. `## Pricing risks`: the sentence, then Market, SKU, Product, Before the price ending, Shelf price, Added. No table when there are none.
-8. `## Not sold`: the sentence, then Market, SKU, Product, Reasons. No table when nothing is excluded.
-9. `## How these figures are made`: the method notes, as bullets.
+4. `## Consolidated or parcel`: the sentences, then per market `### KSA (Saudi Arabia)`, its rule, fee and counts, and SKU, Product, Consolidated (SAR), Direct parcel (SAR), Change, Parcel duty ("waived" or the rate). The two prices are one-item orders.
+5. `## Orders` (M18): the sentence, then Order and Items, one row per sample order. Then per market `### KSA (Saudi Arabia)`, its sentences, and Order, Consolidated (SAR), Direct parcel (SAR), Change, Parcel CIF (SAR), Customs fee (SAR), Duty and VAT (SAR); then the not-sold sentence when there is one. With no sample orders, only the sentence.
+6. `## Tariff exposure`: the sentence, then Market, Shipping model and one column per rise (`+5 pp` …), two rows per market.
+7. `## How a price is built`: the sentences, then per market `### KSA (SAR)` and a table of Step, Consolidated import, Direct parcel. The shelf price row is bold, and so is the One-item order row that follows the fee row (§9.2.4).
+8. `## Pricing risks`: the sentence, then Market, SKU, Product, Before the price ending, Shelf price, Added. No table when there are none.
+9. `## Not sold`: the sentence, then Market, SKU, Product, Reasons. No table when nothing is excluded.
+10. `## How these figures are made`: the method notes, as bullets.
 
 Number columns are right-aligned. There is exactly one blank line between blocks, and no trailing spaces.
 
 #### 9.4.1 Template rules
 - `src/souqsort/report/templates/expansion_report.md.j2`, loaded with `jinja2.PackageLoader("souqsort.report", "templates")` into an `Environment` with `undefined=StrictUndefined`, `autoescape=False` (Markdown, not HTML: cells are escaped as §9.3.1 says), `trim_blocks=True`, `lstrip_blocks=True` and `keep_trailing_newline=True`.
-- **The template only places text.** `render_report` passes it strings, and lists and dicts of strings, nothing else; a test walks the whole context to prove it. Every number is formatted in Python first.
+- **The template only places text.** `render_report` passes it strings, and lists and dicts of strings, nothing else; a test walks the whole context to prove it. Every number is formatted in Python first. Whether an optional block appears (the fee rows, the not-sold sentence of a market's orders) is decided in Python too: the template tests only whether a string or a list is empty.
 - The template has no arithmetic and uses none of the filters `float`, `int`, `round`, `sum`, `abs` or `format`. It names no market code and no currency code: `tests/test_architecture.py` checks both, as it checks `src/` and `app/` for market codes (§3 rule 4).
+- No context key is a dict method name (`items`, `values`, `keys`…): the template's `row.key` syntax would find the method first.
 
-### 9.5 The sample report (M13)
-- `docs/GCC_EXPANSION_REPORT.md` is the report for `ordered_at = 2026-10-15T09:00Z` over the sample data: 12:00 in Riyadh and Kuwait, 13:00 in Dubai, before every cut-off. It is Appendix A exactly, and the README links to it.
+### 9.5 The sample report (M13; current at every milestone)
+- `docs/GCC_EXPANSION_REPORT.md` is the report for `ordered_at = 2026-10-15T09:00Z` over the sample data: 12:00 in Riyadh and Kuwait, 13:00 in Dubai, before every cut-off. After M18 it is Appendix A exactly, and the README links to it. M15 to M17 regenerate it whenever the report changes.
 - `tests/test_report_sample.py` builds the same report and compares it with the file byte for byte. On a mismatch it says how to regenerate the file: `uv run python -m souqsort report --ordered-at 2026-10-15T09:00Z --out docs/GCC_EXPANSION_REPORT.md`.
-- Every figure in Appendix A was checked while writing this spec against an independent re-implementation of §7 and §8 that does not import `souqsort`.
+- Every figure in Appendix A was checked while writing this spec against an independent re-implementation of §7, §7.10 and §8 that does not import `souqsort`.
 
 ### 9.6 CLI and dashboard
-- **CLI:** `uv run python -m souqsort report [--ordered-at ISO] [--out PATH] [--catalogue PATH] [--config PATH]`.
+- **CLI:** `uv run python -m souqsort report [--ordered-at ISO] [--out PATH] [--catalogue PATH] [--config PATH] [--orders PATH]`.
   - `--ordered-at` parses as for `price`, but must carry an offset (`Z` or `±HH:MM`): without one, `price` reads the time on the market's clock, and the report has no single market. Without an offset it exits 2 with `argument --ordered-at: the report covers every market, so give a UTC offset, e.g. 2026-10-15T09:00Z`. Default: now, from the injectable `now`.
-  - `--out` defaults to `outputs/GCC_EXPANSION_REPORT.md` (`outputs/` is gitignored). Its folder is created if needed. It refuses to overwrite the `--catalogue` or `--config` file, as `--csv` does. The file is written as UTF-8 with `\n` line endings.
-  - Prints one line, `Wrote the expansion report to outputs/GCC_EXPANSION_REPORT.md` (the path as given). A data file that cannot be read, or a report that cannot be written, exits 1 with a message, as `price` does.
-- **Dashboard:** in the sidebar, under the search box, a "Download expansion report" button (`st.download_button`), file name `GCC_EXPANSION_REPORT.md`, MIME type `text/markdown`, with the help text "Every market and both shipping models for the order date and time above, at today's duty rates. The duty slider, shipping model and search don't change it."
+  - `--orders` (M18) defaults to `data/raw/sample_orders.json`.
+  - `--out` defaults to `outputs/GCC_EXPANSION_REPORT.md` (`outputs/` is gitignored). Its folder is created if needed. It refuses to overwrite the `--catalogue`, `--config` or `--orders` file, as `--csv` does. The file is written as UTF-8 with `\n` line endings.
+  - Prints one line, `Wrote the expansion report to outputs/GCC_EXPANSION_REPORT.md` (the path as given). A data file that cannot be read, a sample order whose SKU is not in the catalogue, or a report that cannot be written exits 1 with a message, as `price` does.
+- **Dashboard:** in the sidebar, under the search box, a "Download expansion report" button (`st.download_button`), file name `GCC_EXPANSION_REPORT.md`, MIME type `text/markdown`. From M18 its help text is "Every market, both shipping models and the sample orders, for the order date and time above, at today's duty rates. The duty slider, shipping model, search and Order tab don't change it."
   - It uses the same `ordered_at` as the page: the pickers on the selected market's clock (issue #3). Thu 2026-10-15 12:00 picked in KSA therefore downloads exactly the sample report.
-  - Building and rendering the report takes about 20 ms on the sample data, so it runs on every rerun without caching.
+  - Building and rendering the report takes about 20 ms on the sample data, orders included, so it runs on every rerun without caching.
 
 ## 10. Interfaces (suggested)
 
@@ -970,6 +1122,165 @@ def render_report(report: ExpansionReport) -> str: ...      # the Markdown of §
 #   report [--ordered-at ISO] [--out PATH] [--catalogue PATH] [--config PATH]   (§9.6)
 ```
 
+### 10.4 v0.4 changes
+
+```python
+# models.py
+class ParcelFee(_Model):                  # M15
+    amount: PositiveDecimal               # market currency; no more decimals than its minor units
+    source: NonEmptyStr
+class CustomsConfig(_Model): ...          # M15: + parcel_fee: ParcelFee | None (required key)
+class LogisticsConfig(_Model): ...        # M15: + parcel_linehaul_business_days: NonNegativeInt
+
+Quantity = Annotated[int, Field(ge=1, le=99, strict=True)]               # M16
+OrderId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]*$")]
+class OrderLine(_Model):                  # M16
+    sku: NonEmptyStr
+    quantity: Quantity
+class SampleOrder(_Model):                # M16
+    id: OrderId
+    name: NonEmptyStr
+    lines: tuple[OrderLine, ...]          # at least one; no SKU twice
+class SampleOrders(_Model):               # M16
+    orders_version: NonEmptyStr
+    orders: tuple[SampleOrder, ...]       # may be empty; ids unique
+
+# loaders.py
+def load_sample_orders(path: Path) -> SampleOrders: ...                  # M16
+
+# pricing/customs.py
+def travels(product: Product) -> bool: ...                               # M15: weight_kg > 0
+def parcel_fee_due(market: MarketConfig, shipping: ShippingModel,
+                   anything_travels: bool) -> Decimal | None: ...        # M15: §7.10.1 rule 6
+def within_threshold(value: Decimal, rule: DeMinimisRule) -> bool: ...   # M16: the rule's own test
+def duty_rate(product: Product, market: MarketConfig,
+              duty_adjustment: Decimal) -> Decimal: ...                  # M16: category or default, + adjustment
+# M15: assess_duty waives only when travels(product) too (§7.7.2).
+# M16: de_minimis_applies uses within_threshold, and assess_duty uses duty_rate.
+
+# logistics/calendar.py
+def estimate_delivery(ordered_at: datetime, market: MarketConfig,
+                      shipping: ShippingModel = "consolidated") -> DeliveryEstimate: ...  # M15
+# pipeline.py: localise_catalogue passes its shipping model on (M15).
+
+# orders.py (M16)
+CheckoutKind = Literal["customs_fee", "duty"]
+
+@dataclass(frozen=True)
+class CheckoutLine:
+    kind: CheckoutKind
+    amount: Decimal                       # rounded once to the currency's minor units
+
+@dataclass(frozen=True)
+class QuotedLine:
+    sku: str
+    name_en: str
+    quantity: int
+    quote: PriceQuote                     # exactly price_product's
+    line_total: Decimal                   # quantity * quote.shelf_price, exact
+    travels: bool
+
+@dataclass(frozen=True)
+class OrderQuote:
+    market: str
+    currency: str
+    minor_units: int
+    shipping: ShippingModel
+    lines: tuple[QuotedLine, ...]          # the lines the market sells, in the order's order
+    not_sold: tuple[ExcludedProduct, ...]  # the rest, with reasons (§3 rule 7)
+    parcel_value: Decimal | None           # full precision; None without a parcel
+    within_threshold: bool | None          # None without a parcel or a de minimis rule
+    checkout: tuple[CheckoutLine, ...]     # the customs fee, then the duty
+    delivery: DeliveryEstimate
+    # properties: items_total and total, both exact sums
+
+def quote_order(lines: Sequence[OrderLine], catalogue: Catalogue, config: GccConfig,
+                market_code: str, ordered_at: datetime,
+                duty_adjustment: Decimal = Decimal("0"),
+                shipping: ShippingModel = "consolidated") -> OrderQuote: ...
+# Checks duty_adjustment and shipping first, as localise_catalogue does. Then ValueError for no
+# lines or a SKU listed twice. Then LocalisationError for an unknown market, for a SKU that is not
+# in the catalogue ("ELEC-HP-999: not in the catalogue"), or for a line that cannot be priced.
+
+# display.py
+def parcel_fee_note(market: MarketConfig) -> str | None: ...             # M15: §10.5
+CHECKOUT_LABELS: dict[CheckoutKind, str]  # M17: {"customs_fee": "Customs fee", "duty": "Duty and VAT"}
+@dataclass(frozen=True)
+class OrderRow:                           # M17: one row of the order table, both models
+    label: str                            # the SKU, or Items, Customs fee, Duty and VAT, Total, Delivery
+    name: str                             # the product's name, or ""
+    quantity: str                         # "2", or ""
+    consolidated: str                     # money as the CLI prints it, a date, or "-"
+    parcel: str
+def order_rows(consolidated: OrderQuote, parcel: OrderQuote) -> list[OrderRow]: ...   # M17
+def parcel_note(market: MarketConfig, parcel: OrderQuote) -> str: ...                # M17: §10.5
+
+# report/figures.py
+class ProductComparison: ...              # M15: + parcel_fee: Decimal | None and a parcel_order
+                                          # property; change_pct and the counts use parcel_order
+class ShippingComparison: ...             # M15: + parcel_fee: Decimal | None, parcel_delivery: DeliveryEstimate
+class PriceBuildUp: ...                   # M15: + parcel_fee: Decimal | None (the one-item parcel order's)
+
+@dataclass(frozen=True)
+class OrderComparison:                    # M18, §9.2.7
+    order_id: str
+    name: str
+    consolidated: OrderQuote
+    parcel: OrderQuote
+    # properties: priced (the market sells a line of it), change_pct (None when not priced)
+
+@dataclass(frozen=True)
+class MarketOrders:                       # M18
+    code: str
+    name: str
+    currency: str
+    minor_units: int
+    de_minimis: DeMinimisRule | None
+    orders: tuple[OrderComparison, ...]   # file order
+    # properties: priced, cheaper, dearer, unchanged, duty_added
+
+class ExpansionReport: ...                # M18: + orders_version: str, sample_orders: tuple[SampleOrder, ...],
+                                          #        orders: tuple[MarketOrders, ...] (config order)
+def build_report(catalogue: Catalogue, config: GccConfig, orders: SampleOrders,
+                 ordered_at: datetime) -> ExpansionReport: ...           # M18: orders before ordered_at
+
+# cli.py: a third subcommand (M17), and --orders for the report (M18)
+#   order --market CODE (--sample ID | --item SKU[:QTY] ...) [--duty-adjust POINTS] [--ordered-at ISO]
+#         [--catalogue PATH] [--config PATH] [--orders PATH]
+```
+
+### 10.5 CLI and dashboard text (v0.4; the tests check it)
+- **`price` (M15):** the Delivery column follows the shipping model. With `--shipping parcel` in a market that has a fee, a blank line and `Each parcel order also pays a customs fee of 15.00 SAR at checkout.` follow the table, before "Not sold". Its `--shipping` help reads "shipping model: consolidated (one commercial import, no de minimis) or parcel (each order cleared on its own, with its own freight rate, transit time and customs fee; duty-free under the market's de minimis threshold) (default: consolidated)". The CSV is unchanged.
+- **Dashboard (M15):** the Delivery column follows the radio, whose help becomes "Consolidated: orders travel as one commercial import, so de minimis never applies. Direct parcel: each order is cleared on its own, with its own freight rate, transit time and customs fee; under the market's threshold it pays no duty." With Direct parcel selected in a market that has a fee, a caption under the grid gives the same sentence as the CLI.
+- **`order` (M17):** `uv run python -m souqsort order --market KSA --sample headphones-and-bag --ordered-at 2026-10-15T12:00` prints exactly:
+
+  ```text
+  Market: KSA (Saudi Arabia)   Ordered at: 2026-10-15 12:00 Asia/Riyadh   Duty adjustment: +0 pp
+  Order: Headphones and a bag
+
+  SKU           Name                                  Qty  Consolidated (SAR)  Direct parcel (SAR)
+  ------------  ------------------------------------  ---  ------------------  -------------------
+  ELEC-HP-001   Wireless Noise-Cancelling Headphones    1              686.95               660.95
+  FASH-BAG-014  Leather Crossbody Bag                   1              594.95               546.95
+  Items                                                               1281.90              1207.90
+  Customs fee                                                               -                15.00
+  Duty and VAT                                                              -                98.57
+  Total                                                               1281.90              1321.47
+  Delivery                                                         2026-10-22           2026-10-21
+
+  Direct parcel: the order's CIF, 1049.26 SAR, is not below 1000.00 SAR, so duty on the whole order is added at checkout.
+  ```
+
+  - The first line is `price`'s summary line without "Shipping". "Order: NAME" follows for a sample order only. Then come a blank line and the table: one row per line the market sells, with line totals; Items; Customs fee and Duty and VAT, each only when either model has it, with `-` for the model that does not; Total; and Delivery, as ISO dates. Money is printed in the currency's minor units without separators, as in `price`; so are the amounts in the notes (`15.00 SAR`, `1000.00 SAR`), whatever decimals the config writes them with.
+  - After a blank line comes one sentence on the parcel, from `parcel_note`: the one above, or "Direct parcel: the order's CIF, 27.53 SAR, is below 1000.00 SAR, so de minimis applies." (`at_or_below` reads "at or below" and "not at or below"), "Direct parcel: KWT has no de minimis rule, so every line pays duty." or "Direct parcel: nothing in the order travels, so no parcel is sent."
+  - When the market sells no line of the order, `KSA sells nothing in this order.` replaces the table and the parcel sentence. Lines it does not sell follow, as in `price`: a blank line, `Not sold in KSA (1):` and SKU, Name and the reason codes.
+  - `--item SKU[:QTY]` repeats, with a quantity from 1 to 99 (default 1). Exactly one of `--sample` and `--item` is required. Usage errors exit 2: `argument --item: must be a SKU, or a SKU and a quantity from 1 to 99 such as ELEC-HP-001:2, got 'ELEC-HP-001:0'`; `argument --item: ELEC-HP-999 is not in the catalogue`; `argument --item: ELEC-HP-001 is listed twice`; `argument --sample: lip-balm: unknown order; sample orders: two-lip-balms, scarf-and-serum, headphones-and-bag`; an unknown market as in `price`. A data file that cannot be read exits 1.
+- **Dashboard (M17):** the main area has two tabs, "Products" (everything that is there today, unchanged) and "Order".
+  - In "Order": a selectbox "Order" with the sample orders by name, then "Build your own". "Build your own" adds a multiselect "Products" of every product in the catalogue (`SKU - English name`) and, for each one picked, a number input "Quantity of SKU" from 1 to 99. With nothing picked, the tab shows "Pick at least one product." and nothing else.
+  - It prices with the sidebar's market, duty slider and order time, in both shipping models. The radio and the search apply to "Products" only, and a caption under the selectbox says so: "Both shipping models, with the market, duty adjustment and order time from the sidebar."
+  - Two metrics, "Consolidated import" and "Direct parcel", each a total with its currency code ("1281.90 SAR"). The parcel metric has the change as its delta ("+3.1%"), with `delta_color="inverse"`, because dearer is worse. When the market sells no line of the order, both show `-`, with no delta.
+  - Below them: the rows of `order_rows` in a table with the CLI's columns, `parcel_note` as a caption, and, when lines are not sold, "Not sold in KSA" with SKU, Name and Reason, as in "Products".
+
 ## 11. Milestones
 
 For every milestone: tests first, then code. Done means `uv run pytest`, `uv run ruff check .` and `uv run mypy src` all pass, then commit. From M7, done also means `uv run ruff format --check .` passes (`/verify` runs all four) and both CI jobs are green on the pull request. Every commit leaves the suite green.
@@ -1129,7 +1440,9 @@ Branch `chore/release-0.2.0`.
 - After the merge: `git tag -a v0.2.0 -m "v0.2.0: UAE, Kuwait, compliance, de minimis"` and `git push origin v0.2.0`.
 - Releases: `gh release create v0.1.0 --title "v0.1.0: KSA end to end" --notes "..."` (deferred from v0.1), then `gh release create v0.2.0 --title "v0.2.0: three markets, compliance, de minimis" --generate-notes`, which writes the notes from the merged pull requests.
 
-### 11.3 v0.3
+### 11.3 v0.3 (done, tag `v0.3.0`)
+
+Done. §9 and Appendix A now describe the v0.4 report, so some figures these milestones name have changed since, where v0.4 says so.
 
 The flow of §11.2 again: a branch per step, plan mode, commits, a pull request, both CI jobs green, merge. Before each pull request of M11, M12 and M13: "Use the money-reviewer subagent to review this branch against main", fix what it finds, then `/code-review`. M14: `/code-review` only.
 
@@ -1222,6 +1535,119 @@ The sample report does not change: it names the data, not the version (§9.1).
 
 - **Accept:** the release page lists the pull requests for M11 to M14 and the release; `v0.3.0` is an annotated tag on the merge commit.
 
+### 11.4 v0.4
+
+The flow of §11.2 again: a branch per step, plan mode, commits, a pull request, both CI jobs green, merge. Before each pull request of M15, M16 and M18: "Use the money-reviewer subagent to review this branch against main", fix what it finds, then `/code-review`. M17: `/code-review` only.
+
+Every milestone ends with a report that runs and a `docs/GCC_EXPANSION_REPORT.md` that is current (§9.5). Regenerate it in the commit that changes it.
+
+#### M15: parcel costs
+Branch `feat/m15-parcel-costs`. Commits, in order:
+1. `docs: add the v0.4 spec`: this SPEC.md and the v0.4 CLAUDE.md.
+2. `chore: teach the money-reviewer the parcel rules`: in `.claude/agents/money-reviewer.md`, rule 5 adds "a product that weighs nothing never qualifies", and a new rule 11 reads "The parcel fee is charged as it is, with no VAT, only for a direct parcel that holds a product weighing more than 0 kg; a one-item order costs its shelf price plus that fee."
+3. `feat: add the parcel fee and parcel linehaul to the market config`: `ParcelFee`, `CustomsConfig.parcel_fee`, `LogisticsConfig.parcel_linehaul_business_days` and the fee's minor-units check (§6.2, §10.4); the data (KSA's fee, a parcel linehaul of 2 in every market, `config_version` 2026-11-01) and both fixtures. Nothing reads the new fields yet. The report's header names the new config version, so regenerate the sample.
+4. `feat: keep products that weigh nothing out of de minimis`: `travels()` and the fourth condition of §7.7.2. Example H's products now weigh 1 kg (freight is 0 in that fixture, so every figure in §7.8 stays the same). The licence loses its `w` in §7.9.2: the CLI, the dashboard and the report show "0.0%" for it as a parcel, the report's waived counts become 9 (§9.2.2), and its parcel tariff rows rise (§9.2.3).
+5. `feat: give direct parcels their own linehaul`: `estimate_delivery(..., shipping)`, the pipeline passing its model on, and §8.3. The CLI's and the dashboard's Delivery columns follow the shipping model. The two tests that check that the shipping model does not change delivery (`tests/test_pipeline.py` and `tests/test_app.py`) now check §8.3 instead.
+6. `feat: count the parcel fee in the CLI, the dashboard and the report`: `parcel_fee_due()` and `parcel_fee_note()`; the CLI line, the dashboard caption and both help texts (§10.5); the report's one-item orders (§9.2.2), the fee rows of the build-up (§9.2.4), the parcel delivery and fee sentences (§9.3.2 item 2) and the method notes. The README's sample run is rerun and its text updated (below).
+
+- **Config tests:** `parcel_fee` missing → rejected; `null` → accepted; an amount ≤ 0, a JSON number, or more decimals than the currency's minor units (`"15.001"` for SAR) → rejected; `"15"` accepted; an empty `source` → rejected. `parcel_linehaul_business_days` missing, negative or a string → rejected. The sample config's version is 2026-11-01, and KSA's fee is exactly `Decimal("15.00")`.
+- **Pricing:**
+  - `travels()` is false for the licence and true for every other product;
+  - the licence as a parcel: not waived, rate 0 at 0 pp and the adjustment above it (UAE at +3 pp: 3.0%, 304.99 → 313.99);
+  - example H, with products of 1 kg, exactly as before;
+  - every cell of §7.9.1 and §7.9.2 unchanged at 0 pp, and every `w` except the licence's;
+  - Hypothesis: a product that weighs nothing gets the same quote in both shipping models at any adjustment.
+- **Delivery:** every cell of §8.3; §8.1 and §8.2 unchanged for consolidated imports; Hypothesis: a parcel's delivery date is never a weekend day or a holiday, and a later order never gets an earlier one.
+- **`parcel_fee_due`:** 15.00 for a KSA parcel in which something travels; `None` for a consolidated import, for the UAE and Kuwait, and when nothing travels.
+- **CLI:** `price --market KSA --shipping parcel` prints the fee line after the table and before "Not sold in KSA (2):"; the UAE, Kuwait and every consolidated run print none; at Thu 2026-10-15 12:00 in KSA, deliveries are 2026-10-21 as parcels and 2026-10-22 consolidated.
+- **Dashboard:** the caption appears for Direct parcel in KSA, not in the UAE and not for Consolidated import; the Delivery column follows the radio; the radio's help is §10.5's.
+- **Report:**
+  - the 34 product rows of "Consolidated or parcel": the consolidated price equals §7.9.1; the parcel price equals §7.9.2 plus 15.00 in KSA for every product except the licence; every "waived" equals a `w` there;
+  - the counts table of §9.2.2 and the 18 cells of §9.2.3;
+  - KSA's build-up has the two fee rows (15.00 and **675.95**), and the UAE and Kuwait have none;
+  - the fee sentence appears for KSA only; a market that sells nothing still gets its rule, its fee sentence and "No products are for sale.";
+  - the one-item comparison of a product that does not travel adds no fee.
+- **README** (`## Sample run` and `## The expansion report`): rerun the sample command and paste its output. In the text that follows it:
+  - three products now pay duty, not two. The licence never travels, so de minimis never waives its 0% rate, and at +3 pp it pays 3.0% (304.99 → 313.99). The average price change is +0.8%;
+  - the order arrives three business days later, a day sooner than a consolidated import;
+  - the trade-off paragraph adds that a KSA parcel also pays a 15.00 SAR customs fee;
+  - the KSA finding becomes "Direct parcels pay no duty on 9 of the 11 products KSA sells, but dearer parcel freight and a 15.00 SAR customs fee per parcel mean they are cheaper than consolidated imports for only 3 of them.";
+  - the tariff finding becomes 9.0% against 1.8%;
+  - the `--shipping` row of the option table names the fee and the transit time.
+- **Accept:** CI green; the money-reviewer's and `/code-review`'s findings resolved. `docs/GCC_EXPANSION_REPORT.md` matches Appendix A everywhere except four places that wait for M18: the header names no sample orders, the summary has no orders bullet, there is no "Orders" section, and the method notes lack the orders note.
+
+#### M16: orders in the engine
+Branch `feat/m16-orders`. Commits, in order:
+1. `chore: teach the money-reviewer the order rules`: in `.claude/agents/money-reviewer.md`, the description names `src/souqsort/orders.py`, and a new rule 12 reads "An order's line totals are quantity × shelf price, exact. A parcel's value is the full-precision CIF of the lines that weigh more than 0 kg, and de minimis tests it once for the whole order. Only the lines priced with the waiver get duty at checkout, at their category rate plus the adjustment, with the VAT on it. Each checkout line is rounded once, ROUND_HALF_UP, with no price ending, and totals are exact sums." (The v0.4 CLAUDE.md already names `orders.py` in its money-reviewer line.)
+2. `feat: add the sample orders file`: the order models, `load_sample_orders` and `data/raw/sample_orders.json` (§6.3, §10.4).
+3. `feat: price orders of several items`: `orders.py` following §7.10. `within_threshold()` and `duty_rate()` move out of `de_minimis_applies` and `assess_duty`, so that orders use the same rules. `tests/test_orders.py`.
+
+- **Sample orders:** the file loads, with 3 orders in file order; a quantity of 0, 100, `"2"`, `2.0` or `true` → rejected; a SKU twice in one order → rejected; a repeated id → rejected; an id such as `"Two lip balms"` or `"-x"` → rejected; an order with no lines → rejected; an empty `orders` → accepted.
+- **`quote_order`:**
+  - every example of §7.10.2 exactly: totals, checkout kinds and amounts, parcel values, `within_threshold` and what is not sold;
+  - consolidated totals equal the sum of the line totals, with no checkout lines;
+  - `delivery` equals `estimate_delivery` for the model;
+  - no lines, or a SKU twice → `ValueError`; an unknown SKU or market → `LocalisationError`, the message starting with the SKU or the code; a bad `duty_adjustment` or `shipping` fails first, as in `localise_catalogue`.
+- **Hypothesis** over the sample data, with 1 to 4 different products, quantities from 1 to 9, both models and 0 to 20 pp:
+  - the total is never below the line totals, and equals them for a consolidated import;
+  - the order of the lines changes neither the total nor the checkout lines;
+  - one more unit of a line never lowers the total;
+  - a one-item order adds at most the fee;
+  - a duty line appears only when `within_threshold` is `False`.
+- **The report agrees:** for every product, market and model, a one-item `quote_order` total equals the report's `consolidated_price` or `parcel_order` (§9.2.2), so the two never drift apart.
+- **Accept:** CI green; the money-reviewer's and `/code-review`'s findings resolved; nothing in the report changes.
+
+#### M17: orders in the CLI and dashboard
+Branch `feat/m17-order-command`. Commits, in order:
+1. `feat: price an order from the command line`: the `order` command (§10.5), with `CHECKOUT_LABELS`, `OrderRow`, `order_rows` and `parcel_note` in `display.py`, so that the dashboard shows the same rows.
+2. `feat: price an order in the dashboard`: the "Products" and "Order" tabs (§10.5).
+3. `docs: add the order command to the README`: a row in the "Install and run" table, a table of `order`'s options, and the run of §10.5 under "Sample run".
+
+- **CLI:**
+  - §10.5's example, exactly;
+  - the same order in the UAE: no fee row, Duty and VAT 53.73, "is not at or below 1000.00 AED";
+  - two lip balms in Kuwait: the no-rule sentence;
+  - `--item BEAU-LIP-040:2 --item DIGI-LIC-050` in KSA: 387.85 and a CIF of 27.53;
+  - `--item GROC-VAN-061 --item GROC-TEA-060:3` in KSA: the vanilla extract under "Not sold in KSA (1):";
+  - `--item DIGI-LIC-050`: "nothing in the order travels";
+  - `--item GROC-GUM-062` in KSA: "KSA sells nothing in this order.";
+  - every usage error of §10.5 exits 2 with its message; `--duty-adjust 3` gives 134.77 and 1357.67 for headphones and a bag.
+- **Dashboard (AppTest):**
+  - the two tabs, with "Products" behaving as before;
+  - at Thu 2026-10-15 12:00 in KSA, the first sample (two lip balms) shows 33.90 SAR and 46.90 SAR, with a Customs fee row;
+  - "Headphones and a bag" shows Duty and VAT 98.57 and 1321.47 SAR, with the delta +3.1%; at +3 pp, 134.77 and 1357.67; in the UAE, 53.73 and no fee row;
+  - "Build your own" with nothing picked shows "Pick at least one product."; the licence alone shows the "nothing travels" caption; the vanilla extract in KSA is listed under "Not sold in KSA";
+  - neither the radio nor the search changes the tab.
+- **Accept:** CI green; `/code-review`'s findings resolved.
+
+#### M18: orders in the report
+Branch `feat/m18-report-orders`. Commits, in order:
+1. `feat: price the sample orders in the expansion report`: `build_report(catalogue, config, orders, ordered_at)` and its SKU check, `OrderComparison`, `MarketOrders`, the "Orders" section and its sentences, the header and the orders method note (§9); `report --orders` (§9.6); the dashboard's download reads the sample orders, with its new help text. Report tests that build from a reduced catalogue pass `NO_ORDERS = SampleOrders(orders_version="none", orders=())` from `tests/helpers.py`. Regenerate the sample: it is now Appendix A exactly.
+2. `docs: add the orders to the README`:
+   - "The expansion report" names the Orders section and adds a fourth finding: headphones and a bag cross SAR 1,000 as one parcel, so the whole order pays duty at checkout, and it costs 1,321.47 SAR against 1,281.90 consolidated, although each item alone is cheaper as a parcel;
+   - `docs/dashboard.png` is retaken with the same scenario (UAE, Direct parcel, +3 pp, 2026/10/15, 14:59), so it shows the licence at 3.0% and the two tabs;
+   - Status and the roadmap wait for the release.
+
+- **Figures:**
+  - the nine cells of §9.2.7, its counts and `duty_added`;
+  - an order of which a market sells nothing (a test order of `GROC-GUM-062` in KSA) has no change and is left out of the counts;
+  - an order with a SKU missing from the catalogue raises `LocalisationError` naming the order and the SKU, before anything is priced.
+- **Text:**
+  - every sentence of §9.3.2 item 3, for the sample data and for each edge case: no sample orders, no market selling anything in them, a market without a de minimis rule, a market that leaves a line out;
+  - `2 × BEAU-LIP-040` in the Items table;
+  - the header names `orders_version`;
+  - the context still holds only strings (walk it), and no key is a dict method name.
+- **CLI:** `report --orders` reads another file; `--out` pointing at the orders file exits 2 and leaves it alone; an order with an unknown SKU exits 1 with the message of §9.1.
+- **Dashboard:** Thu 2026-10-15 12:00 picked in KSA still downloads exactly the sample report; building a basket in "Order" does not change it.
+- **Accept:** CI green; the money-reviewer's and `/code-review`'s findings resolved; `docs/GCC_EXPANSION_REPORT.md` is identical to Appendix A (extract the block and `diff` it once), and the sample test passes on both CI jobs.
+
+#### Release v0.4.0
+In a fresh Claude Code session on an up-to-date `main`: `/release 0.4.0 "real orders"`. The skill runs as it did for v0.3.0 (§11.3): it checks that `0.4.0` is higher than `v0.3.0`, bumps the version, marks v0.4 done in this spec's header and §2, updates the README's Status and roadmap, and waits for your OK. Then it opens the pull request "Release v0.4.0" and waits for CI and your OK to merge. Last, it tags the merge commit `v0.4.0` with the message "v0.4.0: real orders", and creates the GitHub release with notes generated since `v0.3.0`.
+
+The sample report does not change: it names the data, not the version (§9.1).
+
+- **Accept:** the release page lists the pull requests for M15 to M18 and the release; `v0.4.0` is an annotated tag on the merge commit.
+
 ## 12. Decisions log (turn into ADRs later)
 
 ### v0.1
@@ -1272,13 +1698,29 @@ The sample report does not change: it names the data, not the version (§9.1).
 - `/release` turns the steps of Release v0.2.0 into one command. It stops for an OK before the merge, never pushes to `main` and never moves a tag.
 - A de minimis threshold is whole minor units, so the report's rule sentence states exactly what the engine compares.
 
+### v0.4
+- What an order adds is a checkout line on top of unchanged shelf prices, and it is passed to the customer, as every cost is (§7). A basket never changes a shelf price. Taking a cost out of margin instead waits for v0.5's pass-through slider.
+- KSA's fee is a flat 15.00 SAR on every parcel, whatever its value. ZATCA charges SAR 15 to declare an e-store shipment up to SAR 1,000, and its minimum import fee above that is also SAR 15. Its 0.15% import fee, which exceeds SAR 15 above SAR 10,000 and applies to consolidated imports too, is left out of both models. No fee was found for the UAE (Dubai's AED 1,000 rule names none) or Kuwait. The sources do not say whether VAT applies to the fee; the model charges none, which is labelled illustrative.
+- De minimis decides once per order, on the parcel's full-precision CIF. When an order fails, the duty that its shelf prices left out goes on one checkout line with its VAT, rounded once, rather than re-pricing every line, which would change shelf prices with the basket.
+- A product that weighs nothing never travels: de minimis never applies to it, and it never counts towards a parcel. This replaces v0.2's "a digital licence counts as waived", under which its parcel price ignored the tariff slider. Example H's products weigh 1 kg instead of nothing, which changes none of its figures.
+- The report compares products as one-item orders, so a parcel's fee counts: KSA's parcels are cheaper for 3 of 11 products, not 6. Tariff exposure still compares shelf prices. The fee never moves with tariffs, and the dashboard's price-change metric compares shelf prices too.
+- Each order ships as one parcel. Splitting an order is left for later (§2).
+- A direct parcel has its own linehaul (2 business days against 3) and shares the dispatch day and the last mile, so with the sample data a parcel arrives a business day sooner: the shipping model now trades price against speed.
+- Sample orders are data (`data/raw/sample_orders.json`), so the report stays a pure function of its inputs, and the CLI and the dashboard offer the same orders. There are three, each showing one effect, and every market sells every product in them, so they compare across markets.
+- The orders file may hold no orders. The report then says so, and report tests that use a reduced catalogue need no matching orders.
+- Quantities are JSON integers, not strings: they are counts, not money, rates or weights (§3 rule 1).
+- `config_version` moves to 2026-11-01 because the config's content changed. The FX date and the catalogue stay as they are.
+- The `order` command and the dashboard's Order tab show both shipping models side by side instead of taking one, because the comparison is the point.
+- Four milestones: parcel costs everywhere first, so that the report's product comparison is honest before orders arrive; then orders in the engine, in the CLI and dashboard, and in the report. Each one is a pull request small enough for both reviewers.
+
 ## 13. Sources
 
 Market data stays illustrative. These are the rules it is modelled on:
 - ZATCA, customs for e-store customers (duty exemption under SAR 1,000, including shipping and insurance; VAT still due): https://zatca.gov.sa/en/RulesRegulations/Taxes/Pages/customs_individual/e-stores-customers.aspx
-- Arab News, Saudi customs fee changes (SAR 15 declaration fee on e-store shipments up to SAR 1,000): https://www.arabnews.com/node/2570542/amp
+- Arab News, Saudi customs fee changes (SAR 15 declaration fee on e-store shipments up to SAR 1,000; import fees of 0.15% of the value, at least SAR 15 and at most SAR 500): https://www.arabnews.com/node/2570542/amp
 - Khaleej Times, Dubai Customs exemption up to AED 1,000 from 2026-08-03, with its exclusions: https://www.khaleejtimes.com/business/dubai-customs-exempt-goods-import-duty-amendments
 - Gulf Today, the same announcement: https://www.gulftoday.ae/news/2026/08/05/dubai-customs-exempts-e-commerce-shipments-up-to-dhs1000-from-customs-duties
+- UAE Free Zone Finder, cross-border e-commerce customs guide 2026 (duty-free under AED 1,000, with 5% VAT still due; courier brokerage is a paid service, and no customs fee is named): https://uaefreezonefinder.com/uae-cross-border-ecommerce-customs-guide-2026/
 - Goods Across Borders, Kuwait (no duty-free threshold for commercial parcels; 5% GCC common tariff): https://www.goodsacrossborders.com/importing/into/kuwait
 - VATupdate, Kuwait leaves VAT out of its 2026–2030 fiscal plan: https://www.vatupdate.com/2026/07/24/kuwait-keeps-vat-off-the-table-no-adoption-in-the-2026-2030-fiscal-plan/
 
@@ -1294,7 +1736,7 @@ Tools:
 ````markdown
 # GCC expansion report
 
-An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-10-01, FX rates as of 2026-10-01 and catalogue 2026-10-01.
+An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-11-01, FX rates as of 2026-10-01, catalogue 2026-10-01 and sample orders 2026-11-01.
 
 > All market data is illustrative. Do not use it to quote real prices or delivery dates.
 
@@ -1302,9 +1744,11 @@ An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the co
 
 - On average, shelf prices sit 24.7% above the catalogue price in UAE, 33.1% in KWT and 41.2% in KSA.
 - For this order, delivery is on Thu 2026-10-22 in KSA, Wed 2026-10-21 in UAE and Thu 2026-10-22 in KWT.
-- Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
-- A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT.
-- Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT.
+- Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
+- For this order, direct parcels arrive on Wed 2026-10-21 in KSA, Tue 2026-10-20 in UAE and Wed 2026-10-21 in KWT.
+- Direct parcels are cheaper than consolidated imports for 1 of 3 sample orders in KSA, 1 of 3 in UAE and 0 of 3 in KWT.
+- A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 1.8% for direct parcels in KSA; 9.3% and 2.4% in UAE; and 7.6% and 9.4% in KWT.
+- Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Ordered on its own as a direct parcel instead of a consolidated import, its total changes by -1.6% in KSA, -3.8% in UAE and +2.0% in KWT.
 - The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) and GROC-TEA-060 in KWT (+20.0%).
 - Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2.
 
@@ -1320,29 +1764,29 @@ On average, shelf prices sit 24.7% above the catalogue price in UAE, 33.1% in KW
 
 ## Consolidated or parcel
 
-Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
+Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT. For this order, direct parcels arrive on Wed 2026-10-21 in KSA, Tue 2026-10-20 in UAE and Wed 2026-10-21 in KWT.
 
 ### KSA (Saudi Arabia)
 
-No duty on a parcel whose CIF is below 1,000.00 SAR. Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1. Duty is waived on 10 of them.
+No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR customs fee, included in the prices below. Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1. Duty is waived on 9 of them.
 
 | SKU | Product | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel duty |
 |---|---|---:|---:|---:|---|
-| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 686.95 | 660.95 | -3.8% | waived |
-| ELEC-CHG-002 | 65W USB-C Charger | 184.95 | 179.95 | -2.7% | waived |
-| FASH-BAG-014 | Leather Crossbody Bag | 594.95 | 546.95 | -8.1% | waived |
-| FASH-SCF-015 | Silk Scarf | 293.95 | 264.95 | -9.9% | waived |
-| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 593.95 | 875.95 | +47.5% | waived |
-| HOME-KTL-030 | Electric Kettle 1.7 L | 237.95 | 249.95 | +5.0% | waived |
-| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 4,144.95 | 4,344.95 | +4.8% | 5.0% |
-| BEAU-LIP-040 | Lip Balm | 16.95 | 15.95 | -5.9% | waived |
-| BEAU-SRM-041 | Vitamin C Serum 30 ml | 111.95 | 108.95 | -2.7% | waived |
-| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 340.95 | 340.95 | 0.0% | waived |
-| GROC-TEA-060 | English Breakfast Tea, 80 bags | 34.95 | 37.95 | +8.6% | waived |
+| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 686.95 | 675.95 | -1.6% | waived |
+| ELEC-CHG-002 | 65W USB-C Charger | 184.95 | 194.95 | +5.4% | waived |
+| FASH-BAG-014 | Leather Crossbody Bag | 594.95 | 561.95 | -5.5% | waived |
+| FASH-SCF-015 | Silk Scarf | 293.95 | 279.95 | -4.8% | waived |
+| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 593.95 | 890.95 | +50.0% | waived |
+| HOME-KTL-030 | Electric Kettle 1.7 L | 237.95 | 264.95 | +11.3% | waived |
+| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 4,144.95 | 4,359.95 | +5.2% | 5.0% |
+| BEAU-LIP-040 | Lip Balm | 16.95 | 30.95 | +82.6% | waived |
+| BEAU-SRM-041 | Vitamin C Serum 30 ml | 111.95 | 123.95 | +10.7% | waived |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 340.95 | 340.95 | 0.0% | 0.0% |
+| GROC-TEA-060 | English Breakfast Tea, 80 bags | 34.95 | 52.95 | +51.5% | waived |
 
 ### UAE (United Arab Emirates)
 
-No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol. Parcels are cheaper for 5 of 12 products, dearer for 5 and unchanged for 2. Duty is waived on 10 of them.
+No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol. Parcels are cheaper for 5 of 12 products, dearer for 5 and unchanged for 2. Duty is waived on 9 of them.
 
 | SKU | Product | Consolidated (AED) | Direct parcel (AED) | Change | Parcel duty |
 |---|---|---:|---:|---:|---|
@@ -1355,7 +1799,7 @@ No duty on a parcel whose CIF is at or below 1,000.00 AED, except products conta
 | HOME-ESP-031 | Bean-to-Cup Espresso Machine | 3,685.99 | 3,844.99 | +4.3% | 5.0% |
 | BEAU-LIP-040 | Lip Balm | 14.99 | 14.99 | 0.0% | waived |
 | BEAU-SRM-041 | Vitamin C Serum 30 ml | 99.99 | 96.99 | -3.0% | waived |
-| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 304.99 | 304.99 | 0.0% | waived |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 304.99 | 304.99 | 0.0% | 0.0% |
 | GROC-TEA-060 | English Breakfast Tea, 80 bags | 29.99 | 32.99 | +10.0% | waived |
 | GROC-VAN-061 | Pure Vanilla Extract | 55.99 | 57.99 | +3.6% | 5.0% |
 
@@ -1377,22 +1821,62 @@ No de minimis rule, so every parcel pays duty. Parcels are cheaper for 0 of 11 p
 | DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 24.950 | 24.950 | 0.0% | 0.0% |
 | GROC-TEA-060 | English Breakfast Tea, 80 bags | 2.950 | 2.950 | 0.0% | 5.0% |
 
+## Orders
+
+Direct parcels are cheaper than consolidated imports for 1 of 3 sample orders in KSA, 1 of 3 in UAE and 0 of 3 in KWT.
+
+| Order | Items |
+|---|---|
+| Two lip balms | 2 × BEAU-LIP-040 |
+| A silk scarf and a serum | FASH-SCF-015, BEAU-SRM-041 |
+| Headphones and a bag | ELEC-HP-001, FASH-BAG-014 |
+
+### KSA (Saudi Arabia)
+
+Parcels are cheaper for 1 of 3 orders, dearer for 2 and unchanged for 0. Duty is added at checkout to 1 of them.
+
+| Order | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel CIF (SAR) | Customs fee (SAR) | Duty and VAT (SAR) |
+|---|---:|---:|---:|---:|---:|---:|
+| Two lip balms | 33.90 | 46.90 | +38.3% | 27.53 | 15.00 | - |
+| A silk scarf and a serum | 405.90 | 388.90 | -4.2% | 323.94 | 15.00 | - |
+| Headphones and a bag | 1,281.90 | 1,321.47 | +3.1% | 1,049.26 | 15.00 | 98.57 |
+
+### UAE (United Arab Emirates)
+
+Parcels are cheaper for 1 of 3 orders, dearer for 1 and unchanged for 1. Duty is added at checkout to 1 of them.
+
+| Order | Consolidated (AED) | Direct parcel (AED) | Change | Parcel CIF (AED) | Customs fee (AED) | Duty and VAT (AED) |
+|---|---:|---:|---:|---:|---:|---:|
+| Two lip balms | 29.98 | 29.98 | 0.0% | 26.81 | - | - |
+| A silk scarf and a serum | 346.98 | 333.98 | -3.7% | 316.43 | - | - |
+| Headphones and a bag | 1,109.98 | 1,129.71 | +1.8% | 1,023.35 | - | 53.73 |
+
+### KWT (Kuwait)
+
+Parcels are cheaper for 0 of 3 orders, dearer for 2 and unchanged for 1.
+
+| Order | Consolidated (KWD) | Direct parcel (KWD) | Change | Parcel CIF (KWD) | Customs fee (KWD) | Duty and VAT (KWD) |
+|---|---:|---:|---:|---:|---:|---:|
+| Two lip balms | 3.900 | 3.900 | 0.0% | 2.266 | - | - |
+| A silk scarf and a serum | 27.900 | 28.900 | +3.6% | 26.587 | - | - |
+| Headphones and a bag | 88.900 | 91.900 | +3.4% | 86.253 | - | - |
+
 ## Tariff exposure
 
-A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT.
+A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 1.8% for direct parcels in KSA; 9.3% and 2.4% in UAE; and 7.6% and 9.4% in KWT.
 
 | Market | Shipping model | +5 pp | +10 pp | +20 pp |
 |---|---|---:|---:|---:|
 | KSA | Consolidated import | +4.6% | +9.0% | +18.6% |
-| KSA | Direct parcel | +0.4% | +0.9% | +1.7% |
+| KSA | Direct parcel | +0.9% | +1.8% | +3.5% |
 | UAE | Consolidated import | +4.9% | +9.3% | +19.2% |
-| UAE | Direct parcel | +0.8% | +1.5% | +3.2% |
+| UAE | Direct parcel | +1.2% | +2.4% | +4.8% |
 | KWT | Consolidated import | +3.8% | +7.6% | +16.0% |
 | KWT | Direct parcel | +6.3% | +9.4% | +17.7% |
 
 ## How a price is built
 
-Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT.
+Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Ordered on its own as a direct parcel instead of a consolidated import, its total changes by -1.6% in KSA, -3.8% in UAE and +2.0% in KWT.
 
 ### KSA (SAR)
 
@@ -1404,6 +1888,8 @@ Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every ma
 | VAT | 89.52 | 86.14 |
 | Rounding and price ending | 0.64 | 0.54 |
 | **Shelf price** | **686.95** | **660.95** |
+| Customs fee, at checkout | - | 15.00 |
+| **One-item order** | **686.95** | **675.95** |
 
 ### UAE (AED)
 
@@ -1450,11 +1936,13 @@ Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2.
 
 ## How these figures are made
 
-- Each product is priced as a one-item order, and every cost is passed on to the customer.
-- Prices use today's duty rates. A tariff rise adds percentage points to every duty rate.
+- Products are compared as one-item orders, and every cost is passed on to the customer.
+- A direct parcel pays the market's customs fee at checkout, and parcel prices include it. A product that weighs nothing, such as a download, never travels in a parcel, so it pays no fee and de minimis never applies to it.
+- Each sample order ships as one parcel, and its CIF decides de minimis for the whole order. When it is not within the threshold, the duty that its shelf prices left out is added at checkout, with the VAT on it. Direct parcel is the total at checkout.
+- Prices use today's duty rates. A tariff rise adds percentage points to every duty rate. Tariff exposure compares shelf prices, without the customs fee.
 - Above catalogue price compares the shelf price with the catalogue price converted at the config's FX rates, so it includes freight, duty, VAT and the price ending.
 - Averages are unweighted means over the products a market sells.
 - Price components are rounded for display, and the rounding line makes each column add up to the shelf price, which is exact.
 - Markets side by side and pricing risks use consolidated imports, the default shipping model.
-- Delivery dates are the same for both shipping models.
+- Direct parcels have their own linehaul time, so they can arrive on a different day.
 ````
