@@ -48,3 +48,4 @@ Always run Python through `uv run`. Never use `pip install` or a conda environme
 - Windows laptop. Claude Code runs commands through Git Bash; the commands above work in Git Bash and PowerShell.
 - `zoneinfo` needs the `tzdata` package on Windows (it's a project dependency).
 - The GitHub CLI (`gh`) is installed and signed in.
+- Git Bash rewrites an argument that starts with / as a Windows path; prefix the command with MSYS_NO_PATHCONV=1 when an argument must start with / (an issue title that names a slash command, for example).

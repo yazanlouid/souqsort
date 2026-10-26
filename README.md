@@ -49,7 +49,7 @@ GROC-GUM-062  Gummy Bears (pork gelatine)  contains_pork
 
 Each direct parcel is cleared on its own, and the UAE charges no customs duty on one whose CIF
 (goods + freight) is AED 1,000 or less. So most products pay no duty, and the +3 pp slider leaves
-their prices exactly where they were at 0 pp. Three products pay duty, not two:
+their prices exactly where they were at 0 pp. Only three products pay duty:
 
 - **The espresso machine** is over the threshold: its CIF is about AED 3,487.19. It pays 5% + 3 pp
   = 8%.
