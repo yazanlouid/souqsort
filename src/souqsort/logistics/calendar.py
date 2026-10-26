@@ -2,9 +2,10 @@
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import assert_never
 from zoneinfo import ZoneInfo
 
-from souqsort.models import MarketConfig, Weekday
+from souqsort.models import MarketConfig, ShippingModel, Weekday, require_shipping
 
 # Config day names as ``date.weekday()`` numbers.
 _WEEKDAY_NUMBER: dict[Weekday, int] = {
@@ -114,15 +115,20 @@ def to_market_time(moment: datetime, market: MarketConfig) -> datetime:
     return moment.astimezone(ZoneInfo(market.calendar.timezone))
 
 
-def estimate_delivery(ordered_at: datetime, market: MarketConfig) -> DeliveryEstimate:
+def estimate_delivery(
+    ordered_at: datetime, market: MarketConfig, shipping: ShippingModel = "consolidated"
+) -> DeliveryEstimate:
     """Estimate the dispatch and delivery dates of an order, on the market's calendar.
 
     The order is dispatched on its local date if that is a business day and the order came
     before the cutoff, otherwise on the next business day. An order exactly at the cutoff
-    misses it. Delivery is linehaul plus last-mile business days after dispatch.
+    misses it. Delivery is linehaul plus last-mile business days after dispatch. Both shipping
+    models share the dispatch rule and the last mile; a direct parcel takes the parcel
+    linehaul.
 
-    Raises ``ValueError`` if ``ordered_at`` is naive.
+    Raises ``ValueError`` if ``shipping`` is not a shipping model or ``ordered_at`` is naive.
     """
+    require_shipping(shipping)
     if ordered_at.utcoffset() is None:
         raise ValueError("ordered_at must be timezone-aware, got a naive datetime")
 
@@ -147,7 +153,15 @@ def estimate_delivery(ordered_at: datetime, market: MarketConfig) -> DeliveryEst
     else:
         dispatch_date = add_business_days(local_date, 1, weekend, holidays)
 
-    transit_days = logistics.linehaul_business_days + logistics.last_mile_business_days
+    # A match, not an if: mypy fails here if ShippingModel gains a value with no case.
+    match shipping:
+        case "consolidated":
+            linehaul = logistics.linehaul_business_days
+        case "parcel":
+            linehaul = logistics.parcel_linehaul_business_days
+        case unknown:
+            assert_never(unknown)
+    transit_days = linehaul + logistics.last_mile_business_days
     delivery_date = add_business_days(dispatch_date, transit_days, weekend, holidays)
 
     return DeliveryEstimate(

@@ -9,13 +9,14 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from souqsort.compliance import ExcludedProduct
-from souqsort.models import AttributeName, ShippingModel
+from souqsort.models import AttributeName, MarketConfig, ShippingModel
 from souqsort.pipeline import (
     MISSING_ARABIC_NAME,
     CatalogueSummary,
     LocalisationError,
     LocalisedProduct,
 )
+from souqsort.pricing.customs import parcel_fee_due
 from souqsort.pricing.money import format_money
 
 _NO_VALUE = "-"
@@ -184,6 +185,21 @@ def excluded_grid_rows(excluded: Sequence[ExcludedProduct]) -> list[ExcludedGrid
         )
         for item in excluded
     ]
+
+
+def parcel_fee_note(market: MarketConfig, shipping: ShippingModel) -> str | None:
+    """The sentence that names the market's parcel fee, for the CLI and the dashboard.
+
+    ``None`` unless ``shipping`` is a direct parcel in a market with a fee. The amount has the
+    currency's minor units, as prices do. Raises ``ValueError`` for an unknown ``shipping``.
+    """
+    fee = parcel_fee_due(market, shipping, anything_travels=True)
+    if fee is None:
+        return None
+    amount = format_money(fee, market.currency.minor_units)
+    return (
+        f"Each parcel order also pays a customs fee of {amount} {market.currency.code} at checkout."
+    )
 
 
 def search_products(items: Sequence[LocalisedProduct], query: str) -> list[LocalisedProduct]:

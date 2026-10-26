@@ -28,18 +28,18 @@ Market: UAE (United Arab Emirates)   Ordered at: 2026-10-15 14:59 Asia/Dubai   D
 
 SKU           Name                                         Shelf price (AED)  Margin %    Duty  Delivery    Flags
 ------------  -------------------------------------------  -----------------  --------  ------  ----------  -------------------
-ELEC-HP-001   Wireless Noise-Cancelling Headphones                    589.99     58.7%  waived  2026-10-21  -
-ELEC-CHG-002  65W USB-C Charger                                       159.99     64.5%  waived  2026-10-21  -
-FASH-BAG-014  Leather Crossbody Bag                                   485.99     64.7%  waived  2026-10-21  missing_arabic_name
-FASH-SCF-015  Silk Scarf                                              236.99     73.4%  waived  2026-10-21  -
-SPRT-KTB-020  Cast Iron Kettlebell 16 kg                              721.99     64.5%  waived  2026-10-21  -
-HOME-KTL-030  Electric Kettle 1.7 L                                   218.99     61.9%  waived  2026-10-21  -
-HOME-ESP-031  Bean-to-Cup Espresso Machine                           3954.99     40.1%    8.0%  2026-10-21  -
-BEAU-LIP-040  Lip Balm                                                 14.99     74.5%  waived  2026-10-21  -
-BEAU-SRM-041  Vitamin C Serum 30 ml                                    96.99     71.9%  waived  2026-10-21  -
-DIGI-LIC-050  Photo Editor Pro Licence (digital download)             304.99     70.0%  waived  2026-10-21  -
-GROC-TEA-060  English Breakfast Tea, 80 bags                           32.99     67.2%  waived  2026-10-21  missing_arabic_name
-GROC-VAN-061  Pure Vanilla Extract                                     59.99     69.0%    8.0%  2026-10-21  -
+ELEC-HP-001   Wireless Noise-Cancelling Headphones                    589.99     58.7%  waived  2026-10-20  -
+ELEC-CHG-002  65W USB-C Charger                                       159.99     64.5%  waived  2026-10-20  -
+FASH-BAG-014  Leather Crossbody Bag                                   485.99     64.7%  waived  2026-10-20  missing_arabic_name
+FASH-SCF-015  Silk Scarf                                              236.99     73.4%  waived  2026-10-20  -
+SPRT-KTB-020  Cast Iron Kettlebell 16 kg                              721.99     64.5%  waived  2026-10-20  -
+HOME-KTL-030  Electric Kettle 1.7 L                                   218.99     61.9%  waived  2026-10-20  -
+HOME-ESP-031  Bean-to-Cup Espresso Machine                           3954.99     40.1%    8.0%  2026-10-20  -
+BEAU-LIP-040  Lip Balm                                                 14.99     74.5%  waived  2026-10-20  -
+BEAU-SRM-041  Vitamin C Serum 30 ml                                    96.99     71.9%  waived  2026-10-20  -
+DIGI-LIC-050  Photo Editor Pro Licence (digital download)             313.99     70.0%    3.0%  2026-10-20  -
+GROC-TEA-060  English Breakfast Tea, 80 bags                           32.99     67.2%  waived  2026-10-20  missing_arabic_name
+GROC-VAN-061  Pure Vanilla Extract                                     59.99     69.0%    8.0%  2026-10-20  -
 
 Not sold in UAE (1):
 SKU           Name                         Reasons
@@ -49,26 +49,32 @@ GROC-GUM-062  Gummy Bears (pork gelatine)  contains_pork
 
 Each direct parcel is cleared on its own, and the UAE charges no customs duty on one whose CIF
 (goods + freight) is AED 1,000 or less. So most products pay no duty, and the +3 pp slider leaves
-their prices exactly where they were at 0 pp. Only two products pay duty, at 5% + 3 pp = 8%:
+their prices exactly where they were at 0 pp. Only three products pay duty:
 
-- **The espresso machine** is over the threshold: its CIF is about AED 3,487.19.
+- **The espresso machine** is over the threshold: its CIF is about AED 3,487.19. It pays 5% + 3 pp
+  = 8%.
 - **The vanilla extract** is well under it (CIF AED 52.11), but the UAE excludes alcohol from de
-  minimis, including food preparations containing alcohol, and vanilla extract contains alcohol.
+  minimis, including food preparations containing alcohol, and vanilla extract contains alcohol. It
+  pays 8% too.
+- **The licence** is a download. It weighs nothing, so it never travels in a parcel, and de minimis
+  never waives its 0% rate. At +3 pp it pays 3.0%.
 
-These two are the only prices the slider moves: 3844.99 → 3954.99 and 57.99 → 59.99, which is why
-the dashboard's average price change is only +0.5%.
+These three are the only prices the slider moves: 3844.99 → 3954.99, 57.99 → 59.99 and
+304.99 → 313.99, which is why the dashboard's average price change is only +0.8%.
 
 **The gummy bears are not sold** because they contain pork gelatine, and the UAE bans
 `contains_pork`. They are screened out before pricing, so they are never priced, and they are listed
 with the reason instead of silently disappearing.
 
-The order lands one minute before the UAE's 15:00 cut-off, so it ships the same day and arrives four
-business days later, skipping the Saturday–Sunday weekend. `--ordered-at` is fixed here so the
-output is reproducible; without it the CLI uses the current time.
+The order lands one minute before the UAE's 15:00 cut-off, so it ships the same day and arrives three
+business days later, skipping the Saturday–Sunday weekend. That is a day sooner than a consolidated
+import: a direct parcel has its own, shorter linehaul. `--ordered-at` is fixed here so the output is
+reproducible; without it the CLI uses the current time.
 
 The shipping model is a real trade-off. Parcel freight costs twice as much per kg, so light,
 valuable items get cheaper as parcels and heavy or cheap ones get dearer. In KSA, the headphones go
-from 686.95 to 660.95 SAR, but the 16 kg kettlebell goes from 593.95 to 875.95. Kuwait has no de
+from 686.95 to 660.95 SAR, but the 16 kg kettlebell goes from 593.95 to 875.95. A KSA parcel also
+pays a 15.00 SAR customs fee at checkout, and the CLI says so under the table. Kuwait has no de
 minimis, so a parcel there is never cheaper.
 
 ## The expansion report
@@ -92,10 +98,11 @@ model and search don't change it.
 [`docs/GCC_EXPANSION_REPORT.md`](docs/GCC_EXPANSION_REPORT.md) is the report for the sample data,
 for an order on Thursday 15 October 2026 at 09:00 UTC. Three of its findings:
 
-- **Parcels in KSA.** Direct parcels pay no duty on 10 of the 11 products KSA sells, but dearer
-  parcel freight means they are cheaper than consolidated imports for only 6 of them.
+- **Parcels in KSA.** Direct parcels pay no duty on 9 of the 11 products KSA sells, but dearer
+  parcel freight and a 15.00 SAR customs fee per parcel mean they are cheaper than consolidated
+  imports for only 3 of them.
 - **A 10 pp tariff rise.** In KSA it lifts average prices by 9.0% for consolidated imports but only
-  0.9% for direct parcels, because de minimis waives the duty on most parcels whatever the rate.
+  1.8% for direct parcels, because de minimis waives the duty on most parcels whatever the rate.
 - **Kuwait's lip balm.** The 0.950 price ending takes it from 1.157 to 1.950 KWD, adding 68.5%.
 
 ## What makes it tricky
@@ -147,7 +154,7 @@ CLI options for `price`:
 | Option | Meaning |
 |---|---|
 | `--market CODE` | Market code from the config: `KSA`, `UAE` or `KWT` (required). |
-| `--shipping MODEL` | `consolidated` (one commercial import, de minimis never applies) or `parcel` (each order cleared on its own, duty-free under the market's de minimis threshold, dearer freight). Default `consolidated`. |
+| `--shipping MODEL` | `consolidated` (one commercial import, de minimis never applies) or `parcel` (each order cleared on its own, with its own freight rate, transit time and customs fee; duty-free under the market's de minimis threshold). Default `consolidated`. |
 | `--duty-adjust POINTS` | Whole percentage points added to every duty rate, 0 to 20. Default 0. |
 | `--ordered-at ISO` | Order date and time, e.g. `2026-10-15T20:59Z`. Without an offset it is read as local time in the market. Default: now. |
 | `--csv PATH` | Also write the rows for the products for sale to a CSV file. |

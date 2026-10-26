@@ -69,9 +69,10 @@ SCOPE_NOTE = "All 11 products for sale in KSA; search filters the table only"
 
 SHIPPING_HELP = (
     "Consolidated: orders travel as one commercial import, so de minimis never applies. "
-    "Direct parcel: each order is cleared on its own; under the market's threshold it pays no "
-    "duty, but parcel freight costs more per kg."
+    "Direct parcel: each order is cleared on its own, with its own freight rate, transit time "
+    "and customs fee; under the market's threshold it pays no duty."
 )
+KSA_FEE_NOTE = "Each parcel order also pays a customs fee of 15.00 SAR at checkout."
 
 # The report download button in the sidebar (SPEC §9.6).
 REPORT_LABEL = "Download expansion report"
@@ -291,7 +292,7 @@ def test_duty_column_shows_waived_for_a_waived_parcel(app: AppTest) -> None:
     duty = _column(app, DUTY)
 
     assert duty[HEADPHONES] == "waived"
-    assert duty[LICENCE] == "waived"  # SPEC §7.9.2: waived although its rate is already 0
+    assert duty[LICENCE] == "0.0%"  # SPEC §7.9.2: it weighs nothing, so it never travels
     assert duty[ESPRESSO] == "5.0%"  # above the threshold
 
 
@@ -338,6 +339,19 @@ def test_caption_names_the_shipping_model(app: AppTest) -> None:
     assert "Consolidated import" not in _captions(app)
 
 
+def test_the_fee_caption_shows_for_ksa_parcels_only(app: AppTest) -> None:
+    assert KSA_FEE_NOTE not in _captions(app)  # consolidated
+
+    _ship(app, "parcel")
+    assert KSA_FEE_NOTE in _captions(app)
+
+    _select_market(app, "UAE")
+    assert "customs fee" not in _captions(app)
+
+    _select_market(app, "KWT")
+    assert "customs fee" not in _captions(app)
+
+
 def test_switching_markets_keeps_the_shipping_model(app: AppTest) -> None:
     _ship(app, "parcel")
 
@@ -347,12 +361,13 @@ def test_switching_markets_keeps_the_shipping_model(app: AppTest) -> None:
     assert _column(app, "Shelf price (AED)")[HEADPHONES] == Decimal("589.99")  # SPEC §7.9.2
 
 
-def test_shipping_model_does_not_change_delivery_dates(app: AppTest) -> None:
-    before = _column(app, DELIVERY)
+def test_delivery_column_follows_the_shipping_model(app: AppTest) -> None:
+    _order(app, date(2026, 10, 15), time(12, 0))  # Thu 12:00 in Riyadh
+    assert set(_column(app, DELIVERY).values()) == {"2026-10-22"}
 
     _ship(app, "parcel")
 
-    assert _column(app, DELIVERY) == before
+    assert set(_column(app, DELIVERY).values()) == {"2026-10-21"}  # SPEC §8.3
 
 
 # --- the duty slider changes prices -------------------------------------------------------

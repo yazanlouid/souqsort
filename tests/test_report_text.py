@@ -57,6 +57,7 @@ from souqsort.report.text import (
     money_text,
     not_sold_sentence,
     one_line,
+    parcel_delivery_sentence,
     percent_text,
     pricing_risks_sentence,
     report_context,
@@ -71,7 +72,7 @@ from souqsort.report.text import (
 HEADER = """\
 # GCC expansion report
 
-An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-10-01, FX rates as of 2026-10-01 and catalogue 2026-10-01.
+An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-11-01, FX rates as of 2026-10-01 and catalogue 2026-10-01.
 
 > All market data is illustrative. Do not use it to quote real prices or delivery dates.
 
@@ -93,29 +94,29 @@ On average, shelf prices sit 24.7% above the catalogue price in UAE, 33.1% in KW
 SHIPPING_SECTION = """\
 ## Consolidated or parcel
 
-Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
+Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT. For this order, direct parcels arrive on Wed 2026-10-21 in KSA, Tue 2026-10-20 in UAE and Wed 2026-10-21 in KWT.
 
 ### KSA (Saudi Arabia)
 
-No duty on a parcel whose CIF is below 1,000.00 SAR. Parcels are cheaper for 6 of 11 products, dearer for 4 and unchanged for 1. Duty is waived on 10 of them.
+No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR customs fee at checkout, included in the parcel price of every product that travels. Parcels are cheaper for 3 of 11 products, dearer for 7 and unchanged for 1. Duty is waived on 9 of them.
 
 | SKU | Product | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel duty |
 |---|---|---:|---:|---:|---|
-| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 686.95 | 660.95 | -3.8% | waived |
-| ELEC-CHG-002 | 65W USB-C Charger | 184.95 | 179.95 | -2.7% | waived |
-| FASH-BAG-014 | Leather Crossbody Bag | 594.95 | 546.95 | -8.1% | waived |
-| FASH-SCF-015 | Silk Scarf | 293.95 | 264.95 | -9.9% | waived |
-| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 593.95 | 875.95 | +47.5% | waived |
-| HOME-KTL-030 | Electric Kettle 1.7 L | 237.95 | 249.95 | +5.0% | waived |
-| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 4,144.95 | 4,344.95 | +4.8% | 5.0% |
-| BEAU-LIP-040 | Lip Balm | 16.95 | 15.95 | -5.9% | waived |
-| BEAU-SRM-041 | Vitamin C Serum 30 ml | 111.95 | 108.95 | -2.7% | waived |
-| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 340.95 | 340.95 | 0.0% | waived |
-| GROC-TEA-060 | English Breakfast Tea, 80 bags | 34.95 | 37.95 | +8.6% | waived |
+| ELEC-HP-001 | Wireless Noise-Cancelling Headphones | 686.95 | 675.95 | -1.6% | waived |
+| ELEC-CHG-002 | 65W USB-C Charger | 184.95 | 194.95 | +5.4% | waived |
+| FASH-BAG-014 | Leather Crossbody Bag | 594.95 | 561.95 | -5.5% | waived |
+| FASH-SCF-015 | Silk Scarf | 293.95 | 279.95 | -4.8% | waived |
+| SPRT-KTB-020 | Cast Iron Kettlebell 16 kg | 593.95 | 890.95 | +50.0% | waived |
+| HOME-KTL-030 | Electric Kettle 1.7 L | 237.95 | 264.95 | +11.3% | waived |
+| HOME-ESP-031 | Bean-to-Cup Espresso Machine | 4,144.95 | 4,359.95 | +5.2% | 5.0% |
+| BEAU-LIP-040 | Lip Balm | 16.95 | 30.95 | +82.6% | waived |
+| BEAU-SRM-041 | Vitamin C Serum 30 ml | 111.95 | 123.95 | +10.7% | waived |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 340.95 | 340.95 | 0.0% | 0.0% |
+| GROC-TEA-060 | English Breakfast Tea, 80 bags | 34.95 | 52.95 | +51.5% | waived |
 
 ### UAE (United Arab Emirates)
 
-No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol. Parcels are cheaper for 5 of 12 products, dearer for 5 and unchanged for 2. Duty is waived on 10 of them.
+No duty on a parcel whose CIF is at or below 1,000.00 AED, except products containing alcohol. Parcels are cheaper for 5 of 12 products, dearer for 5 and unchanged for 2. Duty is waived on 9 of them.
 
 | SKU | Product | Consolidated (AED) | Direct parcel (AED) | Change | Parcel duty |
 |---|---|---:|---:|---:|---|
@@ -128,7 +129,7 @@ No duty on a parcel whose CIF is at or below 1,000.00 AED, except products conta
 | HOME-ESP-031 | Bean-to-Cup Espresso Machine | 3,685.99 | 3,844.99 | +4.3% | 5.0% |
 | BEAU-LIP-040 | Lip Balm | 14.99 | 14.99 | 0.0% | waived |
 | BEAU-SRM-041 | Vitamin C Serum 30 ml | 99.99 | 96.99 | -3.0% | waived |
-| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 304.99 | 304.99 | 0.0% | waived |
+| DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 304.99 | 304.99 | 0.0% | 0.0% |
 | GROC-TEA-060 | English Breakfast Tea, 80 bags | 29.99 | 32.99 | +10.0% | waived |
 | GROC-VAN-061 | Pure Vanilla Extract | 55.99 | 57.99 | +3.6% | 5.0% |
 
@@ -155,14 +156,14 @@ No de minimis rule, so every parcel pays duty. Parcels are cheaper for 0 of 11 p
 TARIFF_SECTION = """\
 ## Tariff exposure
 
-A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT.
+A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 1.8% for direct parcels in KSA; 9.3% and 2.4% in UAE; and 7.6% and 9.4% in KWT.
 
 | Market | Shipping model | +5 pp | +10 pp | +20 pp |
 |---|---|---:|---:|---:|
 | KSA | Consolidated import | +4.6% | +9.0% | +18.6% |
-| KSA | Direct parcel | +0.4% | +0.9% | +1.7% |
+| KSA | Direct parcel | +0.9% | +1.8% | +3.5% |
 | UAE | Consolidated import | +4.9% | +9.3% | +19.2% |
-| UAE | Direct parcel | +0.8% | +1.5% | +3.2% |
+| UAE | Direct parcel | +1.2% | +2.4% | +4.8% |
 | KWT | Consolidated import | +3.8% | +7.6% | +16.0% |
 | KWT | Direct parcel | +6.3% | +9.4% | +17.7% |
 
@@ -186,13 +187,14 @@ Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2.
 METHOD_SECTION = """\
 ## How these figures are made
 
-- Each product is priced as a one-item order, and every cost is passed on to the customer.
-- Prices use today's duty rates. A tariff rise adds percentage points to every duty rate.
+- Products are compared as one-item orders, and every cost is passed on to the customer.
+- A direct parcel pays the market's customs fee at checkout, and parcel prices include it. A product that weighs nothing, such as a download, never travels in a parcel, so it pays no fee and de minimis never applies to it.
+- Prices use today's duty rates. A tariff rise adds percentage points to every duty rate. Tariff exposure compares shelf prices, without the customs fee.
 - Above catalogue price compares the shelf price with the catalogue price converted at the config's FX rates, so it includes freight, duty, VAT and the price ending.
 - Averages are unweighted means over the products a market sells.
 - Price components are rounded for display, and the rounding line makes each column add up to the shelf price, which is exact.
 - Markets side by side and pricing risks use consolidated imports, the default shipping model.
-- Delivery dates are the same for both shipping models.
+- Direct parcels have their own linehaul time, so they can arrive on a different day.
 """  # noqa: E501
 
 PRICE_SENTENCE = (
@@ -673,8 +675,12 @@ def test_line_breaks_in_a_market_code_stay_on_one_line() -> None:
 # --- consolidated or parcel (§9.3.2 item 2) -----------------------------------------------
 
 SHIPPING_SENTENCE = (
-    "Direct parcels are cheaper than consolidated imports for 6 of 11 products in KSA, "
+    "Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA, "
     "5 of 12 in UAE and 0 of 11 in KWT."
+)
+PARCEL_DELIVERY_SENTENCE = (
+    "For this order, direct parcels arrive on Wed 2026-10-21 in KSA, Tue 2026-10-20 in UAE "
+    "and Wed 2026-10-21 in KWT."
 )
 
 
@@ -693,15 +699,22 @@ def _comparison(
     code: str,
     rule: DeMinimisRule | None = None,
     prices: Sequence[tuple[str, str, bool]] = (),
+    *,
+    fee: str | None = None,
+    parcels_delivered: date = date(2026, 10, 21),
 ) -> ShippingComparison:
-    """A hand-built market for sentence tests: (consolidated, parcel, waived) per product."""
+    """A hand-built market for sentence tests: (consolidated, parcel, waived) per product.
+
+    ``fee`` is the market's parcel fee, charged on every product here.
+    """
+    parcel_fee = None if fee is None else Decimal(fee)
     products = tuple(
         ProductComparison(
             sku=f"SKU-{n}",
             name_en=f"Product {n}",
             consolidated_price=Decimal(consolidated),
             parcel_price=Decimal(parcel),
-            change_pct=Decimal(parcel) / Decimal(consolidated) - 1,
+            parcel_fee=parcel_fee,
             parcel_duty_rate=Decimal(0) if waived else Decimal("0.05"),
             parcel_duty_waived=waived,
         )
@@ -713,6 +726,12 @@ def _comparison(
         currency="XXX",
         minor_units=2,
         de_minimis=rule,
+        parcel_fee=parcel_fee,
+        parcel_delivery=DeliveryEstimate(
+            ordered_at_local=datetime(2026, 10, 15, 12, 0, tzinfo=UTC),
+            dispatch_date=date(2026, 10, 15),
+            delivery_date=parcels_delivered,
+        ),
         products=products,
     )
 
@@ -787,8 +806,55 @@ def test_a_market_that_sells_nothing_gives_its_rule_and_no_products(
     )
 
 
+def test_market_sentences_with_a_fee() -> None:
+    comparison = _comparison("A", _rule(), [("10.00", "9.00", True)], fee="15")
+
+    assert shipping_market_sentences(comparison) == (
+        "No duty on a parcel whose CIF is below 1,000.00 XXX. Each parcel also pays a 15.00 XXX "
+        "customs fee at checkout, included in the parcel price of every product that travels. "
+        "Parcels are cheaper for 0 of 1 product, dearer for 1 and unchanged for 0. "
+        "Duty is waived on 1 of them."
+    )
+
+
+@pytest.mark.parametrize("rule", [_rule(), None], ids=["rule", "no-rule"])
+def test_a_market_that_sells_nothing_still_gives_its_fee(rule: DeMinimisRule | None) -> None:
+    sentences = shipping_market_sentences(_comparison("A", rule, fee="1234.5"))
+
+    assert sentences == (
+        f"{de_minimis_sentence(_comparison('A', rule))} Each parcel also pays a 1,234.50 XXX "
+        "customs fee at checkout, included in the parcel price of every product that travels. "
+        "No products are for sale."
+    )
+
+
+def test_the_fee_sentence_is_for_ksa_only(report: ExpansionReport) -> None:
+    with_fee = [
+        comparison.code
+        for comparison in report.shipping
+        if "customs fee" in shipping_market_sentences(comparison)
+    ]
+
+    assert with_fee == ["KSA"]
+
+
 def test_shipping_sentence_for_the_sample_data(report: ExpansionReport) -> None:
     assert shipping_sentence(report.shipping) == SHIPPING_SENTENCE
+
+
+def test_parcel_delivery_sentence_for_the_sample_data(report: ExpansionReport) -> None:
+    assert parcel_delivery_sentence(report.shipping) == PARCEL_DELIVERY_SENTENCE
+
+
+def test_parcel_delivery_sentence_names_every_market_even_one_that_sells_nothing() -> None:
+    comparisons = [
+        _comparison("A", parcels_delivered=date(2026, 10, 20)),
+        _comparison("B\nC", None, [("10.00", "9.00", False)]),
+    ]
+
+    assert parcel_delivery_sentence(comparisons) == (
+        "For this order, direct parcels arrive on Tue 2026-10-20 in A and Wed 2026-10-21 in B C."
+    )
 
 
 def test_shipping_sentence_leaves_out_a_market_that_sells_nothing() -> None:
@@ -828,9 +894,12 @@ def test_a_market_that_sells_nothing_has_no_parcel_table(
 
     assert section.startswith(
         "## Consolidated or parcel\n\n"
-        "Direct parcels are cheaper than consolidated imports for 0 of 1 product in UAE.\n\n"
+        "Direct parcels are cheaper than consolidated imports for 0 of 1 product in UAE. "
+        f"{PARCEL_DELIVERY_SENTENCE}\n\n"
         "### KSA (Saudi Arabia)\n\n"
-        "No duty on a parcel whose CIF is below 1,000.00 SAR. No products are for sale.\n\n"
+        "No duty on a parcel whose CIF is below 1,000.00 SAR. Each parcel also pays a 15.00 SAR "
+        "customs fee at checkout, included in the parcel price of every product that travels. "
+        "No products are for sale.\n\n"
         "### UAE (United Arab Emirates)\n\n"
     )
     assert "| GROC-VAN-061 | Pure Vanilla Extract | 55.99 | 57.99 | +3.6% | 5.0% |\n" in section
@@ -846,7 +915,7 @@ def test_parcel_rows_escape_cells_from_the_data(catalogue: Catalogue, config: Gc
     report = build_report(
         catalogue.model_copy(update={"products": [odd]}), config, REPORT_ORDERED_AT
     )
-    row = "| BEAU-LIP-040 | Lip \\| Balm XL | 16.95 | 15.95 | -5.9% | waived |\n"
+    row = "| BEAU-LIP-040 | Lip \\| Balm XL | 16.95 | 30.95 | +82.6% | waived |\n"
 
     assert row in render_report(report)
 
@@ -854,8 +923,8 @@ def test_parcel_rows_escape_cells_from_the_data(catalogue: Catalogue, config: Gc
 # --- tariff exposure (§9.3.2 item 3) ------------------------------------------------------
 
 TARIFF_SENTENCE = (
-    "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 0.9% for "
-    "direct parcels in KSA; 9.3% and 1.5% in UAE; and 7.6% and 9.4% in KWT."
+    "A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 1.8% for "
+    "direct parcels in KSA; 9.3% and 2.4% in UAE; and 7.6% and 9.4% in KWT."
 )
 
 
@@ -966,15 +1035,15 @@ def test_tariff_sentence_names_a_market_missing_a_shipping_model() -> None:
 
 BUILD_UP_SENTENCES = [
     "Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells.",
-    "Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% "
-    "in KSA, -3.8% in UAE and +2.0% in KWT.",
+    "Ordered on its own as a direct parcel instead of a consolidated import, its total changes "
+    "by -1.6% in KSA, -3.8% in UAE and +2.0% in KWT.",
 ]
 NO_BUILD_UP_SENTENCE = "No product is sold in every market, so there is no price to break down."
 
 BUILD_UP_SECTION = """\
 ## How a price is built
 
-Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Shipped as a direct parcel instead of a consolidated import, its price changes by -3.8% in KSA, -3.8% in UAE and +2.0% in KWT.
+Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Ordered on its own as a direct parcel instead of a consolidated import, its total changes by -1.6% in KSA, -3.8% in UAE and +2.0% in KWT.
 
 ### KSA (SAR)
 
@@ -986,6 +1055,8 @@ Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every ma
 | VAT | 89.52 | 86.14 |
 | Rounding and price ending | 0.64 | 0.54 |
 | **Shelf price** | **686.95** | **660.95** |
+| Customs fee, at checkout | - | 15.00 |
+| **One-item order** | **686.95** | **675.95** |
 
 ### UAE (AED)
 
@@ -1041,7 +1112,7 @@ def _quote(
     )
 
 
-def _build_up(code: str, consolidated: str, parcel: str) -> PriceBuildUp:
+def _build_up(code: str, consolidated: str, parcel: str, fee: str | None = None) -> PriceBuildUp:
     """A hand-built market whose two quotes differ only in their shelf prices."""
     return PriceBuildUp(
         code=code,
@@ -1049,6 +1120,7 @@ def _build_up(code: str, consolidated: str, parcel: str) -> PriceBuildUp:
         minor_units=2,
         consolidated=_quote("1.00", "0", "0", "0", consolidated),
         parcel=_quote("1.00", "0", "0", "0", parcel, shipping="parcel"),
+        parcel_fee=None if fee is None else Decimal(fee),
     )
 
 
@@ -1067,9 +1139,19 @@ def test_build_up_sentences_for_one_market() -> None:
 
     assert build_up_sentences(sample, [_build_up("A", "10.00", "10.00")]) == [
         "Thing (SKU-1) is the first product every market sells.",
-        "Shipped as a direct parcel instead of a consolidated import, its price changes by "
-        "0.0% in A.",
+        "Ordered on its own as a direct parcel instead of a consolidated import, its total "
+        "changes by 0.0% in A.",
     ]
+
+
+def test_build_up_sentences_compare_one_item_orders() -> None:
+    sample = SampleProduct(sku="SKU-1", name_en="Thing")
+    build_ups = [_build_up("A", "100.00", "90.00", fee="15.00"), _build_up("B", "100.00", "90.00")]
+
+    assert build_up_sentences(sample, build_ups)[1] == (
+        "Ordered on its own as a direct parcel instead of a consolidated import, its total "
+        "changes by +5.0% in A and -10.0% in B."
+    )
 
 
 def test_build_up_sentences_when_no_product_is_sold_everywhere() -> None:
@@ -1082,8 +1164,8 @@ def test_build_up_sentences_keep_data_on_one_line() -> None:
 
     assert build_up_sentences(sample, build_ups) == [
         "Two lines (SKU 1) is the first product every market sells.",
-        "Shipped as a direct parcel instead of a consolidated import, its price changes by "
-        "+10.0% in A B and -10.0% in C.",
+        "Ordered on its own as a direct parcel instead of a consolidated import, its total "
+        "changes by +10.0% in A B and -10.0% in C.",
     ]
 
 
@@ -1212,9 +1294,9 @@ def test_a_sample_product_name_with_a_line_break_stays_on_one_line(
     opening = "Wireless Headphones (ELEC-HP-001) is the first product every market sells. "
 
     assert _section(text, "How a price is built").startswith(
-        f"## How a price is built\n\n{opening}Shipped as"
+        f"## How a price is built\n\n{opening}Ordered on its own"
     )
-    assert f"\n- {opening}Shipped as" in _section(text, "Summary")
+    assert f"\n- {opening}Ordered on its own" in _section(text, "Summary")
     assert "\n\n\n" not in text
 
 
@@ -1329,6 +1411,7 @@ def test_summary_is_appendix_a(rendered: str) -> None:
         PRICE_SENTENCE,
         DELIVERY_SENTENCE,
         SHIPPING_SENTENCE,
+        PARCEL_DELIVERY_SENTENCE,
         TARIFF_SENTENCE,
         " ".join(BUILD_UP_SENTENCES),
         RISKS_SENTENCE,

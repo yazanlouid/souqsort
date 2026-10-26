@@ -14,12 +14,13 @@ Check every change against these rules:
 2. Full precision until the shelf price; exactly one rounding there, ROUND_HALF_UP to the currency's minor units, then a charm-up that never lowers the price. Components are rounded only for display.
 3. FX multiplies first: amount * per_usd[to] / per_usd[from].
 4. Duty is on CIF; VAT is on CIF plus duty.
-5. De minimis compares the full-precision CIF in the market currency with the threshold; "below" and "at_or_below" differ exactly at the threshold; a product with an excluded attribute never qualifies; it waives duty only, never VAT, and only in parcel mode; the duty adjustment never changes whether it applies.
+5. De minimis compares the full-precision CIF in the market currency with the threshold; "below" and "at_or_below" differ exactly at the threshold; a product with an excluded attribute never qualifies; a product that weighs nothing never qualifies; it waives duty only, never VAT, and only in parcel mode; the duty adjustment never changes whether it applies.
 6. Consolidated mode gives exactly the v0.1 prices.
 7. A product with a banned attribute is never priced for that market and never silently dropped: it is reported as not sold, with its reasons.
 8. No code branches on a market code; market rules come from data/raw/gcc_config.json.
 9. Nothing in src/ reads the clock except the injectable `now` in cli.py.
 10. The expansion report computes its figures from engine results in Decimal and rounds only when it formats them. Its template receives text only: no float, no arithmetic and no number formatting in the template. The same inputs give the same bytes.
+11. The parcel fee is charged as it is, with no VAT, only for a direct parcel that holds a product weighing more than 0 kg; a one-item order costs its shelf price plus that fee.
 
 Then run `uv run pytest -q` and report the result.
 

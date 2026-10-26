@@ -116,7 +116,7 @@ PARCEL_PRICE_LISTS: dict[str, dict[str, tuple[str, bool]]] = {
         "HOME-ESP-031": ("4344.95", False),
         "BEAU-LIP-040": ("15.95", W),
         "BEAU-SRM-041": ("108.95", W),
-        "DIGI-LIC-050": ("340.95", W),
+        "DIGI-LIC-050": ("340.95", False),  # weighs nothing, so never travels
         "GROC-TEA-060": ("37.95", W),
         "GROC-VAN-061": ("61.95", W),
         "GROC-GUM-062": ("25.95", W),
@@ -131,7 +131,7 @@ PARCEL_PRICE_LISTS: dict[str, dict[str, tuple[str, bool]]] = {
         "HOME-ESP-031": ("3844.99", False),
         "BEAU-LIP-040": ("14.99", W),
         "BEAU-SRM-041": ("96.99", W),
-        "DIGI-LIC-050": ("304.99", W),
+        "DIGI-LIC-050": ("304.99", False),
         "GROC-TEA-060": ("32.99", W),
         "GROC-VAN-061": ("57.99", False),  # alcohol is excluded from the UAE's de minimis
         "GROC-GUM-062": ("21.99", W),
@@ -252,6 +252,67 @@ def test_delivery_cells(
     estimate = estimate_delivery(ordered_at, config.markets[market])
 
     assert (estimate.dispatch_date, estimate.delivery_date) == (dispatch, delivery)
+
+
+# SPEC §8.3: the same moments as direct parcels, which take the parcel linehaul. Dispatch is
+# the same as for a consolidated import, so each cell is the delivery date only.
+PARCEL_DELIVERY_CELLS: dict[str, tuple[date, ...]] = {
+    "KSA": (
+        date(2026, 10, 21),  # consolidated Thu 22
+        date(2026, 10, 21),
+        date(2026, 10, 22),  # dispatch Sun 18
+        date(2026, 12, 7),
+        date(2027, 3, 2),
+        date(2027, 3, 17),
+    ),
+    "UAE": (
+        date(2026, 10, 20),  # consolidated Wed 21
+        date(2026, 10, 20),
+        date(2026, 10, 21),
+        date(2026, 12, 8),
+        date(2027, 3, 1),
+        date(2027, 3, 16),
+    ),
+    "KWT": (
+        date(2026, 10, 21),
+        date(2026, 10, 22),  # dispatch Sun 18, after the 13:00 cutoff
+        date(2026, 10, 22),
+        date(2026, 12, 7),
+        date(2027, 3, 3),
+        date(2027, 3, 17),
+    ),
+}
+
+PARCEL_DELIVERY_PARAMS = [
+    pytest.param(market, ordered_at, dispatch, delivery, id=f"{market}-{ordered_at:%Y-%m-%dT%H:%M}")
+    for market, cells in PARCEL_DELIVERY_CELLS.items()
+    for ordered_at, (dispatch, _), delivery in zip(
+        ORDER_TIMES, DELIVERY_CELLS[market], cells, strict=True
+    )
+]
+
+
+def test_every_market_has_parcel_delivery_cells(config: GccConfig) -> None:
+    assert set(PARCEL_DELIVERY_CELLS) == set(config.markets)
+
+
+@pytest.mark.parametrize(("market", "ordered_at", "dispatch", "delivery"), PARCEL_DELIVERY_PARAMS)
+def test_parcel_delivery_cells(
+    config: GccConfig, market: str, ordered_at: datetime, dispatch: date, delivery: date
+) -> None:
+    estimate = estimate_delivery(ordered_at, config.markets[market], "parcel")
+
+    assert (estimate.dispatch_date, estimate.delivery_date) == (dispatch, delivery)
+
+
+@pytest.mark.parametrize(("market", "ordered_at", "dispatch", "delivery"), DELIVERY_PARAMS)
+def test_consolidated_is_the_default_for_delivery(
+    config: GccConfig, market: str, ordered_at: datetime, dispatch: date, delivery: date
+) -> None:
+    explicit = estimate_delivery(ordered_at, config.markets[market], "consolidated")
+
+    assert explicit == estimate_delivery(ordered_at, config.markets[market])
+    assert explicit.delivery_date == delivery
 
 
 def _dp(value: Decimal, places: int) -> Decimal:

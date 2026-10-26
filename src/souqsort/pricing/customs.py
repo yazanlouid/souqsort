@@ -1,12 +1,17 @@
-"""Customs duty: the rate a product pays, and when de minimis waives it."""
+"""Customs: the duty rate a product pays, when de minimis waives it, and the parcel fee."""
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import assert_never, get_args
+from typing import assert_never
 
-from souqsort.models import DeMinimisRule, MarketConfig, Product, ProductAttributes, ShippingModel
-
-SHIPPING_MODELS: tuple[ShippingModel, ...] = get_args(ShippingModel)
+from souqsort.models import (
+    DeMinimisRule,
+    MarketConfig,
+    Product,
+    ProductAttributes,
+    ShippingModel,
+    require_shipping,
+)
 
 
 @dataclass(frozen=True)
@@ -21,11 +26,13 @@ class DutyAssessment:
     waived: bool
 
 
-def require_shipping(shipping: object) -> None:
-    """Raise ``ValueError`` unless ``shipping`` is one of ``ShippingModel``'s values."""
-    if shipping not in SHIPPING_MODELS:
-        allowed = ", ".join(SHIPPING_MODELS)
-        raise ValueError(f"shipping must be one of {allowed}, got {shipping!r}")
+def travels(product: Product) -> bool:
+    """Whether the product goes in a parcel: it weighs more than 0 kg.
+
+    A product that weighs nothing, such as a download, never travels, so de minimis never
+    applies to it.
+    """
+    return product.weight_kg > 0
 
 
 def de_minimis_applies(
@@ -49,6 +56,26 @@ def de_minimis_applies(
             assert_never(unknown)
 
 
+def parcel_fee_due(
+    market: MarketConfig, shipping: ShippingModel, anything_travels: bool
+) -> Decimal | None:
+    """The customs fee an order pays at checkout, as the config writes it, or ``None``.
+
+    Only a direct parcel pays it, and only when something in the order travels: otherwise no
+    parcel is sent. A market without a fee charges none. No VAT is charged on it. Raises
+    ``ValueError`` for an unknown ``shipping``.
+    """
+    require_shipping(shipping)
+    match shipping:
+        case "consolidated":
+            return None
+        case "parcel":
+            fee = market.customs.parcel_fee
+            return fee.amount if anything_travels and fee is not None else None
+        case unknown:
+            assert_never(unknown)
+
+
 def assess_duty(
     product: Product,
     market: MarketConfig,
@@ -59,12 +86,21 @@ def assess_duty(
     """The duty rate for a product's CIF in the market currency.
 
     A consolidated import always pays its category rate plus ``duty_adjustment``. A direct
-    parcel pays nothing when de minimis applies, whatever the adjustment; otherwise the same.
-    Raises ``ValueError`` for an unknown ``shipping``.
+    parcel pays nothing when the product travels and de minimis applies, whatever the
+    adjustment; otherwise the same. Raises ``ValueError`` for an unknown ``shipping``.
     """
     require_shipping(shipping)
     customs = market.customs
-    if shipping == "parcel" and de_minimis_applies(cif, customs.de_minimis, product.attributes):
+    match shipping:
+        case "consolidated":
+            waived = False
+        case "parcel":
+            waived = travels(product) and de_minimis_applies(
+                cif, customs.de_minimis, product.attributes
+            )
+        case unknown:
+            assert_never(unknown)
+    if waived:
         return DutyAssessment(rate=Decimal(0), waived=True)
     category_rate = customs.category_overrides.get(product.category, customs.default_duty_rate)
     return DutyAssessment(rate=category_rate + duty_adjustment, waived=False)

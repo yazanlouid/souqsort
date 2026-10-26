@@ -7,8 +7,14 @@ from decimal import Decimal, DecimalException
 
 from souqsort.compliance import ExcludedProduct, screen_products
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
-from souqsort.models import FxTable, GccConfig, MarketConfig, Product, ShippingModel
-from souqsort.pricing.customs import require_shipping
+from souqsort.models import (
+    FxTable,
+    GccConfig,
+    MarketConfig,
+    Product,
+    ShippingModel,
+    require_shipping,
+)
 from souqsort.pricing.landed_cost import PriceQuote, price_product
 from souqsort.pricing.money import require_decimal
 
@@ -141,9 +147,10 @@ def localise_catalogue(
     require_shipping(shipping)
     market = find_market(config, market_code)
 
-    # The estimate depends only on the order time and the market, so every product shares it.
+    # The estimate depends only on the order time, the market and the shipping model, so every
+    # product shares it.
     try:
-        delivery = estimate_delivery(ordered_at, market)
+        delivery = estimate_delivery(ordered_at, market, shipping)
     except (ValueError, ArithmeticError) as exc:
         raise _about(market.code, exc) from exc
 

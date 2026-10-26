@@ -22,7 +22,7 @@ An order placed on {{ order.date }} at {{ order.time }} UTC, priced in every mar
 
 ## Consolidated or parcel
 
-{{ shipping.sentence }}
+{{ shipping.sentences }}
 
 {% for market in shipping.markets %}
 ### {{ market.heading }}
@@ -61,6 +61,10 @@ An order placed on {{ order.date }} at {{ order.time }} UTC, priced in every mar
 | {{ row.step }} | {{ row.consolidated }} | {{ row.parcel }} |
 {% endfor %}
 | **Shelf price** | **{{ market.shelf.consolidated }}** | **{{ market.shelf.parcel }}** |
+{% if market.fee.parcel %}
+| Customs fee, at checkout | {{ market.fee.consolidated }} | {{ market.fee.parcel }} |
+| **One-item order** | **{{ market.one_item.consolidated }}** | **{{ market.one_item.parcel }}** |
+{% endif %}
 
 {% endfor %}
 ## Pricing risks
@@ -89,10 +93,11 @@ An order placed on {{ order.date }} at {{ order.time }} UTC, priced in every mar
 {% endif %}
 ## How these figures are made
 
-- Each product is priced as a one-item order, and every cost is passed on to the customer.
-- Prices use today's duty rates. A tariff rise adds percentage points to every duty rate.
+- Products are compared as one-item orders, and every cost is passed on to the customer.
+- A direct parcel pays the market's customs fee at checkout, and parcel prices include it. A product that weighs nothing, such as a download, never travels in a parcel, so it pays no fee and de minimis never applies to it.
+- Prices use today's duty rates. A tariff rise adds percentage points to every duty rate. Tariff exposure compares shelf prices, without the customs fee.
 - Above catalogue price compares the shelf price with the catalogue price converted at the config's FX rates, so it includes freight, duty, VAT and the price ending.
 - Averages are unweighted means over the products a market sells.
 - Price components are rounded for display, and the rounding line makes each column add up to the shelf price, which is exact.
 - Markets side by side and pricing risks use consolidated imports, the default shipping model.
-- Delivery dates are the same for both shipping models.
+- Direct parcels have their own linehaul time, so they can arrive on a different day.
