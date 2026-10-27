@@ -89,7 +89,7 @@ def duty_adjustment_from_points(points: int) -> Decimal:
     return Decimal(points) / 100
 
 
-def _require_duty_adjustment(duty_adjustment: Decimal) -> None:
+def require_duty_adjustment(duty_adjustment: Decimal) -> None:
     """Apply ``price_product``'s rule once, before any product is priced.
 
     A bad value is the caller's mistake, so it must not be reported against the first SKU.
@@ -143,7 +143,7 @@ def localise_catalogue(
     ``duty_adjustment`` is not a finite ``Decimal`` >= 0, and then a plain ``ValueError`` if
     ``shipping`` is not a shipping model.
     """
-    _require_duty_adjustment(duty_adjustment)
+    require_duty_adjustment(duty_adjustment)
     require_shipping(shipping)
     market = find_market(config, market_code)
 
@@ -260,7 +260,7 @@ def localise_and_summarise(
     prices, so a bad argument fails the same way whatever the catalogue holds. Raises what
     ``localise_catalogue`` raises.
     """
-    _require_duty_adjustment(duty_adjustment)
+    require_duty_adjustment(duty_adjustment)
     require_shipping(shipping)
     market = find_market(config, market_code)
     screen = screen_products(products, market)

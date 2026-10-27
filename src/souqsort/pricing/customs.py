@@ -35,6 +35,22 @@ def travels(product: Product) -> bool:
     return product.weight_kg > 0
 
 
+def within_threshold(value: Decimal, rule: DeMinimisRule) -> bool:
+    """Whether a full-precision value passes the rule's own test, ``below`` or ``at_or_below``.
+
+    It tests the value only: the rule's excluded attributes are about products, and
+    ``de_minimis_applies`` checks them.
+    """
+    # A match, not a dict: mypy fails here if DeMinimisApplies gains a value with no case.
+    match rule.applies:
+        case "below":
+            return value < rule.threshold
+        case "at_or_below":
+            return value <= rule.threshold
+        case unknown:
+            assert_never(unknown)
+
+
 def de_minimis_applies(
     cif: Decimal, rule: DeMinimisRule | None, attributes: ProductAttributes
 ) -> bool:
@@ -46,14 +62,17 @@ def de_minimis_applies(
         return False
     if any(attributes.has(name) for name in rule.excluded_attributes):
         return False
-    # A match, not a dict: mypy fails here if DeMinimisApplies gains a value with no case.
-    match rule.applies:
-        case "below":
-            return cif < rule.threshold
-        case "at_or_below":
-            return cif <= rule.threshold
-        case unknown:
-            assert_never(unknown)
+    return within_threshold(cif, rule)
+
+
+def duty_rate(product: Product, market: MarketConfig, duty_adjustment: Decimal) -> Decimal:
+    """The rate a product pays when de minimis does not waive its duty.
+
+    Its category's rate, or the market default, plus ``duty_adjustment``.
+    """
+    customs = market.customs
+    category_rate = customs.category_overrides.get(product.category, customs.default_duty_rate)
+    return category_rate + duty_adjustment
 
 
 def parcel_fee_due(
@@ -102,5 +121,4 @@ def assess_duty(
             assert_never(unknown)
     if waived:
         return DutyAssessment(rate=Decimal(0), waived=True)
-    category_rate = customs.category_overrides.get(product.category, customs.default_duty_rate)
-    return DutyAssessment(rate=category_rate + duty_adjustment, waived=False)
+    return DutyAssessment(rate=duty_rate(product, market, duty_adjustment), waived=False)

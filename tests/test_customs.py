@@ -24,8 +24,10 @@ from souqsort.pricing.customs import (
     DutyAssessment,
     assess_duty,
     de_minimis_applies,
+    duty_rate,
     parcel_fee_due,
     travels,
+    within_threshold,
 )
 from souqsort.pricing.landed_cost import price_product
 
@@ -169,6 +171,61 @@ def test_if_it_applies_at_a_cif_it_applies_at_every_lower_cif(
     lower, higher = sorted(cifs)
     if de_minimis_applies(higher, rule, attributes):
         assert de_minimis_applies(lower, rule, attributes)
+
+
+# --- within_threshold (SPEC §7.10.1 rule 5, M16) -------------------------------------------
+
+
+@pytest.mark.parametrize(("value", "below", "at_or_below"), THRESHOLD_CELLS)
+def test_within_threshold_cells(value: str, below: bool, at_or_below: bool) -> None:
+    assert within_threshold(Decimal(value), _rule("below")) is below
+    assert within_threshold(Decimal(value), _rule("at_or_below")) is at_or_below
+
+
+def test_within_threshold_compares_at_full_precision() -> None:
+    assert within_threshold(Decimal("999.995"), _rule("below")) is True
+    assert within_threshold(Decimal("1000.0001"), _rule("at_or_below")) is False
+
+
+def test_within_threshold_ignores_excluded_attributes() -> None:
+    # The exclusions are about a product; the threshold test is about a value.
+    assert within_threshold(Decimal("50"), _rule("below", "contains_alcohol")) is True
+
+
+@given(rule=RULES, value=CIFS, attributes=ATTRIBUTES)
+def test_de_minimis_applies_is_the_threshold_test_without_exclusions(
+    rule: DeMinimisRule, value: Decimal, attributes: ProductAttributes
+) -> None:
+    excluded = any(attributes.has(name) for name in rule.excluded_attributes)
+    expected = within_threshold(value, rule) and not excluded
+    assert de_minimis_applies(value, rule, attributes) is expected
+
+
+# --- duty_rate (SPEC §7.10.1 rule 5, M16) ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sku", "adjustment", "expected"),
+    [
+        (HEADPHONES, "0", "0.05"),  # no override: the market default
+        (HEADPHONES, "0.03", "0.08"),
+        (BAG, "0", "0.12"),  # fashion's override
+        (BAG, "0.03", "0.15"),
+        (LICENCE, "0.03", "0.03"),  # digital is 0, plus the adjustment
+    ],
+)
+def test_duty_rate_is_the_category_rate_plus_the_adjustment(
+    products: dict[str, Product], ksa: MarketConfig, sku: str, adjustment: str, expected: str
+) -> None:
+    assert duty_rate(products[sku], ksa, Decimal(adjustment)) == Decimal(expected)
+
+
+def test_duty_rate_ignores_de_minimis(products: dict[str, Product], ksa: MarketConfig) -> None:
+    # A waived parcel's quote has rate 0; duty_rate is what it would pay without the waiver.
+    headphones = products[HEADPHONES]
+    cif = Decimal("574.275")
+    assert assess_duty(headphones, ksa, cif, Decimal(0), "parcel").rate == 0
+    assert duty_rate(headphones, ksa, Decimal(0)) == Decimal("0.05")
 
 
 # --- travels (SPEC §7.7.2, M15) ------------------------------------------------------------
