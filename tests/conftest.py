@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from souqsort.loaders import load_catalogue, load_gcc_config
-from souqsort.models import Catalogue, GccConfig
+from souqsort.loaders import load_catalogue, load_gcc_config, load_sample_orders
+from souqsort.models import Catalogue, GccConfig, SampleOrders
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -25,6 +25,11 @@ def config_path() -> Path:
 
 
 @pytest.fixture
+def orders_path() -> Path:
+    return DATA_DIR / "sample_orders.json"
+
+
+@pytest.fixture
 def raw_catalogue(catalogue_path: Path) -> dict[str, Any]:
     """A fresh, mutable copy of the sample catalogue as plain JSON data."""
     data: dict[str, Any] = json.loads(catalogue_path.read_text(encoding="utf-8"))
@@ -35,6 +40,13 @@ def raw_catalogue(catalogue_path: Path) -> dict[str, Any]:
 def raw_config(config_path: Path) -> dict[str, Any]:
     """A fresh, mutable copy of the sample market config as plain JSON data."""
     data: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
+    return data
+
+
+@pytest.fixture
+def raw_orders(orders_path: Path) -> dict[str, Any]:
+    """A fresh, mutable copy of the sample orders as plain JSON data."""
+    data: dict[str, Any] = json.loads(orders_path.read_text(encoding="utf-8"))
     return data
 
 
@@ -56,6 +68,12 @@ def catalogue() -> Catalogue:
 def config() -> GccConfig:
     """The sample market config, loaded and validated."""
     return load_gcc_config(DATA_DIR / "gcc_config.json")
+
+
+@pytest.fixture(scope="session")
+def sample_orders() -> SampleOrders:
+    """The sample orders, loaded and validated."""
+    return load_sample_orders(DATA_DIR / "sample_orders.json")
 
 
 @pytest.fixture(scope="session")

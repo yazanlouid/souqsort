@@ -354,3 +354,47 @@ class GccConfig(_Model):
                     f"market {code}: currency {market.currency.code} is not in fx.per_usd"
                 )
         return self
+
+
+# --- sample orders ------------------------------------------------------------------------
+
+# A count, not money: a JSON integer, so "2", 2.0 and true are rejected.
+Quantity = Annotated[int, Field(ge=1, le=99, strict=True)]
+OrderId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]*$")]
+
+
+class OrderLine(_Model):
+    sku: NonEmptyStr
+    quantity: Quantity
+
+
+class SampleOrder(_Model):
+    """A named order. The loader does not know the catalogue, so its SKUs are not checked."""
+
+    id: OrderId
+    name: NonEmptyStr
+    lines: Annotated[tuple[OrderLine, ...], Field(min_length=1)]
+
+    @field_validator("lines")
+    @classmethod
+    def _no_sku_twice(cls, value: tuple[OrderLine, ...]) -> tuple[OrderLine, ...]:
+        counts = Counter(line.sku for line in value)
+        duplicates = sorted(sku for sku, n in counts.items() if n > 1)
+        if duplicates:
+            raise ValueError(f"duplicate sku: {', '.join(duplicates)}")
+        return value
+
+
+class SampleOrders(_Model):
+    """The sample orders, in file order. ``orders`` may be empty."""
+
+    orders_version: NonEmptyStr
+    orders: tuple[SampleOrder, ...]
+
+    @model_validator(mode="after")
+    def _unique_ids(self) -> Self:
+        counts = Counter(order.id for order in self.orders)
+        duplicates = sorted(order_id for order_id, n in counts.items() if n > 1)
+        if duplicates:
+            raise ValueError(f"duplicate order id: {', '.join(duplicates)}")
+        return self
