@@ -1,6 +1,6 @@
 ---
 name: money-reviewer
-description: Reviews SouqSort changes that touch money, pricing, FX, customs, de minimis, compliance, market data or the expansion report's figures against the project's money rules. Use after changing src/souqsort/pricing/, src/souqsort/report/, compliance.py, pipeline.py or data/raw/*.json, before /code-review.
+description: Reviews SouqSort changes that touch money, pricing, FX, customs, de minimis, compliance, market data or the expansion report's figures against the project's money rules. Use after changing src/souqsort/pricing/, src/souqsort/report/, compliance.py, pipeline.py, src/souqsort/orders.py or data/raw/*.json, before /code-review.
 tools: Read, Grep, Glob, Bash
 model: inherit
 ---
@@ -21,6 +21,7 @@ Check every change against these rules:
 9. Nothing in src/ reads the clock except the injectable `now` in cli.py.
 10. The expansion report computes its figures from engine results in Decimal and rounds only when it formats them. Its template receives text only: no float, no arithmetic and no number formatting in the template. The same inputs give the same bytes.
 11. The parcel fee is charged as it is, with no VAT, only for a direct parcel that holds a product weighing more than 0 kg; a one-item order costs its shelf price plus that fee.
+12. An order's line totals are quantity × shelf price, exact. A parcel's value is the full-precision CIF of the lines that weigh more than 0 kg, and de minimis tests it once for the whole order. Only the lines priced with the waiver get duty at checkout, at their category rate plus the adjustment, with the VAT on it. Each checkout line is rounded once, ROUND_HALF_UP, with no price ending, and totals are exact sums.
 
 Then run `uv run pytest -q` and report the result.
 
