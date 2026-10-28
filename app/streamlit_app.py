@@ -261,18 +261,27 @@ def show_order(sample_orders: SampleOrders) -> None:
             )
             if both.consolidated.lines:
                 currency = market.currency.code
-                # A static table: it is as tall as its rows, and nothing in it sorts as text.
-                st.table(
+                consolidated_column = f"Consolidated ({currency})"
+                parcel_column = f"Direct parcel ({currency})"
+                # Not st.table, which reads every cell as Markdown and draws "-" as a bullet.
+                st.dataframe(
                     pd.DataFrame(
                         {
                             "SKU": [row.label for row in order_table],
                             "Name": [row.name for row in order_table],
                             "Qty": [row.quantity for row in order_table],
-                            f"Consolidated ({currency})": [row.consolidated for row in order_table],
-                            f"Direct parcel ({currency})": [row.parcel for row in order_table],
+                            consolidated_column: [row.consolidated for row in order_table],
+                            parcel_column: [row.parcel for row in order_table],
                         }
                     ),
                     hide_index=True,
+                    # As tall as its rows, so Total and Delivery are never scrolled out of view.
+                    height="content",
+                    # The cells are text; aligned right, the figures line up as in the CLI.
+                    column_config={
+                        column: st.column_config.TextColumn(alignment="right")
+                        for column in ("Qty", consolidated_column, parcel_column)
+                    },
                 )
                 st.caption(note)
             else:

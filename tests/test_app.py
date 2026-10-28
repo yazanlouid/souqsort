@@ -1089,11 +1089,9 @@ def _build_your_own(at: AppTest, *skus: str) -> AppTest:
 def _order_table(at: AppTest) -> dict[str, tuple[str, ...]]:
     """The order's rows keyed by their first cell, each the rest of its cells.
 
-    The order is a static table, so nothing in it sorts or scrolls.
+    The order grid is the tab's first dataframe; a "Not sold" table may follow it.
     """
-    tab = _order_tab(at)
-    assert len(tab.table) == 1
-    frame: pd.DataFrame = tab.table[0].value
+    frame: pd.DataFrame = _order_tab(at).dataframe[0].value
     assert list(frame.columns)[:3] == ORDER_COLUMNS[:3]
     return {row[0]: tuple(row[1:]) for row in frame.itertuples(index=False, name=None)}
 
@@ -1180,7 +1178,7 @@ def test_headphones_and_a_bag_in_the_uae(noon: AppTest) -> None:
     rows = _order_table(at)
     assert "Customs fee" not in rows
     assert rows["Duty and VAT"] == ("", "", "-", "53.73")
-    frame: pd.DataFrame = _order_tab(at).table[0].value
+    frame: pd.DataFrame = _order_tab(at).dataframe[0].value
     assert list(frame.columns)[3:] == ["Consolidated (AED)", "Direct parcel (AED)"]
     assert "is not at or below 1000.00 AED" in _order_tab(at).caption[1].value
 
@@ -1199,7 +1197,7 @@ def test_build_your_own_with_nothing_picked(noon: AppTest) -> None:
 
     assert [info.value for info in tab.info] == ["Pick at least one product."]
     assert len(tab.metric) == 0
-    assert len(tab.dataframe) == len(tab.table) == 0
+    assert len(tab.dataframe) == 0
     assert [caption.value for caption in tab.caption] == [ORDER_SCOPE]
     assert len(tab.number_input) == 0
 
@@ -1231,7 +1229,8 @@ def test_build_your_own_asks_a_quantity_for_each_product(noon: AppTest) -> None:
 
 
 def test_a_long_order_shows_every_row(noon: AppTest, catalogue: Catalogue) -> None:
-    # A dataframe scrolls after about ten rows and would hide Total and Delivery.
+    # Left at its default height, the grid would scroll after about ten rows and hide Total
+    # and Delivery (test_the_order_grid_is_as_tall_as_its_rows).
     skus = [p.sku for p in catalogue.products if p.sku not in (VANILLA, GUMMY_BEARS)][:8]
 
     at = _build_your_own(noon, *skus)
@@ -1244,6 +1243,35 @@ def test_a_long_order_shows_every_row(noon: AppTest, catalogue: Catalogue) -> No
         "Total",
         "Delivery",
     ]
+
+
+def test_the_order_grid_is_as_tall_as_its_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    # As test_grid_is_as_tall_as_its_rows: AppTest does not keep an element's height, so this
+    # records what the app asks for.
+    asked: list[dict[str, Any]] = []
+    show = streamlit.dataframe
+
+    def recording(data: Any = None, *args: Any, **kwargs: Any) -> Any:
+        if "Qty" in getattr(data, "columns", ()):
+            asked.append(kwargs)
+        return show(data, *args, **kwargs)
+
+    monkeypatch.setattr(streamlit, "dataframe", recording)
+    at = _new_app()
+    at.session_state["opened_at"] = OPENED_AT
+    at.run()
+    _pick_order(at, "headphones-and-bag")
+
+    assert asked
+    assert all(kwargs.get("height") == "content" for kwargs in asked)
+    # The cells are text, so they would sit on the left; aligned right, they line up as in
+    # the CLI. The column settings travel to the browser as JSON next to the data.
+    settings = json.loads(_order_tab(at).dataframe[0].proto.columns)
+    right = ORDER_COLUMNS[2:]  # Qty and the two money columns
+    assert {column: settings[column].get("alignment") for column in right} == dict.fromkeys(
+        right, "right"
+    )
+    assert not {"SKU", "Name"} & settings.keys()
 
 
 def test_build_your_own_licence_alone_sends_no_parcel(noon: AppTest) -> None:
@@ -1262,7 +1290,7 @@ def test_build_your_own_lists_what_the_market_does_not_sell(noon: AppTest) -> No
 
     assert VANILLA not in _order_table(at)
     assert [subheader.value for subheader in tab.subheader] == ["Not sold in KSA"]
-    not_sold: pd.DataFrame = tab.dataframe[0].value
+    not_sold: pd.DataFrame = tab.dataframe[1].value  # after the order grid
     assert list(not_sold.columns) == list(NOT_SOLD_COLUMNS)
     assert list(not_sold.itertuples(index=False, name=None)) == [
         (VANILLA, "Pure Vanilla Extract", "Contains alcohol")
@@ -1277,8 +1305,8 @@ def test_an_order_the_market_sells_nothing_of(noon: AppTest) -> None:
     assert metrics[CONSOLIDATED_METRIC].value == metrics[PARCEL_METRIC].value == "-"
     assert _delta(metrics[PARCEL_METRIC]) == ("", "GRAY", "NONE")
     assert [info.value for info in tab.info] == ["KSA sells nothing in this order."]
-    assert len(tab.dataframe) == 1  # the not-sold table only
-    assert len(tab.table) == 0
+    (not_sold,) = tab.dataframe  # the not-sold table only
+    assert list(not_sold.value.columns) == list(NOT_SOLD_COLUMNS)
     assert [subheader.value for subheader in tab.subheader] == ["Not sold in KSA"]
     assert [caption.value for caption in tab.caption] == [ORDER_SCOPE]
 
@@ -1326,7 +1354,7 @@ def _orders_file_problem(at: AppTest) -> str:
     that "Products" and the report download keep working."""
     tab = _order_tab(at)
     (error,) = tab.error
-    assert len(tab.selectbox) == len(tab.metric) == len(tab.table) == len(tab.caption) == 0
+    assert len(tab.selectbox) == len(tab.metric) == len(tab.dataframe) == len(tab.caption) == 0
     assert len(_grid(at)) == KSA_FOR_SALE
     assert _metrics(at)[AVERAGE_MARGIN] == "64.6%"
     assert [button.label for button in at.sidebar.download_button] == [REPORT_LABEL]
