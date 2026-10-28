@@ -27,9 +27,18 @@ from souqsort.models import (
     ParcelFee,
     Product,
     ProductName,
+    SampleOrders,
     ShippingModel,
 )
-from souqsort.orders import CheckoutKind, CheckoutLine, OrderQuote, quote_order
+from souqsort.orders import (
+    CheckoutKind,
+    CheckoutLine,
+    OrderQuote,
+    OrderQuotes,
+    find_sample_order,
+    quote_order,
+    quote_order_both_ways,
+)
 from souqsort.pipeline import LocalisationError, duty_adjustment_from_points
 from souqsort.pricing.customs import sends_parcel
 from souqsort.pricing.landed_cost import price_product
@@ -546,6 +555,83 @@ def test_a_failing_delivery_estimate_names_the_market(
     monkeypatch.setattr(order_engine, "estimate_delivery", fail)
     with pytest.raises(LocalisationError, match=r"^KSA: no business day found$"):
         _quote(catalogue, config, "KSA", "parcel", (HEADPHONES, 1))
+
+
+# --- both shipping models, and the sample orders (SPEC §10.5, M17) ------------------------
+
+
+@pytest.mark.parametrize("points", [0, 3])
+def test_quote_order_both_ways_names_each_model(
+    catalogue: Catalogue, config: GccConfig, points: int
+) -> None:
+    lines = _lines((HEADPHONES, 1), (BAG, 1))
+    adjustment = duty_adjustment_from_points(points)
+
+    both = quote_order_both_ways(lines, catalogue, config, "KSA", REPORT_ORDERED_AT, adjustment)
+
+    assert both == OrderQuotes(
+        consolidated=quote_order(
+            lines, catalogue, config, "KSA", REPORT_ORDERED_AT, adjustment, "consolidated"
+        ),
+        parcel=quote_order(
+            lines, catalogue, config, "KSA", REPORT_ORDERED_AT, adjustment, "parcel"
+        ),
+    )
+    assert both.consolidated.shipping == "consolidated"
+    assert both.parcel.shipping == "parcel"
+
+
+def test_quote_order_both_ways_defaults_to_today_s_rates(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    both = quote_order_both_ways(
+        _lines((HEADPHONES, 1), (BAG, 1)), catalogue, config, "KSA", REPORT_ORDERED_AT
+    )
+
+    assert both.consolidated.total == Decimal("1281.90")
+    assert both.parcel.total == Decimal("1321.47")  # §7.10.2 example I
+
+
+def test_quote_order_both_ways_raises_as_quote_order_does(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    with pytest.raises(LocalisationError, match=r"^QAT: unknown market"):
+        quote_order_both_ways(_lines((HEADPHONES, 1)), catalogue, config, "QAT", REPORT_ORDERED_AT)
+    with pytest.raises(ValueError, match="at least one line"):
+        quote_order_both_ways([], catalogue, config, "KSA", REPORT_ORDERED_AT)
+
+
+def test_order_quotes_are_frozen(catalogue: Catalogue, config: GccConfig) -> None:
+    both = quote_order_both_ways(_lines((LIP_BALM, 2)), catalogue, config, "KSA", REPORT_ORDERED_AT)
+    with pytest.raises(FrozenInstanceError):
+        both.parcel = both.consolidated  # type: ignore[misc]
+
+
+def test_find_sample_order(sample_orders: SampleOrders) -> None:
+    order = find_sample_order(sample_orders, "headphones-and-bag")
+
+    assert order.name == "Headphones and a bag"
+    assert order is sample_orders.orders[2]
+
+
+@pytest.mark.parametrize("order_id", ["lip-balm", "Two-lip-balms", "", "two-lip-balms "])
+def test_an_unknown_sample_order_lists_the_sample_orders(
+    sample_orders: SampleOrders, order_id: str
+) -> None:
+    with pytest.raises(LocalisationError) as caught:
+        find_sample_order(sample_orders, order_id)
+
+    assert str(caught.value) == (
+        f"{order_id}: unknown order; sample orders: two-lip-balms, scarf-and-serum, "
+        "headphones-and-bag"
+    )
+
+
+def test_an_unknown_sample_order_when_there_are_none() -> None:
+    no_orders = SampleOrders(orders_version="none", orders=())
+
+    with pytest.raises(LocalisationError, match=r"^lip-balm: unknown order; sample orders: none$"):
+        find_sample_order(no_orders, "lip-balm")
 
 
 # --- properties (Hypothesis over the sample data) -------------------------------------------

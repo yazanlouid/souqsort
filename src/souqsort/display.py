@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from souqsort.compliance import ExcludedProduct
-from souqsort.models import AttributeName, MarketConfig, ShippingModel
+from souqsort.models import AttributeName, DeMinimisApplies, MarketConfig, ShippingModel
+from souqsort.orders import CheckoutKind, OrderQuote
 from souqsort.pipeline import (
     MISSING_ARABIC_NAME,
     CatalogueSummary,
@@ -17,7 +18,7 @@ from souqsort.pipeline import (
     LocalisedProduct,
 )
 from souqsort.pricing.customs import parcel_fee_due
-from souqsort.pricing.money import format_money
+from souqsort.pricing.money import format_money, round_minor
 
 _NO_VALUE = "-"
 
@@ -39,6 +40,15 @@ ATTRIBUTE_LABELS: dict[AttributeName, str] = {
     "contains_pork": "Contains pork",
     "contains_lithium_battery": "Contains lithium battery",
 }
+
+# What the order table calls each amount added at checkout, in the order the rows come.
+CHECKOUT_LABELS: dict[CheckoutKind, str] = {
+    "customs_fee": "Customs fee",
+    "duty": "Duty and VAT",
+}
+
+# How the parcel note words each de minimis test.
+_APPLIES: dict[DeMinimisApplies, str] = {"below": "below", "at_or_below": "at or below"}
 
 
 @dataclass(frozen=True)
@@ -106,6 +116,40 @@ class DisplaySummary:
     average_margin: str
     flagged_products: str
     average_price_change: str
+
+
+@dataclass(frozen=True)
+class OrderRow:
+    """One row of an order's table, for both shipping models.
+
+    ``label`` is the SKU, or Items, Customs fee, Duty and VAT, Total or Delivery; ``name`` is
+    the product's English name and ``quantity`` its quantity, both ``""`` on the other rows.
+    ``consolidated`` and ``parcel`` are money in the currency's minor units, an ISO date, or
+    ``"-"`` when that model has no such amount.
+    """
+
+    label: str
+    name: str
+    quantity: str
+    consolidated: str
+    parcel: str
+
+
+@dataclass(frozen=True)
+class OrderTotals:
+    """An order's totals as the dashboard's two metrics.
+
+    ``consolidated`` and ``parcel`` are totals with the currency code (``"1281.90 SAR"``), or
+    ``"-"`` when the market sells no line of the order. ``change`` is how much dearer the
+    parcel is, a signed percentage with one decimal (``"+3.1%"``), or ``None`` with no totals.
+    ``unchanged`` says the change rounds to ``"0.0%"``: Streamlit draws every text delta but
+    ``"0"`` as a rise, so the dashboard shows that one in grey with no arrow.
+    """
+
+    consolidated: str
+    parcel: str
+    change: str | None
+    unchanged: bool
 
 
 def _percent(fraction: Decimal) -> str:
@@ -202,6 +246,146 @@ def parcel_fee_note(market: MarketConfig, shipping: ShippingModel) -> str | None
     )
 
 
+def join_list(items: Sequence[str], *, word: str = "and") -> str:
+    """``a``, ``a and b``, ``a, b and c``; ``word`` can be ``"or"``.
+
+    Raises ``ValueError`` if there is nothing to join.
+    """
+    if not items:
+        raise ValueError("nothing to join")
+    if len(items) == 1:
+        return items[0]
+    return f"{', '.join(items[:-1])} {word} {items[-1]}"
+
+
+def _checkout_amount(quote: OrderQuote, kind: CheckoutKind) -> str:
+    for line in quote.checkout:
+        if line.kind == kind:
+            return format_money(line.amount, quote.minor_units)
+    return _NO_VALUE
+
+
+def _require_same_order(consolidated: OrderQuote, parcel: OrderQuote) -> None:
+    skus = [line.sku for line in consolidated.lines]
+    parcel_skus = [line.sku for line in parcel.lines]
+    if consolidated.market != parcel.market or skus != parcel_skus:
+        raise ValueError(
+            f"not the same order: {consolidated.market} {skus} and {parcel.market} {parcel_skus}"
+        )
+
+
+def order_rows(consolidated: OrderQuote, parcel: OrderQuote) -> list[OrderRow]:
+    """The rows of an order's table: one per line the market sells, then Items, each checkout
+    amount that either model adds, Total and Delivery.
+
+    The two quotes are the same order in the same market. Raises ``ValueError`` if they are
+    not.
+    """
+    _require_same_order(consolidated, parcel)
+
+    def money(quote: OrderQuote, amount: Decimal) -> str:
+        return format_money(amount, quote.minor_units)
+
+    rows = [
+        OrderRow(
+            label=line.sku,
+            name=line.name_en,
+            quantity=str(line.quantity),
+            consolidated=money(consolidated, line.line_total),
+            parcel=money(parcel, parcel_line.line_total),
+        )
+        for line, parcel_line in zip(consolidated.lines, parcel.lines, strict=True)
+    ]
+    rows.append(
+        OrderRow(
+            "Items",
+            "",
+            "",
+            money(consolidated, consolidated.items_total),
+            money(parcel, parcel.items_total),
+        )
+    )
+    for kind, label in CHECKOUT_LABELS.items():
+        amounts = (_checkout_amount(consolidated, kind), _checkout_amount(parcel, kind))
+        if amounts != (_NO_VALUE, _NO_VALUE):
+            rows.append(OrderRow(label, "", "", *amounts))
+    rows.append(
+        OrderRow(
+            "Total", "", "", money(consolidated, consolidated.total), money(parcel, parcel.total)
+        )
+    )
+    rows.append(
+        OrderRow(
+            "Delivery",
+            "",
+            "",
+            consolidated.delivery.delivery_date.isoformat(),
+            parcel.delivery.delivery_date.isoformat(),
+        )
+    )
+    return rows
+
+
+def order_totals(consolidated: OrderQuote, parcel: OrderQuote) -> OrderTotals:
+    """An order's totals in both shipping models, and how much dearer the parcel is.
+
+    The two quotes are the same order in the same market. Raises ``ValueError`` if they are
+    not, and ``LocalisationError`` naming the market if the change is too large to display.
+    """
+    _require_same_order(consolidated, parcel)
+    if not consolidated.lines:
+        return OrderTotals(consolidated=_NO_VALUE, parcel=_NO_VALUE, change=None, unchanged=False)
+
+    def total(quote: OrderQuote) -> str:
+        return f"{format_money(quote.total, quote.minor_units)} {quote.currency}"
+
+    change = _rounded_percent(
+        f"{consolidated.market}: order price change", parcel.total / consolidated.total - 1
+    )
+    return OrderTotals(
+        consolidated=total(consolidated),
+        parcel=total(parcel),
+        change=_signed_percent_text(change),
+        unchanged=change.is_zero(),
+    )
+
+
+def parcel_note(market: MarketConfig, parcel: OrderQuote) -> str:
+    """One sentence on what de minimis made of an order sent as a direct parcel.
+
+    The CIF and the threshold have the currency's minor units, as prices do.
+    """
+    if parcel.parcel_value is None:
+        return "Direct parcel: nothing in the order travels, so no parcel is sent."
+    rule = market.customs.de_minimis
+    if rule is None:
+        return f"Direct parcel: {market.code} has no de minimis rule, so every line pays duty."
+
+    currency = market.currency
+    value = format_money(parcel.parcel_value, currency.minor_units)
+    threshold = format_money(rule.threshold, currency.minor_units)
+    test = _APPLIES[rule.applies]
+    cif = f"Direct parcel: the order's CIF, {value} {currency.code}"
+    if parcel.within_threshold:
+        passes = f"{cif}, is {test} {threshold} {currency.code}, so de minimis applies"
+        # In an order that passes, a line that travels and still pays duty can only be one the
+        # rule excludes: its own CIF cannot fail where the whole parcel's passes.
+        excluded = [
+            line.sku for line in parcel.lines if line.travels and not line.quote.duty_waived
+        ]
+        if excluded:
+            return f"{passes}, except to {join_list(excluded)}, which it excludes."
+        return f"{passes}."
+    if any(line.kind == "duty" for line in parcel.checkout):
+        consequence = "the duty its shelf prices left out is added at checkout"
+    else:
+        consequence = "its shelf prices already include it"
+    return (
+        f"{cif}, is not {test} {threshold} {currency.code}, so the whole order pays duty; "
+        f"{consequence}."
+    )
+
+
 def search_products(items: Sequence[LocalisedProduct], query: str) -> list[LocalisedProduct]:
     """The products whose SKU or English name contains ``query``, in the same order.
 
@@ -221,6 +405,32 @@ def _average_percent(figure: str, fraction: Decimal) -> str:
         raise LocalisationError(f"{figure} is too large to display") from exc
 
 
+def _rounded_percent(figure: str, fraction: Decimal) -> Decimal:
+    """A fraction as a percentage with one decimal, rounded half up; never a signed zero.
+
+    Raises ``LocalisationError`` naming ``figure`` if it is too large to display.
+    """
+    try:
+        return round_minor(fraction * 100, 1)
+    except ArithmeticError as exc:
+        raise LocalisationError(f"{figure} is too large to display") from exc
+
+
+def _signed_percent_text(percent: Decimal) -> str:
+    """A rounded percentage with a ``%`` sign, and ``+`` when it is positive, so never
+    ``"+0.0%"``."""
+    sign = "+" if percent > 0 else ""
+    return f"{sign}{percent:f}%"
+
+
+def _signed_percent(figure: str, fraction: Decimal) -> str:
+    """As ``_percent`` with a ``%`` sign, and ``+`` when it is positive after rounding.
+
+    Raises ``LocalisationError`` naming ``figure`` if it is too large to display.
+    """
+    return _signed_percent_text(_rounded_percent(figure, fraction))
+
+
 def display_summary(summary: CatalogueSummary) -> DisplaySummary:
     """A catalogue summary as the text of its headline figures.
 
@@ -233,12 +443,7 @@ def display_summary(summary: CatalogueSummary) -> DisplaySummary:
     average_margin = (
         _NO_VALUE if margin is None else f"{_average_percent('average margin', margin)}%"
     )
-    if change is None:
-        price_change = _NO_VALUE
-    else:
-        percent = _average_percent("average price change", change)
-        sign = "+" if Decimal(percent) > 0 else ""  # signed after rounding, so never "+0.0%"
-        price_change = f"{sign}{percent}%"
+    price_change = _NO_VALUE if change is None else _signed_percent("average price change", change)
 
     return DisplaySummary(
         average_margin=average_margin,

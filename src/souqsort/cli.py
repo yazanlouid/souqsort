@@ -1,4 +1,4 @@
-"""Command-line interface: the ``price`` and ``report`` commands.
+"""Command-line interface: the ``price``, ``order`` and ``report`` commands.
 
 ``main`` is the only place in ``src/`` that reads the clock: ``--ordered-at`` defaults to the
 current time, taken from an injectable ``now`` callable. The engine is always handed the time.
@@ -14,10 +14,28 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from souqsort.compliance import ExcludedProduct
-from souqsort.display import DisplayRow, display_rows, duty_text, parcel_fee_note
-from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
+from souqsort.display import (
+    DisplayRow,
+    OrderRow,
+    display_rows,
+    duty_text,
+    order_rows,
+    parcel_fee_note,
+    parcel_note,
+)
+from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config, load_sample_orders
 from souqsort.logistics.calendar import in_market_time, to_market_time
-from souqsort.models import SHIPPING_MODELS, Catalogue, GccConfig, MarketConfig, ShippingModel
+from souqsort.models import (
+    SHIPPING_MODELS,
+    Catalogue,
+    GccConfig,
+    MarketConfig,
+    OrderLine,
+    SampleOrder,
+    SampleOrders,
+    ShippingModel,
+)
+from souqsort.orders import find_sample_order, quote_order_both_ways
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     LocalisationError,
@@ -29,6 +47,7 @@ from souqsort.report import build_report, render_report
 
 DEFAULT_CATALOGUE = Path("data/raw/global_products.json")
 DEFAULT_CONFIG = Path("data/raw/gcc_config.json")
+DEFAULT_ORDERS = Path("data/raw/sample_orders.json")
 # A string, not a Path, so the path is printed as given on every OS.
 DEFAULT_REPORT = "outputs/GCC_EXPANSION_REPORT.md"
 
@@ -49,6 +68,11 @@ _CSV_COLUMNS: tuple[tuple[str, Callable[[DisplayRow], str]], ...] = (
 _FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
 # fullmatch, not $: in Python, $ also matches before a trailing newline. ASCII keeps \d to 0-9.
 _PLAIN_NUMBER = re.compile(r"-?\d+(\.\d+)?", re.ASCII)
+
+# An order's --item: a SKU with no colon or whitespace (Unicode's too, such as a no-break space),
+# then optionally a colon and a quantity of one or two ASCII digits.
+_ORDER_ITEM = re.compile(r"([^:\s]+)(:([0-9]{1,2}))?")
+_MAX_QUANTITY = 99
 
 
 # A date, then T or a space, then a time with at least hours and minutes, then an optional
@@ -88,6 +112,18 @@ def _iso_datetime(text: str) -> datetime:
         raise problem from None
 
 
+def _order_item(text: str) -> OrderLine:
+    """An ``--item``: ``SKU`` for one, or ``SKU:QTY`` with a quantity from 1 to 99."""
+    match = _ORDER_ITEM.fullmatch(text)
+    quantity = 1 if match is None or match[3] is None else int(match[3])
+    if match is None or not 1 <= quantity <= _MAX_QUANTITY:
+        raise argparse.ArgumentTypeError(
+            "must be a SKU, or a SKU and a quantity from 1 to "
+            f"{_MAX_QUANTITY} such as ELEC-HP-001:2, got {text!r}"
+        )
+    return OrderLine(sku=match[1], quantity=quantity)
+
+
 def _iso_instant(text: str) -> datetime:
     """An ``--ordered-at`` for the report, which must say its offset: it covers every market."""
     moment = _iso_datetime(text)
@@ -115,10 +151,39 @@ def _add_data_file_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _build_parser() -> tuple[
-    argparse.ArgumentParser, argparse.ArgumentParser, argparse.ArgumentParser
-]:
-    """The top-level parser, then the ``price`` and ``report`` parsers.
+def _add_market_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--market", required=True, metavar="CODE", help="market code from the config, e.g. KSA"
+    )
+
+
+def _add_duty_adjust_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--duty-adjust",
+        type=_percentage_points,
+        default=0,
+        metavar="POINTS",
+        help=(
+            "percentage points added to every duty rate, a whole number from 0 to "
+            f"{MAX_DUTY_ADJUST_POINTS} (default: 0)"
+        ),
+    )
+
+
+def _add_local_ordered_at_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--ordered-at",
+        type=_iso_datetime,
+        metavar="ISO",
+        help=(
+            "order date and time, e.g. 2026-10-15T20:59Z or 2026-10-15T23:59+03:00; without an "
+            "offset it is read as local time in the market's timezone (default: now)"
+        ),
+    )
+
+
+def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
+    """The top-level parser, then each command's parser by name.
 
     Each command's parser reports that command's errors.
     """
@@ -133,9 +198,7 @@ def _build_parser() -> tuple[
         help="price the catalogue for a market",
         description="Print shelf prices, margins and delivery dates for one market.",
     )
-    price.add_argument(
-        "--market", required=True, metavar="CODE", help="market code from the config, e.g. KSA"
-    )
+    _add_market_option(price)
     price.add_argument(
         "--shipping",
         choices=SHIPPING_MODELS,
@@ -147,25 +210,8 @@ def _build_parser() -> tuple[
             "(default: %(default)s)"
         ),
     )
-    price.add_argument(
-        "--duty-adjust",
-        type=_percentage_points,
-        default=0,
-        metavar="POINTS",
-        help=(
-            "percentage points added to every duty rate, a whole number from 0 to "
-            f"{MAX_DUTY_ADJUST_POINTS} (default: 0)"
-        ),
-    )
-    price.add_argument(
-        "--ordered-at",
-        type=_iso_datetime,
-        metavar="ISO",
-        help=(
-            "order date and time, e.g. 2026-10-15T20:59Z or 2026-10-15T23:59+03:00; without an "
-            "offset it is read as local time in the market's timezone (default: now)"
-        ),
-    )
+    _add_duty_adjust_option(price)
+    _add_local_ordered_at_option(price)
     price.add_argument(
         "--csv",
         dest="csv_path",
@@ -174,6 +220,41 @@ def _build_parser() -> tuple[
         help="also write the rows to a CSV file, creating its folder if needed",
     )
     _add_data_file_options(price)
+
+    order = commands.add_parser(
+        "order",
+        help="price an order of several items in a market",
+        description=(
+            "Price one order in one market as a consolidated import and as a direct parcel, "
+            "side by side."
+        ),
+    )
+    _add_market_option(order)
+    lines = order.add_mutually_exclusive_group(required=True)
+    lines.add_argument(
+        "--sample", metavar="ID", help="the id of an order in the sample orders file"
+    )
+    lines.add_argument(
+        "--item",
+        dest="items",
+        type=_order_item,
+        action="append",
+        metavar="SKU[:QTY]",
+        help=(
+            f"a product and its quantity from 1 to {_MAX_QUANTITY} (default 1), e.g. "
+            "ELEC-HP-001:2; repeat it for each product"
+        ),
+    )
+    _add_duty_adjust_option(order)
+    _add_local_ordered_at_option(order)
+    _add_data_file_options(order)
+    order.add_argument(
+        "--orders",
+        type=Path,
+        default=DEFAULT_ORDERS,
+        metavar="PATH",
+        help=f"sample orders JSON file, read for --sample (default: {DEFAULT_ORDERS.as_posix()})",
+    )
 
     report = commands.add_parser(
         "report",
@@ -196,7 +277,7 @@ def _build_parser() -> tuple[
         help=f"Markdown file to write, creating its folder if needed (default: {DEFAULT_REPORT})",
     )
     _add_data_file_options(report)
-    return parser, price, report
+    return parser, {"price": price, "order": order, "report": report}
 
 
 def _same_file(path: Path, other: Path) -> bool:
@@ -227,15 +308,18 @@ class _TableColumn[R]:
     right_aligned: bool = False
 
 
-def _summary_line(
-    market: MarketConfig, ordered_at_local: datetime, duty_points: int, shipping: ShippingModel
-) -> str:
+def _scenario_line(market: MarketConfig, ordered_at_local: datetime, duty_points: int) -> str:
     return (
         f"Market: {market.code} ({market.name})   "
         f"Ordered at: {ordered_at_local:%Y-%m-%d %H:%M} {market.calendar.timezone}   "
-        f"Duty adjustment: +{duty_points} pp   "
-        f"Shipping: {shipping}"
+        f"Duty adjustment: +{duty_points} pp"
     )
+
+
+def _summary_line(
+    market: MarketConfig, ordered_at_local: datetime, duty_points: int, shipping: ShippingModel
+) -> str:
+    return f"{_scenario_line(market, ordered_at_local, duty_points)}   Shipping: {shipping}"
 
 
 def _price_table(rows: Sequence[DisplayRow], currency_code: str) -> list[str]:
@@ -247,6 +331,17 @@ def _price_table(rows: Sequence[DisplayRow], currency_code: str) -> list[str]:
         _TableColumn("Duty", duty_text, True),
         _TableColumn("Delivery", lambda row: row.delivery_date),
         _TableColumn("Flags", lambda row: ",".join(row.flags) or "-"),
+    )
+    return _table_lines(columns, rows)
+
+
+def _order_table(rows: Sequence[OrderRow], currency_code: str) -> list[str]:
+    columns: tuple[_TableColumn[OrderRow], ...] = (
+        _TableColumn("SKU", lambda row: row.label),
+        _TableColumn("Name", lambda row: row.name),
+        _TableColumn("Qty", lambda row: row.quantity, True),
+        _TableColumn(f"Consolidated ({currency_code})", lambda row: row.consolidated, True),
+        _TableColumn(f"Direct parcel ({currency_code})", lambda row: row.parcel, True),
     )
     return _table_lines(columns, rows)
 
@@ -326,6 +421,24 @@ def _load_data(args: argparse.Namespace) -> tuple[GccConfig, Catalogue] | str:
         return f"cannot read data file: {exc}"
 
 
+def _load_sample_orders(path: Path) -> SampleOrders | str:
+    """The sample orders, or the message to fail with."""
+    try:
+        return load_sample_orders(path)
+    except DataFileError as exc:
+        return str(exc)
+    except OSError as exc:
+        return f"cannot read data file: {exc}"
+
+
+def _print_not_sold(market: MarketConfig, excluded: Sequence[ExcludedProduct]) -> None:
+    """A blank line and the products the market does not sell, if there are any."""
+    if excluded:
+        _print()
+        _print(f"Not sold in {market.code} ({len(excluded)}):")
+        _print("\n".join(_not_sold_table(excluded)))
+
+
 # --- entry point --------------------------------------------------------------------------
 
 
@@ -338,11 +451,14 @@ def main(argv: Sequence[str] | None = None, *, now: Callable[[], datetime] = _ut
     that cannot be written returns 1 with a message. Any other exception is a bug and is left
     to raise.
     """
-    parser, price_parser, report_parser = _build_parser()
+    parser, commands = _build_parser()
     args = parser.parse_args(argv)
+    command_parser = commands[args.command]
     if args.command == "report":
-        return _report(args, report_parser, now)
-    return _price(args, price_parser, now)
+        return _report(args, command_parser, now)
+    if args.command == "order":
+        return _order(args, command_parser, now)
+    return _price(args, command_parser, now)
 
 
 def _price(
@@ -392,10 +508,7 @@ def _price(
         _print()
         _print(fee_note)
 
-    if localised.excluded:
-        _print()
-        _print(f"Not sold in {market.code} ({len(localised.excluded)}):")
-        _print("\n".join(_not_sold_table(localised.excluded)))
+    _print_not_sold(market, localised.excluded)
 
     if csv_path is not None:
         try:
@@ -405,6 +518,90 @@ def _price(
         _print()
         _print(f"Wrote {len(rows)} rows to {csv_path}")
 
+    return 0
+
+
+def _order_lines(
+    args: argparse.Namespace,
+    order_parser: argparse.ArgumentParser,
+    catalogue: Catalogue,
+    sample_orders: SampleOrders | None,
+) -> tuple[Sequence[OrderLine], SampleOrder | None]:
+    """The order's lines, and the sample order they come from, if any.
+
+    Exits with a usage error for an unknown sample order, or for a SKU that is not in the
+    catalogue or is listed twice.
+    """
+    if sample_orders is not None:
+        try:
+            sample = find_sample_order(sample_orders, args.sample)
+        except LocalisationError as exc:
+            order_parser.error(f"argument --sample: {exc}")
+        return sample.lines, sample
+
+    items: list[OrderLine] = args.items
+    in_catalogue = {product.sku for product in catalogue.products}
+    for item in items:
+        if item.sku not in in_catalogue:
+            order_parser.error(f"argument --item: {item.sku} is not in the catalogue")
+    seen: set[str] = set()
+    for item in items:
+        if item.sku in seen:
+            order_parser.error(f"argument --item: {item.sku} is listed twice")
+        seen.add(item.sku)
+    return items, None
+
+
+def _order(
+    args: argparse.Namespace, order_parser: argparse.ArgumentParser, now: Callable[[], datetime]
+) -> int:
+    duty_points: int = args.duty_adjust
+
+    data = _load_data(args)
+    if isinstance(data, str):
+        return _fail(data)
+    config, catalogue = data
+    sample_orders = None
+    if args.sample is not None:  # an order of --item lines never reads the orders file
+        loaded = _load_sample_orders(args.orders)
+        if isinstance(loaded, str):
+            return _fail(loaded)
+        sample_orders = loaded
+
+    try:
+        market = find_market(config, args.market)
+    except LocalisationError as exc:
+        order_parser.error(f"argument --market: {exc}")
+
+    lines, sample = _order_lines(args, order_parser, catalogue, sample_orders)
+    ordered_at = now() if args.ordered_at is None else in_market_time(args.ordered_at, market)
+
+    try:
+        both = quote_order_both_ways(
+            lines,
+            catalogue,
+            config,
+            market.code,
+            ordered_at,
+            duty_adjustment_from_points(duty_points),  # to a fraction, at the boundary
+        )
+        rows = order_rows(both.consolidated, both.parcel)
+        note = parcel_note(market, both.parcel)
+    except LocalisationError as exc:
+        return _fail(str(exc))
+
+    # The delivery estimate has already made this conversion, so it cannot be out of range.
+    _print(_scenario_line(market, to_market_time(ordered_at, market), duty_points))
+    if sample is not None:
+        _print(f"Order: {sample.name}")
+    _print()
+    if both.consolidated.lines:
+        _print("\n".join(_order_table(rows, market.currency.code)))
+        _print()
+        _print(note)
+    else:
+        _print(f"{market.code} sells nothing in this order.")
+    _print_not_sold(market, both.consolidated.not_sold)
     return 0
 
 

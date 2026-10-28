@@ -12,7 +12,7 @@ from functools import cache
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
-from souqsort.display import SHIPPING_LABELS, WAIVED, excluded_grid_rows
+from souqsort.display import SHIPPING_LABELS, WAIVED, excluded_grid_rows, join_list
 from souqsort.models import AttributeName, DeMinimisApplies, ShippingModel
 from souqsort.pipeline import LocalisationError
 from souqsort.pricing.landed_cost import PriceQuote
@@ -124,18 +124,6 @@ def clock_text(moment: time) -> str:
 def local_time_text(moment: datetime) -> str:
     """``Thu 2026-10-15 12:00``, on the clock ``moment`` already carries."""
     return f"{date_text(moment.date())} {clock_text(moment.time())}"
-
-
-def join_list(items: Sequence[str], *, word: str = "and") -> str:
-    """``a``, ``a and b``, ``a, b and c``; ``word`` can be ``"or"``.
-
-    Raises ``ValueError`` if there is nothing to join.
-    """
-    if not items:
-        raise ValueError("nothing to join")
-    if len(items) == 1:
-        return items[0]
-    return f"{', '.join(items[:-1])} {word} {items[-1]}"
 
 
 def join_clauses(items: Sequence[str]) -> str:

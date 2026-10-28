@@ -1458,3 +1458,326 @@ def test_report_figure_too_large_to_display_exits_one(
     assert "Traceback" not in result.err
     assert result.out == ""
     assert not out.exists()
+
+
+# --- the order command (SPEC §10.5, M17) --------------------------------------------------
+
+ORDERS_PATH = REPO_ROOT / "data" / "raw" / "sample_orders.json"
+NOON = ("--ordered-at", "2026-10-15T12:00")  # Thu 12:00 in the market: before the cutoff
+LIP_BALM = "BEAU-LIP-040"
+LICENCE = "DIGI-LIC-050"
+
+ORDER_KSA_EXAMPLE = """\
+Market: KSA (Saudi Arabia)   Ordered at: 2026-10-15 12:00 Asia/Riyadh   Duty adjustment: +0 pp
+Order: Headphones and a bag
+
+SKU           Name                                  Qty  Consolidated (SAR)  Direct parcel (SAR)
+------------  ------------------------------------  ---  ------------------  -------------------
+ELEC-HP-001   Wireless Noise-Cancelling Headphones    1              686.95               660.95
+FASH-BAG-014  Leather Crossbody Bag                   1              594.95               546.95
+Items                                                               1281.90              1207.90
+Customs fee                                                               -                15.00
+Duty and VAT                                                              -                98.57
+Total                                                               1281.90              1321.47
+Delivery                                                         2026-10-22           2026-10-21
+
+Direct parcel: the order's CIF, 1049.26 SAR, is not below 1000.00 SAR, so the whole order pays \
+duty; the duty its shelf prices left out is added at checkout.
+"""
+
+
+def _order(
+    *args: str,
+    market: str = "KSA",
+    catalogue: Path = CATALOGUE_PATH,
+    config: Path = CONFIG_PATH,
+    orders: Path = ORDERS_PATH,
+) -> tuple[str, ...]:
+    """Arguments for `order` with explicit data files, so tests do not depend on the cwd."""
+    return (
+        "order",
+        "--market",
+        market,
+        *args,
+        "--catalogue",
+        str(catalogue),
+        "--config",
+        str(config),
+        "--orders",
+        str(orders),
+    )
+
+
+def _order_rows(out: str) -> dict[str, list[str]]:
+    """The order table's rows keyed by their first cell. Blank cells are not split out."""
+    _, _, rows = _table_lines(out)
+    return {cells[0]: cells for cells in map(_cells, rows)}
+
+
+def _last_line(out: str) -> str:
+    return out.rstrip("\n").splitlines()[-1]
+
+
+def test_order_prints_the_spec_example_exactly(run: Callable[..., Result]) -> None:
+    result = run(*_order("--sample", "headphones-and-bag", *NOON))
+
+    assert result.code == 0, result.err
+    assert result.out == ORDER_KSA_EXAMPLE
+    assert result.err == ""
+
+
+def test_order_in_the_uae(run: Callable[..., Result]) -> None:
+    result = run(*_order("--sample", "headphones-and-bag", *NOON, market="UAE"))
+
+    assert result.code == 0, result.err
+    rows = _order_rows(result.out)
+    assert "Customs fee" not in rows
+    assert rows["Duty and VAT"] == ["Duty and VAT", "-", "53.73"]
+    assert rows["Total"] == ["Total", "1109.98", "1129.71"]
+    assert "is not at or below 1000.00 AED" in _last_line(result.out)
+
+
+def test_two_lip_balms_in_kuwait(run: Callable[..., Result]) -> None:
+    result = run(*_order("--sample", "two-lip-balms", *NOON, market="KWT"))
+
+    assert result.code == 0, result.err
+    assert _last_line(result.out) == (
+        "Direct parcel: KWT has no de minimis rule, so every line pays duty."
+    )
+
+
+def test_order_of_lip_balms_and_the_licence(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", f"{LIP_BALM}:2", "--item", LICENCE, *NOON))
+
+    assert result.code == 0, result.err
+    rows = _order_rows(result.out)
+    assert rows[LIP_BALM][2:] == ["2", "33.90", "31.90"]
+    assert rows["Total"][-1] == "387.85"
+    assert _last_line(result.out) == (
+        "Direct parcel: the order's CIF, 27.53 SAR, is below 1000.00 SAR, so de minimis applies."
+    )
+
+
+def test_order_without_a_sample_prints_no_order_name(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", LIP_BALM, *NOON))
+
+    assert result.code == 0, result.err
+    assert "Order:" not in result.out
+    assert result.out.splitlines()[1] == ""
+
+
+def test_order_lists_what_the_market_does_not_sell(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", VANILLA, "--item", f"{TEA}:3", *NOON))
+
+    assert result.code == 0, result.err
+    assert VANILLA not in _order_rows(result.out)
+    assert _order_rows(result.out)[TEA][2] == "3"
+    tail = result.out.split("\nNot sold in KSA (1):\n")[1].splitlines()
+    assert _cells(tail[0]) == ["SKU", "Name", "Reasons"]
+    assert _cells(tail[2]) == [VANILLA, "Pure Vanilla Extract", "contains_alcohol"]
+    assert len(tail) == 3
+
+
+def test_order_that_passes_names_the_lines_the_rule_excludes(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", VANILLA, "--item", HEADPHONES, *NOON, market="UAE"))
+
+    assert result.code == 0, result.err
+    assert _order_rows(result.out)["Total"] == ["Total", "668.98", "647.98"]  # §7.10.2 M
+    assert _last_line(result.out) == (
+        "Direct parcel: the order's CIF, 613.23 AED, is at or below 1000.00 AED, so de minimis "
+        "applies, except to GROC-VAN-061, which it excludes."
+    )
+
+
+def test_order_in_which_nothing_travels(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", LICENCE, *NOON))
+
+    assert result.code == 0, result.err
+    assert "Customs fee" not in _order_rows(result.out)
+    assert _last_line(result.out) == (
+        "Direct parcel: nothing in the order travels, so no parcel is sent."
+    )
+
+
+def test_order_over_the_threshold_with_nothing_waived(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", ESPRESSO, *NOON))
+
+    assert result.code == 0, result.err
+    assert "Duty and VAT" not in _order_rows(result.out)
+    assert _last_line(result.out) == (
+        "Direct parcel: the order's CIF, 3597.53 SAR, is not below 1000.00 SAR, so the whole "
+        "order pays duty; its shelf prices already include it."
+    )
+
+
+def test_order_the_market_sells_nothing_of(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", GUMMY_BEARS, *NOON))
+
+    assert result.code == 0, result.err
+    lines = result.out.splitlines()
+    assert lines[1:4] == ["", "KSA sells nothing in this order.", ""]
+    assert lines[4] == "Not sold in KSA (1):"
+    assert _cells(lines[7]) == [GUMMY_BEARS, "Gummy Bears (pork gelatine)", "contains_pork"]
+    assert len(lines) == 8
+    assert "Direct parcel" not in result.out
+
+
+def test_order_at_three_points(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", HEADPHONES, "--item", BAG, "--duty-adjust", "3", *NOON))
+
+    assert result.code == 0, result.err
+    assert "Duty adjustment: +3 pp" in result.out.splitlines()[0]
+    rows = _order_rows(result.out)
+    assert rows["Duty and VAT"][-1] == "134.77"
+    assert rows["Total"][-1] == "1357.67"
+
+
+def test_order_defaults_the_order_time_to_now(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", LIP_BALM), now=lambda: datetime(2026, 10, 15, 9, 0, tzinfo=UTC))
+
+    assert result.code == 0, result.err
+    assert "Ordered at: 2026-10-15 12:00 Asia/Riyadh" in result.out
+
+
+_BAD_ITEMS = (
+    "ELEC-HP-001:0",
+    "ELEC-HP-001:100",
+    "ELEC-HP-001:x",
+    "ELEC-HP-001:",
+    ":2",
+    "ELEC-HP-001:2:3",
+    "ELEC-HP-001:-1",
+    "ELEC-HP-001:٢",  # an Arabic-Indic digit two: not ASCII
+    "",
+    # Whitespace, e.g. from copying and pasting, is a format error, not an unknown SKU.
+    "ELEC-HP-001 ",
+    " ELEC-HP-001",
+    "ELEC-HP-001 :2",
+    "ELEC-HP-001: 2",
+    "ELEC HP-001",
+    "ELEC-HP-001\t",
+    "ELEC-HP-001\u00a0",  # a no-break space
+)
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        *(
+            (
+                ("--item", item),
+                "argument --item: must be a SKU, or a SKU and a quantity from 1 to 99 such as "
+                f"ELEC-HP-001:2, got {item!r}",
+            )
+            for item in _BAD_ITEMS
+        ),
+        (("--item", "ELEC-HP-999"), "argument --item: ELEC-HP-999 is not in the catalogue"),
+        (
+            ("--item", "ELEC-HP-001", "--item", "ELEC-HP-001:2"),
+            "argument --item: ELEC-HP-001 is listed twice",
+        ),
+        (
+            ("--sample", "lip-balm"),
+            "argument --sample: lip-balm: unknown order; sample orders: two-lip-balms, "
+            "scarf-and-serum, headphones-and-bag",
+        ),
+        ((), "one of the arguments --sample --item is required"),
+        (
+            ("--sample", "two-lip-balms", "--item", LIP_BALM),
+            "argument --item: not allowed with argument --sample",
+        ),
+        (("--item", LIP_BALM, "--duty-adjust", "21"), "argument --duty-adjust: must be"),
+    ],
+)
+def test_order_usage_errors_exit_two(
+    run: Callable[..., Result], args: tuple[str, ...], message: str
+) -> None:
+    result = run(*_order(*args, *NOON))
+
+    assert result.code == 2
+    assert f"error: {message}" in result.err
+    assert result.out == ""
+
+
+def test_order_unknown_market_exits_two_as_price_does(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", LIP_BALM, *NOON, market="QAT"))
+
+    assert result.code == 2
+    assert (
+        "error: argument --market: QAT: unknown market; configured markets: KSA, KWT, UAE"
+        in result.err
+    )
+
+
+def test_order_with_items_never_reads_the_orders_file(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    result = run(*_order("--item", LIP_BALM, *NOON, orders=tmp_path / "missing.json"))
+
+    assert result.code == 0, result.err
+
+
+@pytest.mark.parametrize("option", ["catalogue", "config", "orders"])
+def test_order_data_file_that_cannot_be_read_exits_one(
+    run: Callable[..., Result], tmp_path: Path, option: str
+) -> None:
+    missing = tmp_path / "missing.json"
+
+    result = run(*_order("--sample", "two-lip-balms", *NOON, **{option: missing}))
+
+    assert result.code == 1
+    assert "missing.json" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+
+
+def test_order_invalid_orders_file_exits_one(
+    run: Callable[..., Result], raw_orders: dict[str, Any], tmp_path: Path
+) -> None:
+    raw_orders["orders"][0]["lines"][0]["quantity"] = 0
+    bad = _write_json(tmp_path / "bad_orders.json", raw_orders)
+
+    result = run(*_order("--sample", "two-lip-balms", *NOON, orders=bad))
+
+    assert result.code == 1
+    assert "bad_orders.json" in result.err
+    assert "Traceback" not in result.err
+
+
+def test_sample_order_with_a_sku_missing_from_the_catalogue_exits_one(
+    run: Callable[..., Result], raw_catalogue: dict[str, Any], tmp_path: Path
+) -> None:
+    raw_catalogue["products"] = [p for p in raw_catalogue["products"] if p["sku"] != BAG]
+    catalogue = _write_json(tmp_path / "no_bag.json", raw_catalogue)
+
+    result = run(*_order("--sample", "headphones-and-bag", *NOON, catalogue=catalogue))
+
+    assert result.code == 1
+    assert f"{BAG}: not in the catalogue" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+
+
+def test_order_help_lists_every_option(run: Callable[..., Result]) -> None:
+    result = run("order", "--help")
+
+    assert result.code == 0
+    for option in (
+        "--market",
+        "--sample",
+        "--item",
+        "--duty-adjust",
+        "--ordered-at",
+        "--catalogue",
+        "--config",
+        "--orders",
+    ):
+        assert option in result.out
+    assert "data/raw/sample_orders.json" in result.out
+
+
+def test_top_level_help_lists_the_order_command(run: Callable[..., Result]) -> None:
+    result = run("--help")
+
+    assert result.code == 0
+    assert "order" in result.out

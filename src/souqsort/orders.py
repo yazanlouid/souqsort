@@ -19,6 +19,8 @@ from souqsort.models import (
     MarketConfig,
     OrderLine,
     Product,
+    SampleOrder,
+    SampleOrders,
     ShippingModel,
     require_shipping,
 )
@@ -233,3 +235,45 @@ def quote_order(
         checkout=tuple(checkout),
         delivery=delivery,
     )
+
+
+@dataclass(frozen=True)
+class OrderQuotes:
+    """The same order priced as a consolidated import and as a direct parcel."""
+
+    consolidated: OrderQuote
+    parcel: OrderQuote
+
+
+def quote_order_both_ways(
+    lines: Sequence[OrderLine],
+    catalogue: Catalogue,
+    config: GccConfig,
+    market_code: str,
+    ordered_at: datetime,
+    duty_adjustment: Decimal = Decimal("0"),
+) -> OrderQuotes:
+    """Price an order in both shipping models, each named, so no caller depends on the order
+    of ``SHIPPING_MODELS``. Raises as ``quote_order`` does.
+    """
+    return OrderQuotes(
+        consolidated=quote_order(
+            lines, catalogue, config, market_code, ordered_at, duty_adjustment, "consolidated"
+        ),
+        parcel=quote_order(
+            lines, catalogue, config, market_code, ordered_at, duty_adjustment, "parcel"
+        ),
+    )
+
+
+def find_sample_order(sample_orders: SampleOrders, order_id: str) -> SampleOrder:
+    """A sample order, looked up by its exact id.
+
+    Raises ``LocalisationError`` listing the sample orders' ids, in file order, if no order
+    has that id.
+    """
+    for order in sample_orders.orders:
+        if order.id == order_id:
+            return order
+    known = ", ".join(order.id for order in sample_orders.orders) or "none"
+    raise LocalisationError(f"{order_id}: unknown order; sample orders: {known}")

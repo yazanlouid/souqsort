@@ -77,6 +77,33 @@ from 686.95 to 660.95 SAR, but the 16 kg kettlebell goes from 593.95 to 875.95. 
 pays a 15.00 SAR customs fee at checkout, and the CLI says so under the table. Kuwait has no de
 minimis, so a parcel there is never cheaper.
 
+An order of several items, priced both ways:
+
+```console
+$ uv run python -m souqsort order --market KSA --sample headphones-and-bag --ordered-at 2026-10-15T12:00
+Market: KSA (Saudi Arabia)   Ordered at: 2026-10-15 12:00 Asia/Riyadh   Duty adjustment: +0 pp
+Order: Headphones and a bag
+
+SKU           Name                                  Qty  Consolidated (SAR)  Direct parcel (SAR)
+------------  ------------------------------------  ---  ------------------  -------------------
+ELEC-HP-001   Wireless Noise-Cancelling Headphones    1              686.95               660.95
+FASH-BAG-014  Leather Crossbody Bag                   1              594.95               546.95
+Items                                                               1281.90              1207.90
+Customs fee                                                               -                15.00
+Duty and VAT                                                              -                98.57
+Total                                                               1281.90              1321.47
+Delivery                                                         2026-10-22           2026-10-21
+
+Direct parcel: the order's CIF, 1049.26 SAR, is not below 1000.00 SAR, so the whole order pays duty; the duty its shelf prices left out is added at checkout.
+```
+
+Each item alone is cheaper as a parcel, but de minimis looks at the whole parcel: together their CIF
+crosses SAR 1,000, so the duty their shelf prices left out (98.57 SAR with its VAT) is added at
+checkout, on top of the 15.00 SAR fee. As one parcel the order costs 1,321.47 SAR, against 1,281.90
+SAR as a consolidated import. Shelf prices never change with what else is in the basket; only the
+checkout lines do. The dashboard's **Order** tab shows the same table for a sample order or a basket
+you build.
+
 ## The expansion report
 
 The dashboard answers one market at a time. The expansion report puts them side by side: for one
@@ -144,6 +171,7 @@ uv sync
 |---|---|
 | Price a market from the CLI | `uv run python -m souqsort price --market KSA` |
 | Price UAE direct parcels | `uv run python -m souqsort price --market UAE --shipping parcel` |
+| Price an order of several items | `uv run python -m souqsort order --market KSA --sample headphones-and-bag` |
 | Write the expansion report | `uv run python -m souqsort report` |
 | Open the dashboard | `uv run streamlit run app/streamlit_app.py` |
 | Run the tests | `uv run pytest` |
@@ -158,6 +186,17 @@ CLI options for `price`:
 | `--duty-adjust POINTS` | Whole percentage points added to every duty rate, 0 to 20. Default 0. |
 | `--ordered-at ISO` | Order date and time, e.g. `2026-10-15T20:59Z`. Without an offset it is read as local time in the market. Default: now. |
 | `--csv PATH` | Also write the rows for the products for sale to a CSV file. |
+
+CLI options for `order`, which prices one order as a consolidated import and as a direct parcel:
+
+| Option | Meaning |
+|---|---|
+| `--market CODE` | Market code from the config: `KSA`, `UAE` or `KWT` (required). |
+| `--sample ID` | An order from `data/raw/sample_orders.json`: `two-lip-balms`, `scarf-and-serum` or `headphones-and-bag`. |
+| `--item SKU[:QTY]` | A product and its quantity, 1 to 99 (default 1), e.g. `ELEC-HP-001:2`. Repeat it for each product. Give either `--sample` or `--item`. |
+| `--duty-adjust POINTS` | Whole percentage points added to every duty rate, 0 to 20. Default 0. |
+| `--ordered-at ISO` | Order date and time, as for `price`. Default: now. |
+| `--orders PATH` | The sample orders file read for `--sample`. Default `data/raw/sample_orders.json`. |
 
 ## Design rules
 
