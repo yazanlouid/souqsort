@@ -35,6 +35,22 @@ def travels(product: Product) -> bool:
     return product.weight_kg > 0
 
 
+def within_threshold(value: Decimal, rule: DeMinimisRule) -> bool:
+    """Whether a full-precision value passes the rule's own test, ``below`` or ``at_or_below``.
+
+    It tests the value only: the rule's excluded attributes are about products, and
+    ``de_minimis_applies`` checks them.
+    """
+    # A match, not a dict: mypy fails here if DeMinimisApplies gains a value with no case.
+    match rule.applies:
+        case "below":
+            return value < rule.threshold
+        case "at_or_below":
+            return value <= rule.threshold
+        case unknown:
+            assert_never(unknown)
+
+
 def de_minimis_applies(
     cif: Decimal, rule: DeMinimisRule | None, attributes: ProductAttributes
 ) -> bool:
@@ -46,12 +62,32 @@ def de_minimis_applies(
         return False
     if any(attributes.has(name) for name in rule.excluded_attributes):
         return False
-    # A match, not a dict: mypy fails here if DeMinimisApplies gains a value with no case.
-    match rule.applies:
-        case "below":
-            return cif < rule.threshold
-        case "at_or_below":
-            return cif <= rule.threshold
+    return within_threshold(cif, rule)
+
+
+def duty_rate(product: Product, market: MarketConfig, duty_adjustment: Decimal) -> Decimal:
+    """The rate a product pays when de minimis does not waive its duty.
+
+    Its category's rate, or the market default, plus ``duty_adjustment``.
+    """
+    customs = market.customs
+    category_rate = customs.category_overrides.get(product.category, customs.default_duty_rate)
+    return category_rate + duty_adjustment
+
+
+def sends_parcel(shipping: ShippingModel, anything_travels: bool) -> bool:
+    """Whether an order is sent as a parcel: a direct parcel in which something travels.
+
+    A consolidated import sends none, and neither does a direct parcel order in which nothing
+    travels. Raises ``ValueError`` for an unknown ``shipping``.
+    """
+    require_shipping(shipping)
+    # A match, not a comparison: mypy fails here if ShippingModel gains a value with no case.
+    match shipping:
+        case "consolidated":
+            return False
+        case "parcel":
+            return anything_travels
         case unknown:
             assert_never(unknown)
 
@@ -61,19 +97,13 @@ def parcel_fee_due(
 ) -> Decimal | None:
     """The customs fee an order pays at checkout, as the config writes it, or ``None``.
 
-    Only a direct parcel pays it, and only when something in the order travels: otherwise no
-    parcel is sent. A market without a fee charges none. No VAT is charged on it. Raises
-    ``ValueError`` for an unknown ``shipping``.
+    Only an order that ``sends_parcel`` pays it. A market without a fee charges none. No VAT
+    is charged on it. Raises ``ValueError`` for an unknown ``shipping``.
     """
-    require_shipping(shipping)
-    match shipping:
-        case "consolidated":
-            return None
-        case "parcel":
-            fee = market.customs.parcel_fee
-            return fee.amount if anything_travels and fee is not None else None
-        case unknown:
-            assert_never(unknown)
+    fee = market.customs.parcel_fee
+    if fee is None or not sends_parcel(shipping, anything_travels):
+        return None
+    return fee.amount
 
 
 def assess_duty(
@@ -102,5 +132,4 @@ def assess_duty(
             assert_never(unknown)
     if waived:
         return DutyAssessment(rate=Decimal(0), waived=True)
-    category_rate = customs.category_overrides.get(product.category, customs.default_duty_rate)
-    return DutyAssessment(rate=category_rate + duty_adjustment, waived=False)
+    return DutyAssessment(rate=duty_rate(product, market, duty_adjustment), waived=False)

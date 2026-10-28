@@ -24,8 +24,11 @@ from souqsort.pricing.customs import (
     DutyAssessment,
     assess_duty,
     de_minimis_applies,
+    duty_rate,
     parcel_fee_due,
+    sends_parcel,
     travels,
+    within_threshold,
 )
 from souqsort.pricing.landed_cost import price_product
 
@@ -171,6 +174,61 @@ def test_if_it_applies_at_a_cif_it_applies_at_every_lower_cif(
         assert de_minimis_applies(lower, rule, attributes)
 
 
+# --- within_threshold (SPEC §7.10.1 rule 5, M16) -------------------------------------------
+
+
+@pytest.mark.parametrize(("value", "below", "at_or_below"), THRESHOLD_CELLS)
+def test_within_threshold_cells(value: str, below: bool, at_or_below: bool) -> None:
+    assert within_threshold(Decimal(value), _rule("below")) is below
+    assert within_threshold(Decimal(value), _rule("at_or_below")) is at_or_below
+
+
+def test_within_threshold_compares_at_full_precision() -> None:
+    assert within_threshold(Decimal("999.995"), _rule("below")) is True
+    assert within_threshold(Decimal("1000.0001"), _rule("at_or_below")) is False
+
+
+def test_within_threshold_ignores_excluded_attributes() -> None:
+    # The exclusions are about a product; the threshold test is about a value.
+    assert within_threshold(Decimal("50"), _rule("below", "contains_alcohol")) is True
+
+
+@given(rule=RULES, value=CIFS, attributes=ATTRIBUTES)
+def test_de_minimis_applies_is_the_threshold_test_without_exclusions(
+    rule: DeMinimisRule, value: Decimal, attributes: ProductAttributes
+) -> None:
+    excluded = any(attributes.has(name) for name in rule.excluded_attributes)
+    expected = within_threshold(value, rule) and not excluded
+    assert de_minimis_applies(value, rule, attributes) is expected
+
+
+# --- duty_rate (SPEC §7.10.1 rule 5, M16) ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sku", "adjustment", "expected"),
+    [
+        (HEADPHONES, "0", "0.05"),  # no override: the market default
+        (HEADPHONES, "0.03", "0.08"),
+        (BAG, "0", "0.12"),  # fashion's override
+        (BAG, "0.03", "0.15"),
+        (LICENCE, "0.03", "0.03"),  # digital is 0, plus the adjustment
+    ],
+)
+def test_duty_rate_is_the_category_rate_plus_the_adjustment(
+    products: dict[str, Product], ksa: MarketConfig, sku: str, adjustment: str, expected: str
+) -> None:
+    assert duty_rate(products[sku], ksa, Decimal(adjustment)) == Decimal(expected)
+
+
+def test_duty_rate_ignores_de_minimis(products: dict[str, Product], ksa: MarketConfig) -> None:
+    # A waived parcel's quote has rate 0; duty_rate is what it would pay without the waiver.
+    headphones = products[HEADPHONES]
+    cif = Decimal("574.275")
+    assert assess_duty(headphones, ksa, cif, Decimal(0), "parcel").rate == 0
+    assert duty_rate(headphones, ksa, Decimal(0)) == Decimal("0.05")
+
+
 # --- travels (SPEC §7.7.2, M15) ------------------------------------------------------------
 
 
@@ -240,6 +298,41 @@ def test_price_product_rejects_an_unknown_shipping_model(
 ) -> None:
     with pytest.raises(ValueError, match="shipping"):
         price_product(products[HEADPHONES], ksa, fx, Decimal("0"), shipping)
+
+
+# --- sends_parcel (SPEC §7.10.1 rule 3) -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("shipping", "anything_travels", "expected"),
+    [
+        ("parcel", True, True),
+        ("parcel", False, False),  # nothing travels, so no parcel is sent
+        ("consolidated", True, False),
+        ("consolidated", False, False),
+    ],
+)
+def test_sends_parcel(shipping: Any, anything_travels: bool, expected: bool) -> None:
+    assert sends_parcel(shipping, anything_travels) is expected
+
+
+@pytest.mark.parametrize("shipping", BAD_SHIPPING)
+def test_sends_parcel_rejects_an_unknown_shipping_model(shipping: Any) -> None:
+    with pytest.raises(ValueError, match="one of consolidated, parcel"):
+        sends_parcel(shipping, True)
+
+
+@pytest.mark.parametrize("code", ["KSA", "UAE", "KWT"])
+@pytest.mark.parametrize("shipping", ["consolidated", "parcel"])
+@pytest.mark.parametrize("anything_travels", [True, False])
+def test_a_fee_is_due_only_when_a_parcel_is_sent(
+    config: GccConfig, code: str, shipping: Any, anything_travels: bool
+) -> None:
+    market = config.markets[code]
+    fee = parcel_fee_due(market, shipping, anything_travels)
+    expected = market.customs.parcel_fee
+    sent = sends_parcel(shipping, anything_travels)
+    assert fee == (expected.amount if sent and expected is not None else None)
 
 
 # --- parcel_fee_due (SPEC §7.10.1 rule 6, M15) ---------------------------------------------
@@ -343,6 +436,7 @@ def test_worked_example_e_headphones_in_ksa_by_parcel(
     assert quote.goods == Decimal("562.4625")
     assert quote.freight == Decimal("11.8125")  # 0.35 kg x 9.00 USD
     assert quote.goods + quote.freight == Decimal("574.275")  # cif, below 1,000.00
+    assert quote.cif == Decimal("574.275")
     assert quote.duty == 0
     assert (quote.duty_rate, quote.duty_waived) == (Decimal("0"), True)
     assert quote.vat == Decimal("86.14125")

@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from helpers import NO_ATTRIBUTES, SAMPLE_PRODUCT_COUNT
-from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
+from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config, load_sample_orders
 from souqsort.models import (
     SHIPPING_MODELS,
     AttributeName,
@@ -82,6 +82,13 @@ def _reject_config(write_json: WriteJson, raw: Raw, *fragments: str) -> None:
     path = write_json(raw)
     with pytest.raises(DataFileError) as excinfo:
         load_gcc_config(path)
+    _assert_message_has(excinfo.value, fragments)
+
+
+def _reject_orders(write_json: WriteJson, raw: Raw, *fragments: str) -> None:
+    path = write_json(raw)
+    with pytest.raises(DataFileError) as excinfo:
+        load_sample_orders(path)
     _assert_message_has(excinfo.value, fragments)
 
 
@@ -914,6 +921,86 @@ def test_config_with_no_markets_rejected_without_a_file(raw_config: Raw) -> None
     raw_config["markets"] = {}
     with pytest.raises(ValidationError, match="at least one market"):
         GccConfig.model_validate(raw_config)
+
+
+# --- SampleOrders (SPEC §6.3) -------------------------------------------------------------
+
+
+def test_sample_orders_load(orders_path: Path) -> None:
+    sample = load_sample_orders(orders_path)
+
+    assert sample.orders_version == "2026-11-01"
+    assert [
+        (order.id, order.name, [(line.sku, line.quantity) for line in order.lines])
+        for order in sample.orders
+    ] == [
+        ("two-lip-balms", "Two lip balms", [("BEAU-LIP-040", 2)]),
+        ("scarf-and-serum", "A silk scarf and a serum", [("FASH-SCF-015", 1), ("BEAU-SRM-041", 1)]),
+        ("headphones-and-bag", "Headphones and a bag", [(HEADPHONES, 1), (BAG, 1)]),
+    ]
+
+
+@pytest.mark.parametrize("quantity", [0, 100, -1, "2", 2.0, True, None])
+def test_bad_quantity_rejected(write_json: WriteJson, raw_orders: Raw, quantity: Any) -> None:
+    raw_orders["orders"][0]["lines"][0]["quantity"] = quantity
+    _reject_orders(write_json, raw_orders, "lines.0.quantity")
+
+
+@pytest.mark.parametrize("quantity", [1, 99])
+def test_quantity_boundaries_accepted(
+    write_json: WriteJson, raw_orders: Raw, quantity: int
+) -> None:
+    raw_orders["orders"][0]["lines"][0]["quantity"] = quantity
+    loaded = load_sample_orders(write_json(raw_orders))
+    assert loaded.orders[0].lines[0].quantity == quantity
+
+
+def test_sku_twice_in_one_order_rejected(write_json: WriteJson, raw_orders: Raw) -> None:
+    lines = raw_orders["orders"][2]["lines"]
+    lines.append({"sku": HEADPHONES, "quantity": 3})
+    _reject_orders(write_json, raw_orders, "duplicate sku", HEADPHONES)
+
+
+def test_repeated_order_id_rejected(write_json: WriteJson, raw_orders: Raw) -> None:
+    raw_orders["orders"][1]["id"] = "two-lip-balms"
+    _reject_orders(write_json, raw_orders, "duplicate order id", "two-lip-balms")
+
+
+@pytest.mark.parametrize("order_id", ["Two lip balms", "-x", "", "two_lip_balms", "Two-lip-balms"])
+def test_malformed_order_id_rejected(write_json: WriteJson, raw_orders: Raw, order_id: str) -> None:
+    raw_orders["orders"][0]["id"] = order_id
+    _reject_orders(write_json, raw_orders, "orders.0.id")
+
+
+def test_order_with_no_lines_rejected(write_json: WriteJson, raw_orders: Raw) -> None:
+    raw_orders["orders"][0]["lines"] = []
+    _reject_orders(write_json, raw_orders, "orders.0.lines")
+
+
+def test_empty_orders_version_rejected(write_json: WriteJson, raw_orders: Raw) -> None:
+    raw_orders["orders_version"] = ""
+    _reject_orders(write_json, raw_orders, "orders_version")
+
+
+def test_empty_order_name_rejected(write_json: WriteJson, raw_orders: Raw) -> None:
+    raw_orders["orders"][0]["name"] = ""
+    _reject_orders(write_json, raw_orders, "orders.0.name")
+
+
+def test_empty_line_sku_rejected(write_json: WriteJson, raw_orders: Raw) -> None:
+    raw_orders["orders"][0]["lines"][0]["sku"] = ""
+    _reject_orders(write_json, raw_orders, "lines.0.sku")
+
+
+def test_unknown_order_key_rejected(write_json: WriteJson, raw_orders: Raw) -> None:
+    raw_orders["orders"][0]["lines"][0]["price"] = "15.95"
+    _reject_orders(write_json, raw_orders, "lines.0.price")
+
+
+def test_no_sample_orders_accepted(write_json: WriteJson, raw_orders: Raw) -> None:
+    raw_orders["orders"] = []
+    loaded = load_sample_orders(write_json(raw_orders))
+    assert (loaded.orders_version, loaded.orders) == ("2026-11-01", ())
 
 
 # --- loaders: DataFileError ---------------------------------------------------------------

@@ -1,10 +1,10 @@
-"""Load and validate the catalogue and market config JSON files."""
+"""Load and validate the catalogue, market config and sample orders JSON files."""
 
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
-from souqsort.models import Catalogue, GccConfig
+from souqsort.models import Catalogue, GccConfig, SampleOrders
 
 
 class DataFileError(ValueError):
@@ -27,3 +27,7 @@ def load_catalogue(path: Path) -> Catalogue:
 
 def load_gcc_config(path: Path) -> GccConfig:
     return _load(GccConfig, path)
+
+
+def load_sample_orders(path: Path) -> SampleOrders:
+    return _load(SampleOrders, path)

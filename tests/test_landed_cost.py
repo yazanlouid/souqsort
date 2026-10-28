@@ -21,6 +21,7 @@ from souqsort.models import (
     ProductName,
     ShippingModel,
 )
+from souqsort.pricing.customs import DutyAssessment, assess_duty
 from souqsort.pricing.fx import convert
 from souqsort.pricing.landed_cost import PriceQuote, PriceStep, price_product
 from souqsort.pricing.money import format_money
@@ -667,3 +668,32 @@ def test_every_quote_has_a_positive_shelf_price_and_a_margin_below_one(
     assert quote.shelf_price > 0
     assert decimal_places(quote.shelf_price) == market.currency.minor_units
     assert quote.margin_pct < 1
+
+
+@given(
+    product=GENERATED_PRODUCTS,
+    duty_adjustment=ADJUSTMENTS,
+    use_zero_vat_market=st.booleans(),
+    shipping=SHIPPING_MODELS,
+    rule=DE_MINIMIS_RULES,
+)
+def test_cif_is_the_value_duty_was_assessed_on(
+    config: GccConfig,
+    zero_vat_config: GccConfig,
+    product: Product,
+    duty_adjustment: Decimal,
+    use_zero_vat_market: bool,
+    shipping: ShippingModel,
+    rule: DeMinimisRule | None,
+) -> None:
+    # An order sums each line's cif, so it must be exactly what decided the waiver.
+    market, fx = _generated_market(config, zero_vat_config, use_zero_vat_market, True)
+    market = _with_de_minimis(market, rule)
+    quote = _quote_or_none(product, market, fx, duty_adjustment, shipping)
+    if quote is None:
+        return
+
+    assert quote.cif == quote.goods + quote.freight
+    assessment = assess_duty(product, market, quote.cif, duty_adjustment, shipping)
+    assert assessment == DutyAssessment(rate=quote.duty_rate, waived=quote.duty_waived)
+    assert quote.duty == quote.cif * quote.duty_rate

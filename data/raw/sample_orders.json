@@ -1,0 +1,8 @@
+{
+  "orders_version": "2026-11-01",
+  "orders": [
+    { "id": "two-lip-balms", "name": "Two lip balms", "lines": [ { "sku": "BEAU-LIP-040", "quantity": 2 } ] },
+    { "id": "scarf-and-serum", "name": "A silk scarf and a serum", "lines": [ { "sku": "FASH-SCF-015", "quantity": 1 }, { "sku": "BEAU-SRM-041", "quantity": 1 } ] },
+    { "id": "headphones-and-bag", "name": "Headphones and a bag", "lines": [ { "sku": "ELEC-HP-001", "quantity": 1 }, { "sku": "FASH-BAG-014", "quantity": 1 } ] }
+  ]
+}

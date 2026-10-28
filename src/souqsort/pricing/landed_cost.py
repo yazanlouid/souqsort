@@ -27,6 +27,7 @@ class PriceQuote:
 
     ``shelf_price`` is the only rounded value and is authoritative. The components keep full
     precision and are rounded for display only, so their displayed sum can differ from it.
+    ``cif`` is ``goods + freight`` exactly as duty and de minimis assessed it.
     ``margin_pct`` is a fraction (``0.587`` = 58.7%). ``duty_rate`` is the rate applied to
     CIF, 0 when ``duty_waived`` (de minimis applied).
     """
@@ -36,6 +37,7 @@ class PriceQuote:
     currency: str
     goods: Decimal
     freight: Decimal
+    cif: Decimal
     duty: Decimal
     vat: Decimal
     gross: Decimal
@@ -111,6 +113,7 @@ def price_product(
         currency=currency.code,
         goods=goods,
         freight=freight,
+        cif=cif,
         duty=duty,
         vat=vat,
         gross=gross,
