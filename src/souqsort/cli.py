@@ -277,6 +277,13 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
         help=f"Markdown file to write, creating its folder if needed (default: {DEFAULT_REPORT})",
     )
     _add_data_file_options(report)
+    report.add_argument(
+        "--orders",
+        type=Path,
+        default=DEFAULT_ORDERS,
+        metavar="PATH",
+        help=f"sample orders JSON file (default: {DEFAULT_ORDERS.as_posix()})",
+    )
     return parser, {"price": price, "order": order, "report": report}
 
 
@@ -288,10 +295,16 @@ def _same_file(path: Path, other: Path) -> bool:
 
 
 def _refuse_input_files(
-    parser: argparse.ArgumentParser, option: str, path: Path, args: argparse.Namespace
+    parser: argparse.ArgumentParser,
+    option: str,
+    path: Path,
+    args: argparse.Namespace,
+    *others: tuple[str, Path],
 ) -> None:
-    """Exit with a usage error if ``path`` is the catalogue or the config file."""
-    for source_option, source in (("--catalogue", args.catalogue), ("--config", args.config)):
+    """Exit with a usage error if ``path`` is the catalogue or the config file, or one of
+    ``others``, each an option and the file it names."""
+    sources = (("--catalogue", args.catalogue), ("--config", args.config), *others)
+    for source_option, source in sources:
         if _same_file(path, source):
             parser.error(
                 f"argument {option}: {path} is the {source_option} file and would be overwritten"
@@ -610,16 +623,19 @@ def _report(
 ) -> int:
     out_text: str = args.out
     out = Path(out_text)
-    _refuse_input_files(report_parser, "--out", out, args)
+    _refuse_input_files(report_parser, "--out", out, args, ("--orders", args.orders))
 
     data = _load_data(args)
     if isinstance(data, str):
         return _fail(data)
     config, catalogue = data
+    sample_orders = _load_sample_orders(args.orders)
+    if isinstance(sample_orders, str):
+        return _fail(sample_orders)
 
     ordered_at = now() if args.ordered_at is None else args.ordered_at
     try:
-        text = render_report(build_report(catalogue, config, ordered_at))
+        text = render_report(build_report(catalogue, config, sample_orders, ordered_at))
     except LocalisationError as exc:
         return _fail(str(exc))
 

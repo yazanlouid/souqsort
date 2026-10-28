@@ -13,7 +13,14 @@ from functools import cache
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from souqsort.display import SHIPPING_LABELS, WAIVED, excluded_grid_rows, join_list
-from souqsort.models import AttributeName, DeMinimisApplies, ShippingModel
+from souqsort.models import (
+    AttributeName,
+    DeMinimisApplies,
+    OrderLine,
+    SampleOrder,
+    ShippingModel,
+)
+from souqsort.orders import CheckoutKind, OrderQuote
 from souqsort.pipeline import LocalisationError
 from souqsort.pricing.landed_cost import PriceQuote
 from souqsort.pricing.money import round_minor
@@ -22,7 +29,9 @@ from souqsort.report.figures import (
     PRICE_ENDING_ALERT,
     TARIFF_RISES_POINTS,
     ExpansionReport,
+    MarketOrders,
     MarketOverview,
+    OrderComparison,
     PriceBuildUp,
     PricingRisk,
     ProductComparison,
@@ -67,6 +76,9 @@ _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 # A line ending as Markdown reads one.
 _LINE_BREAK = re.compile(r"\r\n|\r|\n")
+
+# The multiplication sign, U+00D7, between an order line's quantity and its SKU (§9.3.1).
+_TIMES = "\u00d7"
 
 
 # --- formatting (§9.3.1) ------------------------------------------------------------------
@@ -155,6 +167,14 @@ def one_line(text: str) -> str:
 def table_cell(text: str) -> str:
     """Text from the data, safe in a Markdown table cell: ``|`` escaped, line breaks as spaces."""
     return one_line(text.replace("|", "\\|"))
+
+
+def order_items_text(lines: Sequence[OrderLine]) -> str:
+    """An order's lines in its order, joined with commas: a line of one unit is its SKU, more
+    units read as the quantity, the multiplication sign and the SKU."""
+    return ", ".join(
+        line.sku if line.quantity == 1 else f"{line.quantity} {_TIMES} {line.sku}" for line in lines
+    )
 
 
 def _above_catalogue(market: MarketOverview) -> str:
@@ -271,6 +291,51 @@ def parcel_delivery_sentence(comparisons: Sequence[ShippingComparison]) -> str:
         f"{date_text(c.parcel_delivery.delivery_date)} in {one_line(c.code)}" for c in comparisons
     ]
     return f"For this order, direct parcels arrive on {join_list(deliveries)}."
+
+
+def orders_sentence(sample_orders: Sequence[SampleOrder], markets: Sequence[MarketOrders]) -> str:
+    """The sentence of "Orders": markets that sell something in the orders, config order."""
+    if not sample_orders:
+        return "There are no sample orders."
+    selling = [market for market in markets if market.priced]
+    if not selling:
+        return "No market sells anything in the sample orders."
+    phrases = [
+        f"{m.cheaper} of {m.priced} in {one_line(m.code)}"
+        if position
+        else f"{m.cheaper} of {count_text(m.priced, 'sample order')} in {one_line(m.code)}"
+        for position, m in enumerate(selling)
+    ]
+    return f"Direct parcels are cheaper than consolidated imports for {join_list(phrases)}."
+
+
+def orders_market_sentences(market: MarketOrders) -> str:
+    """A market's orders subsection: its counts, or that it sells nothing in the orders.
+
+    The duty count is given only when the market has a de minimis rule.
+    """
+    if not market.priced:
+        return "No product in the sample orders is for sale."
+    sentences = [
+        f"Parcels are cheaper for {market.cheaper} of {count_text(market.priced, 'order')}, "
+        f"dearer for {market.dearer} and unchanged for {market.unchanged}."
+    ]
+    if market.de_minimis is not None:
+        sentences.append(f"Duty is added at checkout to {market.duty_added} of them.")
+    return " ".join(sentences)
+
+
+def orders_not_sold_sentence(market: MarketOrders) -> str:
+    """The lines a market leaves out of the sample orders, in file order then line order, or
+    ``""`` when it leaves none out."""
+    left_out = [
+        f"{one_line(item.sku)} from {one_line(order.name)}"
+        for order in market.orders
+        for item in order.consolidated.not_sold
+    ]
+    if not left_out:
+        return ""
+    return f"Not sold in {one_line(market.code)}, so left out: {join_list(left_out)}."
 
 
 def tariff_sentence(tariffs: Sequence[TariffExposure]) -> str:
@@ -424,6 +489,52 @@ def _shipping_market(comparison: ShippingComparison) -> dict[str, ContextValue]:
     }
 
 
+def _order_items_row(order: SampleOrder) -> dict[str, str]:
+    # "lines", not "items": the template's row.items would find the dict method.
+    return {"name": table_cell(order.name), "lines": table_cell(order_items_text(order.lines))}
+
+
+def _checkout_amount(quote: OrderQuote, kind: CheckoutKind) -> Decimal | None:
+    return next((line.amount for line in quote.checkout if line.kind == kind), None)
+
+
+def _order_row(market: MarketOrders, order: OrderComparison) -> dict[str, str]:
+    """One order in a market. An order the market sells nothing of shows ``-`` throughout."""
+    name = table_cell(order.name)
+    change = order.change_pct
+    if change is None:
+        cells = ("consolidated", "parcel", "change", "cif", "fee", "duty")
+        return {"name": name, **dict.fromkeys(cells, _NO_VALUE)}
+    figure = f"{market.code}: {order.order_id}"
+
+    def money(amount: Decimal | None, what: str) -> str:
+        if amount is None:
+            return _NO_VALUE
+        return money_text(amount, market.minor_units, figure=f"{figure} {what}")
+
+    parcel = order.parcel
+    return {
+        "name": name,
+        "consolidated": money(order.consolidated.total, "consolidated total"),
+        "parcel": money(parcel.total, "parcel total"),
+        "change": signed_percent_text(change, figure=f"{figure} parcel change"),
+        "cif": money(parcel.parcel_value, "parcel CIF"),
+        "fee": money(_checkout_amount(parcel, "customs_fee"), "customs fee"),
+        "duty": money(_checkout_amount(parcel, "duty"), "duty and VAT"),
+    }
+
+
+def _orders_market(market: MarketOrders) -> dict[str, ContextValue]:
+    # The not-sold sentence is "" when the market leaves nothing out: the template tests it.
+    return {
+        "heading": one_line(f"{market.code} ({market.name})"),
+        "sentences": orders_market_sentences(market),
+        "currency": table_cell(market.currency),
+        "rows": [_order_row(market, order) for order in market.orders],
+        "not_sold": orders_not_sold_sentence(market),
+    }
+
+
 def _tariff_row(exposure: TariffExposure) -> dict[str, ContextValue]:
     figure = f"{exposure.code}: {exposure.shipping} price change"
     return {
@@ -533,6 +644,7 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
     ordered_at = report.ordered_at.astimezone(UTC)
     markets = markets_sentences(report.markets)
     shipping = [shipping_sentence(report.shipping), parcel_delivery_sentence(report.shipping)]
+    orders = orders_sentence(report.sample_orders, report.orders)
     tariffs = tariff_sentence(report.tariffs)
     build_up = " ".join(build_up_sentences(report.sample_product, report.build_ups))
     risks = pricing_risks_sentence(report.pricing_risks)
@@ -543,8 +655,9 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
             "config_version": one_line(report.config_version),
             "fx_as_of": report.fx_as_of.isoformat(),
             "catalogue_version": one_line(report.catalogue_version),
+            "orders_version": one_line(report.orders_version),
         },
-        "summary": [*markets, *shipping, tariffs, build_up, risks, not_sold],
+        "summary": [*markets, *shipping, orders, tariffs, build_up, risks, not_sold],
         "markets": {
             "sentences": " ".join(markets),
             "rows": [_market_row(market) for market in report.markets],
@@ -552,6 +665,14 @@ def report_context(report: ExpansionReport) -> Mapping[str, ContextValue]:
         "shipping": {
             "sentences": " ".join(shipping),
             "markets": [_shipping_market(comparison) for comparison in report.shipping],
+        },
+        # With no sample orders, the section is only its sentence: no tables at all.
+        "orders": {
+            "sentence": orders,
+            "rows": [_order_items_row(order) for order in report.sample_orders],
+            "markets": (
+                [_orders_market(market) for market in report.orders] if report.sample_orders else []
+            ),
         },
         "tariffs": {
             "sentence": tariffs,

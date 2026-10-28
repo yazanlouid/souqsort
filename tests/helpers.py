@@ -3,9 +3,12 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from souqsort.models import Catalogue, ProductAttributes
+from souqsort.models import Catalogue, OrderLine, ProductAttributes, SampleOrder, SampleOrders
 
 SAMPLE_PRODUCT_COUNT = 13  # products in data/raw/global_products.json
+
+# No sample orders, for a report built from a catalogue that lacks some of their products.
+NO_ORDERS = SampleOrders(orders_version="none", orders=())
 
 # Sample products each market sells after compliance screening (SPEC §7.6).
 FOR_SALE_COUNTS = {"KSA": 11, "UAE": 12, "KWT": 11}
@@ -44,3 +47,15 @@ def without_products(catalogue: Catalogue, *skus: str) -> Catalogue:
     return catalogue.model_copy(
         update={"products": [p for p in catalogue.products if p.sku not in unwanted]}
     )
+
+
+def add_order(
+    sample_orders: SampleOrders, order_id: str, name: str, *lines: tuple[str, int]
+) -> SampleOrders:
+    """The sample orders with one more order at the end, of ``(sku, quantity)`` lines."""
+    extra = SampleOrder(
+        id=order_id,
+        name=name,
+        lines=tuple(OrderLine(sku=sku, quantity=quantity) for sku, quantity in lines),
+    )
+    return sample_orders.model_copy(update={"orders": (*sample_orders.orders, extra)})

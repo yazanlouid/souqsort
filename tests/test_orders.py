@@ -750,8 +750,10 @@ def test_a_duty_line_appears_only_when_the_parcel_fails_the_test(
 # --- the report agrees (SPEC §9.2.2) --------------------------------------------------------
 
 
-def test_one_item_orders_match_the_report(catalogue: Catalogue, config: GccConfig) -> None:
-    report = build_report(catalogue, config, REPORT_ORDERED_AT)
+def test_one_item_orders_match_the_report(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
+) -> None:
+    report = build_report(catalogue, config, sample_orders, REPORT_ORDERED_AT)
 
     counts = {market.code: len(market.products) for market in report.shipping}
     assert counts == FOR_SALE_COUNTS

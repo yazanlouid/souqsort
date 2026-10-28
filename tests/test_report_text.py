@@ -12,8 +12,10 @@ from hypothesis import strategies as st
 from helpers import (
     FOR_SALE_COUNTS,
     GUMMY_BEARS,
+    NO_ORDERS,
     REPORT_ORDERED_AT,
     VANILLA,
+    add_order,
     only_products,
     without_products,
 )
@@ -26,6 +28,8 @@ from souqsort.models import (
     DeMinimisApplies,
     DeMinimisRule,
     GccConfig,
+    OrderLine,
+    SampleOrders,
     ShippingModel,
 )
 from souqsort.pipeline import LocalisationError, localise_and_summarise
@@ -36,6 +40,7 @@ from souqsort.report import text as report_text
 from souqsort.report.figures import (
     TARIFF_RISES_POINTS,
     ExpansionReport,
+    MarketOrders,
     MarketOverview,
     PriceBuildUp,
     PricingRisk,
@@ -57,6 +62,10 @@ from souqsort.report.text import (
     money_text,
     not_sold_sentence,
     one_line,
+    order_items_text,
+    orders_market_sentences,
+    orders_not_sold_sentence,
+    orders_sentence,
     parcel_delivery_sentence,
     percent_text,
     pricing_risks_sentence,
@@ -72,7 +81,7 @@ from souqsort.report.text import (
 HEADER = """\
 # GCC expansion report
 
-An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-11-01, FX rates as of 2026-10-01 and catalogue 2026-10-01.
+An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-11-01, FX rates as of 2026-10-01, catalogue 2026-10-01 and sample orders 2026-11-01.
 
 > All market data is illustrative. Do not use it to quote real prices or delivery dates.
 
@@ -189,6 +198,7 @@ METHOD_SECTION = """\
 
 - Products are compared as one-item orders, and every cost is passed on to the customer.
 - A direct parcel pays the market's customs fee at checkout, and parcel prices include it. A product that weighs nothing, such as a download, never travels in a parcel, so it pays no fee and de minimis never applies to it.
+- Each sample order ships as one parcel, and its CIF decides de minimis for the whole order. When it is not within the threshold, the duty that its shelf prices left out is added at checkout, with the VAT on it. Direct parcel is the total at checkout.
 - Prices use today's duty rates. A tariff rise adds percentage points to every duty rate. Tariff exposure compares shelf prices, without the customs fee.
 - Above catalogue price compares the shelf price with the catalogue price converted at the config's FX rates, so it includes freight, duty, VAT and the price ending.
 - Averages are unweighted means over the products a market sells.
@@ -209,8 +219,8 @@ NOT_SOLD_SENTENCE = "Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2."
 
 
 @pytest.fixture(scope="module")
-def report(catalogue: Catalogue, config: GccConfig) -> ExpansionReport:
-    return build_report(catalogue, config, REPORT_ORDERED_AT)
+def report(catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders) -> ExpansionReport:
+    return build_report(catalogue, config, sample_orders, REPORT_ORDERED_AT)
 
 
 @pytest.fixture(scope="module")
@@ -509,10 +519,14 @@ def test_context_walk_finds_what_is_not_a_string() -> None:
     ids=["sample", "a-market-sells-nothing", "none-sells-anything", "empty"],
 )
 def test_context_holds_only_strings(
-    catalogue: Catalogue, config: GccConfig, skus: Sequence[str] | None
+    catalogue: Catalogue,
+    config: GccConfig,
+    sample_orders: SampleOrders,
+    skus: Sequence[str] | None,
 ) -> None:
     products = catalogue if skus is None else only_products(catalogue, *skus)
-    context = report_context(build_report(products, config, REPORT_ORDERED_AT))
+    orders = sample_orders if skus is None else NO_ORDERS
+    context = report_context(build_report(products, config, orders, REPORT_ORDERED_AT))
 
     assert _non_strings(context) == []
 
@@ -547,6 +561,10 @@ def test_sections_are_in_order(rendered: str) -> None:
         "### KSA (Saudi Arabia)",
         "### UAE (United Arab Emirates)",
         "### KWT (Kuwait)",
+        "## Orders",
+        "### KSA (Saudi Arabia)",
+        "### UAE (United Arab Emirates)",
+        "### KWT (Kuwait)",
         "## Tariff exposure",
         "## How a price is built",
         "### KSA (SAR)",
@@ -563,9 +581,15 @@ def test_sections_are_in_order(rendered: str) -> None:
     [None, (VANILLA, GUMMY_BEARS), (GUMMY_BEARS,), ()],
     ids=["sample", "a-market-sells-nothing", "none-sells-anything", "empty"],
 )
-def test_layout_rules(catalogue: Catalogue, config: GccConfig, skus: Sequence[str] | None) -> None:
+def test_layout_rules(
+    catalogue: Catalogue,
+    config: GccConfig,
+    sample_orders: SampleOrders,
+    skus: Sequence[str] | None,
+) -> None:
     products = catalogue if skus is None else only_products(catalogue, *skus)
-    text = render_report(build_report(products, config, REPORT_ORDERED_AT))
+    orders = sample_orders if skus is None else NO_ORDERS
+    text = render_report(build_report(products, config, orders, REPORT_ORDERED_AT))
 
     assert "\r" not in text
     assert text.endswith("\n")
@@ -575,7 +599,9 @@ def test_layout_rules(catalogue: Catalogue, config: GccConfig, skus: Sequence[st
 
 
 def test_a_market_that_sells_nothing_shows_dashes(catalogue: Catalogue, config: GccConfig) -> None:
-    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    report = build_report(
+        only_products(catalogue, VANILLA, GUMMY_BEARS), config, NO_ORDERS, REPORT_ORDERED_AT
+    )
     section = _section(render_report(report), "Markets side by side")
 
     assert (
@@ -586,7 +612,9 @@ def test_a_market_that_sells_nothing_shows_dashes(catalogue: Catalogue, config: 
 
 
 def test_no_market_selling_anything(catalogue: Catalogue, config: GccConfig) -> None:
-    report = build_report(only_products(catalogue, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    report = build_report(
+        only_products(catalogue, GUMMY_BEARS), config, NO_ORDERS, REPORT_ORDERED_AT
+    )
     text = render_report(report)
 
     assert _section(text, "Markets side by side").startswith(
@@ -599,7 +627,7 @@ def test_nothing_excluded_anywhere_has_no_not_sold_table(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
     report = build_report(
-        without_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT
+        without_products(catalogue, VANILLA, GUMMY_BEARS), config, NO_ORDERS, REPORT_ORDERED_AT
     )
 
     assert _section(render_report(report), "Not sold") == (
@@ -613,18 +641,18 @@ def test_cells_from_the_data_are_escaped(catalogue: Catalogue, config: GccConfig
         update={"name": gummy.name.model_copy(update={"en": "Gummy | Bears\nXL"})}
     )
     report = build_report(
-        catalogue.model_copy(update={"products": [odd]}), config, REPORT_ORDERED_AT
+        catalogue.model_copy(update={"products": [odd]}), config, NO_ORDERS, REPORT_ORDERED_AT
     )
 
     assert "| KSA | GROC-GUM-062 | Gummy \\| Bears XL | Contains pork |\n" in render_report(report)
 
 
 def test_the_report_is_the_same_for_the_same_instant(
-    catalogue: Catalogue, config: GccConfig, rendered: str
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders, rendered: str
 ) -> None:
     same_instant = REPORT_ORDERED_AT.astimezone(timezone(timedelta(hours=3)))
 
-    assert render_report(build_report(catalogue, config, same_instant)) == rendered
+    assert render_report(build_report(catalogue, config, sample_orders, same_instant)) == rendered
 
 
 # --- data that would break the text ------------------------------------------------------
@@ -637,7 +665,9 @@ def test_a_figure_too_large_to_display_fails_naming_the_market_and_figure(
     # computed in full, but has too many digits to round to one decimal for display.
     for product in raw_catalogue["products"]:
         product["base_price"] = product["unit_cost"] = "1E-26"
-    report = build_report(Catalogue.model_validate(raw_catalogue), config, REPORT_ORDERED_AT)
+    report = build_report(
+        Catalogue.model_validate(raw_catalogue), config, NO_ORDERS, REPORT_ORDERED_AT
+    )
 
     with pytest.raises(
         LocalisationError, match=r"^[A-Z]+: average above catalogue price is too large to display$"
@@ -651,13 +681,14 @@ def test_line_breaks_in_the_data_versions_stay_on_one_line(
     report = build_report(
         catalogue.model_copy(update={"catalogue_version": "2026-10-01\r\nb"}),
         config.model_copy(update={"config_version": "2026-10-01\nrev2"}),
+        NO_ORDERS.model_copy(update={"orders_version": "none\rc"}),
         REPORT_ORDERED_AT,
     )
     text = render_report(report)
 
     assert (
-        "Built from market config 2026-10-01 rev2, FX rates as of 2026-10-01 "
-        "and catalogue 2026-10-01 b.\n"
+        "Built from market config 2026-10-01 rev2, FX rates as of 2026-10-01, "
+        "catalogue 2026-10-01 b and sample orders none c.\n"
     ) in text
     assert "\n\n\n" not in text
 
@@ -889,7 +920,9 @@ def test_consolidated_or_parcel_is_appendix_a(rendered: str) -> None:
 def test_a_market_that_sells_nothing_has_no_parcel_table(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    report = build_report(
+        only_products(catalogue, VANILLA, GUMMY_BEARS), config, NO_ORDERS, REPORT_ORDERED_AT
+    )
     section = _section(render_report(report), "Consolidated or parcel")
 
     assert section.startswith(
@@ -913,7 +946,7 @@ def test_parcel_rows_escape_cells_from_the_data(catalogue: Catalogue, config: Gc
     lip = next(p for p in catalogue.products if p.sku == "BEAU-LIP-040")
     odd = lip.model_copy(update={"name": lip.name.model_copy(update={"en": "Lip | Balm\nXL"})})
     report = build_report(
-        catalogue.model_copy(update={"products": [odd]}), config, REPORT_ORDERED_AT
+        catalogue.model_copy(update={"products": [odd]}), config, NO_ORDERS, REPORT_ORDERED_AT
     )
     row = "| BEAU-LIP-040 | Lip \\| Balm XL | 16.95 | 30.95 | +82.6% | waived |\n"
 
@@ -1015,7 +1048,9 @@ def test_tariff_exposure_is_appendix_a(rendered: str) -> None:
 def test_a_market_that_sells_nothing_shows_dashes_for_tariffs(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    report = build_report(
+        only_products(catalogue, VANILLA, GUMMY_BEARS), config, NO_ORDERS, REPORT_ORDERED_AT
+    )
     section = _section(render_report(report), "Tariff exposure")
 
     assert "| KSA | Consolidated import | - | - | - |\n| KSA | Direct parcel | - | - | - |\n" in (
@@ -1274,7 +1309,9 @@ def test_how_a_price_is_built_is_appendix_a(rendered: str) -> None:
 def test_no_product_sold_everywhere_has_no_build_up_tables(
     catalogue: Catalogue, config: GccConfig, skus: tuple[str, ...]
 ) -> None:
-    text = render_report(build_report(only_products(catalogue, *skus), config, REPORT_ORDERED_AT))
+    text = render_report(
+        build_report(only_products(catalogue, *skus), config, NO_ORDERS, REPORT_ORDERED_AT)
+    )
 
     assert _section(text, "How a price is built") == (
         f"## How a price is built\n\n{NO_BUILD_UP_SENTENCE}\n\n"
@@ -1290,7 +1327,9 @@ def test_a_sample_product_name_with_a_line_break_stays_on_one_line(
         update={"name": headphones.name.model_copy(update={"en": "Wireless\nHeadphones"})}
     )
     text = render_report(
-        build_report(catalogue.model_copy(update={"products": [odd]}), config, REPORT_ORDERED_AT)
+        build_report(
+            catalogue.model_copy(update={"products": [odd]}), config, NO_ORDERS, REPORT_ORDERED_AT
+        )
     )
     opening = "Wireless Headphones (ELEC-HP-001) is the first product every market sells. "
 
@@ -1382,7 +1421,7 @@ def test_pricing_risks_is_appendix_a(rendered: str) -> None:
 
 def test_no_pricing_risks_has_no_table(catalogue: Catalogue, config: GccConfig) -> None:
     text = render_report(
-        build_report(only_products(catalogue, "ELEC-HP-001"), config, REPORT_ORDERED_AT)
+        build_report(only_products(catalogue, "ELEC-HP-001"), config, NO_ORDERS, REPORT_ORDERED_AT)
     )
 
     assert _section(text, "Pricing risks") == f"## Pricing risks\n\n{NO_RISKS_SENTENCE}\n\n"
@@ -1393,7 +1432,7 @@ def test_risk_rows_escape_cells_from_the_data(catalogue: Catalogue, config: GccC
     lip = next(p for p in catalogue.products if p.sku == "BEAU-LIP-040")
     odd = lip.model_copy(update={"name": lip.name.model_copy(update={"en": "Lip | Balm\nXL"})})
     report = build_report(
-        catalogue.model_copy(update={"products": [odd]}), config, REPORT_ORDERED_AT
+        catalogue.model_copy(update={"products": [odd]}), config, NO_ORDERS, REPORT_ORDERED_AT
     )
     section = _section(render_report(report), "Pricing risks")
 
@@ -1413,6 +1452,7 @@ def test_summary_is_appendix_a(rendered: str) -> None:
         DELIVERY_SENTENCE,
         SHIPPING_SENTENCE,
         PARCEL_DELIVERY_SENTENCE,
+        ORDERS_SENTENCE,
         TARIFF_SENTENCE,
         " ".join(BUILD_UP_SENTENCES),
         RISKS_SENTENCE,
@@ -1430,6 +1470,7 @@ def test_every_section_is_appendix_a(rendered: str) -> None:
         + _section(rendered, "Summary")
         + MARKETS_SECTION
         + SHIPPING_SECTION
+        + ORDERS_SECTION
         + TARIFF_SECTION
         + BUILD_UP_SECTION
         + RISKS_SECTION
@@ -1439,11 +1480,324 @@ def test_every_section_is_appendix_a(rendered: str) -> None:
 
 
 def test_build_up_columns_use_the_dashboard_s_shipping_labels(
-    catalogue: Catalogue, config: GccConfig, monkeypatch: pytest.MonkeyPatch
+    catalogue: Catalogue,
+    config: GccConfig,
+    sample_orders: SampleOrders,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setitem(report_text.SHIPPING_LABELS, "consolidated", "By sea")
     monkeypatch.setitem(report_text.SHIPPING_LABELS, "parcel", "By post")
-    text = render_report(build_report(catalogue, config, REPORT_ORDERED_AT))
+    text = render_report(build_report(catalogue, config, sample_orders, REPORT_ORDERED_AT))
 
     assert "| Step | By sea | By post |\n" in _section(text, "How a price is built")
     assert "| KSA | By post |" in _section(text, "Tariff exposure")
+
+
+# --- orders (§9.3.2 item 3, §9.4 item 5) --------------------------------------------------
+
+ORDERS_SENTENCE = (
+    "Direct parcels are cheaper than consolidated imports for 1 of 3 sample orders in KSA, "
+    "1 of 3 in UAE and 0 of 3 in KWT."
+)
+
+ORDERS_SECTION = """\
+## Orders
+
+Direct parcels are cheaper than consolidated imports for 1 of 3 sample orders in KSA, 1 of 3 in UAE and 0 of 3 in KWT.
+
+| Order | Items |
+|---|---|
+| Two lip balms | 2 \u00d7 BEAU-LIP-040 |
+| A silk scarf and a serum | FASH-SCF-015, BEAU-SRM-041 |
+| Headphones and a bag | ELEC-HP-001, FASH-BAG-014 |
+
+### KSA (Saudi Arabia)
+
+Parcels are cheaper for 1 of 3 orders, dearer for 2 and unchanged for 0. Duty is added at checkout to 1 of them.
+
+| Order | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel CIF (SAR) | Customs fee (SAR) | Duty and VAT (SAR) |
+|---|---:|---:|---:|---:|---:|---:|
+| Two lip balms | 33.90 | 46.90 | +38.3% | 27.53 | 15.00 | - |
+| A silk scarf and a serum | 405.90 | 388.90 | -4.2% | 323.94 | 15.00 | - |
+| Headphones and a bag | 1,281.90 | 1,321.47 | +3.1% | 1,049.26 | 15.00 | 98.57 |
+
+### UAE (United Arab Emirates)
+
+Parcels are cheaper for 1 of 3 orders, dearer for 1 and unchanged for 1. Duty is added at checkout to 1 of them.
+
+| Order | Consolidated (AED) | Direct parcel (AED) | Change | Parcel CIF (AED) | Customs fee (AED) | Duty and VAT (AED) |
+|---|---:|---:|---:|---:|---:|---:|
+| Two lip balms | 29.98 | 29.98 | 0.0% | 26.81 | - | - |
+| A silk scarf and a serum | 346.98 | 333.98 | -3.7% | 316.43 | - | - |
+| Headphones and a bag | 1,109.98 | 1,129.71 | +1.8% | 1,023.35 | - | 53.73 |
+
+### KWT (Kuwait)
+
+Parcels are cheaper for 0 of 3 orders, dearer for 2 and unchanged for 1.
+
+| Order | Consolidated (KWD) | Direct parcel (KWD) | Change | Parcel CIF (KWD) | Customs fee (KWD) | Duty and VAT (KWD) |
+|---|---:|---:|---:|---:|---:|---:|
+| Two lip balms | 3.900 | 3.900 | 0.0% | 2.266 | - | - |
+| A silk scarf and a serum | 27.900 | 28.900 | +3.6% | 26.587 | - | - |
+| Headphones and a bag | 88.900 | 91.900 | +3.4% | 86.253 | - | - |
+
+"""  # noqa: E501
+
+NO_ORDERS_SENTENCE = "There are no sample orders."
+NOTHING_IN_THE_ORDERS_SENTENCE = "No market sells anything in the sample orders."
+
+# The column headings of a market's orders table, after "Order", for one currency.
+_ORDER_COLUMNS = (
+    "| Order | Consolidated ({0}) | Direct parcel ({0}) | Change | Parcel CIF ({0}) "
+    "| Customs fee ({0}) | Duty and VAT ({0}) |\n|---|---:|---:|---:|---:|---:|---:|\n"
+)
+
+
+def _order_market(report: ExpansionReport, code: str) -> MarketOrders:
+    return next(market for market in report.orders if market.code == code)
+
+
+def _subsection(section: str, heading: str) -> str:
+    """From ``### heading`` up to the next ``### `` heading, or to the end of ``section``."""
+    start = section.index(f"### {heading}\n")
+    end = section.find("\n### ", start)
+    return section[start:] if end == -1 else section[start : end + 1]
+
+
+def test_orders_section_is_appendix_a(rendered: str) -> None:
+    assert _section(rendered, "Orders") == ORDERS_SECTION
+
+
+def test_the_orders_sentence_follows_the_parcel_sentences_in_the_summary(rendered: str) -> None:
+    bullets = _section(rendered, "Summary").splitlines()
+
+    position = bullets.index(f"- {ORDERS_SENTENCE}")
+    assert bullets[position - 1].startswith("- For this order, direct parcels arrive on ")
+    assert bullets[position + 1].startswith("- A 10 pp tariff rise ")
+
+
+def test_orders_sentences_for_the_sample_data(report: ExpansionReport) -> None:
+    assert orders_sentence(report.sample_orders, report.orders) == ORDERS_SENTENCE
+    assert [orders_market_sentences(market) for market in report.orders] == [
+        "Parcels are cheaper for 1 of 3 orders, dearer for 2 and unchanged for 0. "
+        "Duty is added at checkout to 1 of them.",
+        "Parcels are cheaper for 1 of 3 orders, dearer for 1 and unchanged for 1. "
+        "Duty is added at checkout to 1 of them.",
+        # Kuwait has no de minimis rule, so nothing to say about duty at checkout.
+        "Parcels are cheaper for 0 of 3 orders, dearer for 2 and unchanged for 1.",
+    ]
+    assert [orders_not_sold_sentence(market) for market in report.orders] == ["", "", ""]
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        ([("BEAU-LIP-040", 2)], "2 \u00d7 BEAU-LIP-040"),
+        ([("ELEC-HP-001", 1)], "ELEC-HP-001"),
+        ([("FASH-SCF-015", 1), ("BEAU-SRM-041", 12)], "FASH-SCF-015, 12 \u00d7 BEAU-SRM-041"),
+    ],
+)
+def test_order_items_text(lines: list[tuple[str, int]], expected: str) -> None:
+    order_lines = [OrderLine(sku=sku, quantity=quantity) for sku, quantity in lines]
+
+    assert order_items_text(order_lines) == expected
+
+
+def test_no_sample_orders_gives_only_the_sentence(catalogue: Catalogue, config: GccConfig) -> None:
+    report = build_report(catalogue, config, NO_ORDERS, REPORT_ORDERED_AT)
+    text = render_report(report)
+
+    assert orders_sentence(report.sample_orders, report.orders) == NO_ORDERS_SENTENCE
+    assert _section(text, "Orders") == f"## Orders\n\n{NO_ORDERS_SENTENCE}\n\n"
+    assert f"- {NO_ORDERS_SENTENCE}\n" in _section(text, "Summary")
+
+
+def test_no_market_selling_anything_in_the_orders_lists_every_order_with_dashes(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    orders = add_order(NO_ORDERS, "gummy-bears", "Gummy bears", (GUMMY_BEARS, 2))
+    report = build_report(catalogue, config, orders, REPORT_ORDERED_AT)
+    section = _section(render_report(report), "Orders")
+
+    assert orders_sentence(report.sample_orders, report.orders) == NOTHING_IN_THE_ORDERS_SENTENCE
+    assert f"- {NOTHING_IN_THE_ORDERS_SENTENCE}\n" in _section(render_report(report), "Summary")
+    assert section.startswith(
+        f"## Orders\n\n{NOTHING_IN_THE_ORDERS_SENTENCE}\n\n"
+        "| Order | Items |\n|---|---|\n| Gummy bears | 2 \u00d7 GROC-GUM-062 |\n\n"
+    )
+    for heading, code, currency in (
+        ("KSA (Saudi Arabia)", "KSA", "SAR"),
+        ("UAE (United Arab Emirates)", "UAE", "AED"),
+        ("KWT (Kuwait)", "KWT", "KWD"),
+    ):
+        assert _subsection(section, heading) == (
+            f"### {heading}\n\n"
+            "No product in the sample orders is for sale.\n\n"
+            f"{_ORDER_COLUMNS.format(currency)}"
+            "| Gummy bears | - | - | - | - | - | - |\n\n"
+            f"Not sold in {code}, so left out: GROC-GUM-062 from Gummy bears.\n\n"
+        )
+
+
+def test_a_market_that_sells_nothing_in_the_orders_is_left_out_of_the_sentence(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    orders = add_order(NO_ORDERS, "vanilla", "Vanilla", (VANILLA, 1))
+    report = build_report(catalogue, config, orders, REPORT_ORDERED_AT)
+
+    # Only the UAE sells the vanilla extract, and it is dearer as a parcel (57.99 against 55.99).
+    assert orders_sentence(report.sample_orders, report.orders) == (
+        "Direct parcels are cheaper than consolidated imports for 0 of 1 sample order in UAE."
+    )
+    assert orders_market_sentences(_order_market(report, "KSA")) == (
+        "No product in the sample orders is for sale."
+    )
+
+
+def test_a_market_that_leaves_lines_out_says_so_after_its_table(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
+) -> None:
+    orders = add_order(sample_orders, "baking-set", "Baking set", (VANILLA, 1), ("GROC-TEA-060", 3))
+    orders = add_order(orders, "gummy-bears", "Gummy bears", (GUMMY_BEARS, 1))
+    report = build_report(catalogue, config, orders, REPORT_ORDERED_AT)
+    section = _section(render_report(report), "Orders")
+
+    ksa_sentence = (
+        "Not sold in KSA, so left out: GROC-VAN-061 from Baking set and GROC-GUM-062 from "
+        "Gummy bears."
+    )
+    uae_sentence = "Not sold in UAE, so left out: GROC-GUM-062 from Gummy bears."
+    assert orders_not_sold_sentence(_order_market(report, "KSA")) == ksa_sentence
+    assert orders_not_sold_sentence(_order_market(report, "UAE")) == uae_sentence
+    ksa = _subsection(section, "KSA (Saudi Arabia)")
+    assert ksa.endswith("| Gummy bears | - | - | - | - | - | - |\n\n" + ksa_sentence + "\n\n")
+    # The baking set's tea is priced, so only the gummy bears are left out of the counts.
+    assert "Parcels are cheaper for 1 of 4 orders, " in ksa
+    assert _subsection(section, "UAE (United Arab Emirates)").endswith(uae_sentence + "\n\n")
+    assert "| Baking set | GROC-VAN-061, 3 \u00d7 GROC-TEA-060 |\n" in section
+
+
+def test_a_single_sample_order_reads_in_the_singular(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
+) -> None:
+    headphones_and_bag = sample_orders.model_copy(update={"orders": sample_orders.orders[2:]})
+    report = build_report(catalogue, config, headphones_and_bag, REPORT_ORDERED_AT)
+    section = _section(render_report(report), "Orders")
+
+    sentence = (
+        "Direct parcels are cheaper than consolidated imports for 0 of 1 sample order in KSA, "
+        "0 of 1 in UAE and 0 of 1 in KWT."
+    )
+    counts = "Parcels are cheaper for 0 of 1 order, dearer for 1 and unchanged for 0."
+    assert orders_sentence(report.sample_orders, report.orders) == sentence
+    assert [orders_market_sentences(market) for market in report.orders] == [
+        f"{counts} Duty is added at checkout to 1 of them.",
+        f"{counts} Duty is added at checkout to 1 of them.",
+        counts,
+    ]
+    assert section.startswith(f"## Orders\n\n{sentence}\n\n")
+    assert f"### KWT (Kuwait)\n\n{counts}\n\n" in section
+
+
+def test_the_header_names_the_orders_version(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
+) -> None:
+    orders = sample_orders.model_copy(update={"orders_version": "2026-12-01\nb"})
+    text = render_report(build_report(catalogue, config, orders, REPORT_ORDERED_AT))
+
+    assert "catalogue 2026-10-01 and sample orders 2026-12-01 b.\n" in text
+
+
+def test_order_cells_from_the_data_are_escaped(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
+) -> None:
+    lip_balms = sample_orders.orders[0].model_copy(update={"name": "Lip | balms\nXL"})
+    orders = sample_orders.model_copy(update={"orders": (lip_balms,)})
+    section = _section(
+        render_report(build_report(catalogue, config, orders, REPORT_ORDERED_AT)), "Orders"
+    )
+
+    assert "| Lip \\| balms XL | 2 \u00d7 BEAU-LIP-040 |\n" in section
+    assert "| Lip \\| balms XL | 33.90 | 46.90 | +38.3% | 27.53 | 15.00 | - |\n" in section
+
+
+def test_a_left_out_line_from_an_odd_order_name_stays_on_one_line(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    orders = add_order(NO_ORDERS, "gummy-bears", "Gummy\nbears", (GUMMY_BEARS, 1))
+    report = build_report(catalogue, config, orders, REPORT_ORDERED_AT)
+
+    assert orders_not_sold_sentence(_order_market(report, "KSA")) == (
+        "Not sold in KSA, so left out: GROC-GUM-062 from Gummy bears."
+    )
+
+
+def _orders_case(case: str, sample_orders: SampleOrders) -> SampleOrders:
+    """The sample orders for each edge case of §9.3.2 item 3."""
+    if case == "no-orders":
+        return NO_ORDERS
+    if case == "nothing-sold":
+        return add_order(NO_ORDERS, "gummy-bears", "Gummy bears", (GUMMY_BEARS, 2))
+    if case == "lines-left-out":
+        return add_order(sample_orders, "baking-set", "Baking set", (VANILLA, 1), (GUMMY_BEARS, 1))
+    if case == "one-order":
+        return sample_orders.model_copy(update={"orders": sample_orders.orders[2:]})
+    return sample_orders
+
+
+ORDERS_CASES = ["sample", "no-orders", "nothing-sold", "lines-left-out", "one-order"]
+
+
+@pytest.mark.parametrize("case", ORDERS_CASES)
+def test_orders_context_holds_only_strings(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders, case: str
+) -> None:
+    orders = _orders_case(case, sample_orders)
+    context = report_context(build_report(catalogue, config, orders, REPORT_ORDERED_AT))
+
+    assert _non_strings(context) == []
+
+
+def _keys(value: object, path: str = "context") -> list[tuple[str, str]]:
+    """Every dict key in the context, with where it is."""
+    if isinstance(value, list):
+        return [found for n, item in enumerate(value) for found in _keys(item, f"{path}[{n}]")]
+    if isinstance(value, dict):
+        return [(f"{path}.{key}", key) for key in value] + [
+            found for key, item in value.items() for found in _keys(item, f"{path}.{key}")
+        ]
+    return []
+
+
+def test_key_walk_finds_nested_keys() -> None:
+    assert _keys({"a": [{"items": "x"}], "b": {"c": "y"}}) == [
+        ("context.a", "a"),
+        ("context.b", "b"),
+        ("context.a[0].items", "items"),
+        ("context.b.c", "c"),
+    ]
+
+
+@pytest.mark.parametrize("case", ORDERS_CASES)
+def test_no_context_key_is_a_dict_method_name(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders, case: str
+) -> None:
+    orders = _orders_case(case, sample_orders)
+    context = report_context(build_report(catalogue, config, orders, REPORT_ORDERED_AT))
+    methods = set(dir(dict))
+
+    assert [where for where, key in _keys(context) if key in methods] == []
+
+
+@pytest.mark.parametrize("case", ORDERS_CASES)
+def test_orders_layout_rules(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders, case: str
+) -> None:
+    orders = _orders_case(case, sample_orders)
+    text = render_report(build_report(catalogue, config, orders, REPORT_ORDERED_AT))
+
+    assert "\r" not in text
+    assert text.endswith("\n")
+    assert not text.endswith("\n\n")
+    assert "\n\n\n" not in text
+    assert [line for line in text.splitlines() if line != line.rstrip()] == []

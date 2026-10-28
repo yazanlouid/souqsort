@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from helpers import REPORT_ORDERED_AT
-from souqsort.models import Catalogue, GccConfig
+from souqsort.models import Catalogue, GccConfig, SampleOrders
 from souqsort.report import build_report, render_report
 
 SAMPLE_REPORT = Path(__file__).resolve().parents[1] / "docs" / "GCC_EXPANSION_REPORT.md"
@@ -13,8 +13,12 @@ REGENERATE = (
 )
 
 
-def test_the_sample_report_is_current(catalogue: Catalogue, config: GccConfig) -> None:
-    expected = render_report(build_report(catalogue, config, REPORT_ORDERED_AT)).encode("utf-8")
+def test_the_sample_report_is_current(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
+) -> None:
+    expected = render_report(
+        build_report(catalogue, config, sample_orders, REPORT_ORDERED_AT)
+    ).encode("utf-8")
 
     assert SAMPLE_REPORT.is_file(), f"{SAMPLE_REPORT} is missing; write it with: {REGENERATE}"
     assert SAMPLE_REPORT.read_bytes() == expected, (

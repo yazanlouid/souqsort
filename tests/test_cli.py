@@ -19,6 +19,7 @@ import pytest
 import souqsort
 from helpers import FOR_SALE_COUNTS, REPORT_ORDERED_AT
 from souqsort.cli import _csv_cell, main
+from souqsort.loaders import load_sample_orders
 from souqsort.models import Catalogue, GccConfig
 from souqsort.pipeline import localise_and_summarise
 from souqsort.pricing.money import format_money
@@ -28,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = Path(souqsort.__file__).resolve().parent
 CATALOGUE_PATH = REPO_ROOT / "data" / "raw" / "global_products.json"
 CONFIG_PATH = REPO_ROOT / "data" / "raw" / "gcc_config.json"
+ORDERS_PATH = REPO_ROOT / "data" / "raw" / "sample_orders.json"
 ZERO_VAT_CONFIG_PATH = Path(__file__).resolve().parent / "fixtures" / "zero_vat_config.json"
 
 HEADPHONES = "ELEC-HP-001"
@@ -1241,14 +1243,28 @@ NO_OFFSET_MESSAGE = (
 
 
 def _report(
-    *options: str, catalogue: Path = CATALOGUE_PATH, config: Path = CONFIG_PATH
+    *options: str,
+    catalogue: Path = CATALOGUE_PATH,
+    config: Path = CONFIG_PATH,
+    orders: Path = ORDERS_PATH,
 ) -> tuple[str, ...]:
     """Arguments for `report` with explicit data files, so tests do not depend on the cwd."""
-    return ("report", "--catalogue", str(catalogue), "--config", str(config), *options)
+    return (
+        "report",
+        "--catalogue",
+        str(catalogue),
+        "--config",
+        str(config),
+        "--orders",
+        str(orders),
+        *options,
+    )
 
 
 def _expected_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) -> bytes:
-    return render_report(build_report(catalogue, config, ordered_at)).encode("utf-8")
+    """The report for the sample orders, as the CLI writes it."""
+    sample_orders = load_sample_orders(ORDERS_PATH)
+    return render_report(build_report(catalogue, config, sample_orders, ordered_at)).encode("utf-8")
 
 
 def test_report_is_written_to_outputs_by_default(
@@ -1430,9 +1446,81 @@ def test_report_help_lists_every_option(run: Callable[..., Result]) -> None:
     result = run("report", "--help")
 
     assert result.code == 0
-    for option in ("--ordered-at", "--out", "--catalogue", "--config"):
+    for option in ("--ordered-at", "--out", "--catalogue", "--config", "--orders"):
         assert option in result.out
     assert "outputs/GCC_EXPANSION_REPORT.md" in result.out
+    assert "data/raw/sample_orders.json" in result.out
+
+
+# --- the report's sample orders (SPEC §9.6, M18) ------------------------------------------
+
+
+def test_report_orders_reads_another_file(
+    run: Callable[..., Result],
+    raw_orders: dict[str, Any],
+    tmp_path: Path,
+    catalogue: Catalogue,
+    config: GccConfig,
+) -> None:
+    raw_orders["orders_version"] = "2026-12-01"
+    raw_orders["orders"] = raw_orders["orders"][2:]  # headphones and a bag
+    other = _write_json(tmp_path / "other_orders.json", raw_orders)
+    out = tmp_path / "report.md"
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(out), orders=other))
+
+    assert result.code == 0, result.err
+    written = out.read_bytes()
+    expected = build_report(catalogue, config, load_sample_orders(other), REPORT_ORDERED_AT)
+    assert written == render_report(expected).encode("utf-8")
+    assert b"catalogue 2026-10-01 and sample orders 2026-12-01.\n" in written
+    assert b"| Two lip balms |" not in written
+
+
+def test_report_refuses_to_overwrite_the_orders_file(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    orders = Path(shutil.copyfile(ORDERS_PATH, tmp_path / "orders.json"))
+    original = orders.read_bytes()
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(orders), orders=orders))
+
+    assert result.code == 2
+    assert "argument --out:" in result.err
+    assert "--orders file" in result.err
+    assert orders.read_bytes() == original
+    assert result.out == ""
+
+
+def test_report_with_a_missing_orders_file_exits_one(
+    run: Callable[..., Result], tmp_path: Path
+) -> None:
+    out = tmp_path / "report.md"
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(out), orders=tmp_path / "no_orders.json"))
+
+    assert result.code == 1
+    assert "no_orders.json" in result.err
+    assert "Traceback" not in result.err
+    assert result.out == ""
+    assert not out.exists()
+
+
+def test_report_with_a_sample_order_sku_not_in_the_catalogue_exits_one(
+    run: Callable[..., Result], raw_orders: dict[str, Any], tmp_path: Path
+) -> None:
+    raw_orders["orders"][2]["lines"][0]["sku"] = "ELEC-HP-999"
+    orders = _write_json(tmp_path / "unknown_sku.json", raw_orders)
+    out = tmp_path / "report.md"
+
+    result = run(*_report(*REPORT_ORDER, "--out", str(out), orders=orders))
+
+    assert result.code == 1
+    assert result.err == (
+        "souqsort: error: headphones-and-bag: ELEC-HP-999 is not in the catalogue\n"
+    )
+    assert result.out == ""
+    assert not out.exists()
 
 
 def test_top_level_help_lists_both_commands(run: Callable[..., Result]) -> None:
@@ -1462,7 +1550,6 @@ def test_report_figure_too_large_to_display_exits_one(
 
 # --- the order command (SPEC §10.5, M17) --------------------------------------------------
 
-ORDERS_PATH = REPO_ROOT / "data" / "raw" / "sample_orders.json"
 NOON = ("--ordered-at", "2026-10-15T12:00")  # Thu 12:00 in the market: before the cutoff
 LIP_BALM = "BEAU-LIP-040"
 LICENCE = "DIGI-LIC-050"
