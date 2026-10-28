@@ -25,8 +25,8 @@ from souqsort.loaders import (
     load_sample_orders,
 )
 from souqsort.logistics.calendar import in_market_time, to_market_time
-from souqsort.models import SHIPPING_MODELS, OrderLine
-from souqsort.orders import quote_order
+from souqsort.models import OrderLine
+from souqsort.orders import find_sample_order, quote_order_both_ways
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     LocalisationError,
@@ -280,28 +280,24 @@ with order_tab:
             for sku in picked
         ]
     else:
-        lines = list(next(o for o in sample_orders.orders if o.id == order_id).lines)
+        lines = list(find_sample_order(sample_orders, order_id).lines)
 
     if not lines:
         st.info("Pick at least one product.")
     else:
         try:
-            consolidated, parcel = (
-                quote_order(
-                    lines,
-                    catalogue,
-                    config,
-                    market.code,
-                    ordered_at,
-                    duty_adjustment_from_points(duty_points),
-                    model,
-                )
-                for model in SHIPPING_MODELS
+            both = quote_order_both_ways(
+                lines,
+                catalogue,
+                config,
+                market.code,
+                ordered_at,
+                duty_adjustment_from_points(duty_points),
             )
-            totals = order_totals(consolidated, parcel)
-            order_table = order_rows(consolidated, parcel)
-            note = parcel_note(market, parcel)
-            order_not_sold = excluded_grid_rows(consolidated.not_sold)
+            totals = order_totals(both.consolidated, both.parcel)
+            order_table = order_rows(both.consolidated, both.parcel)
+            note = parcel_note(market, both.parcel)
+            order_not_sold = excluded_grid_rows(both.consolidated.not_sold)
         except LocalisationError as exc:
             st.error(str(exc))
         else:
@@ -316,7 +312,7 @@ with order_tab:
                 delta_color="off" if totals.unchanged else "inverse",
                 delta_arrow="off" if totals.unchanged else "auto",
             )
-            if consolidated.lines:
+            if both.consolidated.lines:
                 currency = market.currency.code
                 st.dataframe(
                     pd.DataFrame(

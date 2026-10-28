@@ -35,7 +35,7 @@ from souqsort.models import (
     SampleOrders,
     ShippingModel,
 )
-from souqsort.orders import quote_order
+from souqsort.orders import find_sample_order, quote_order_both_ways
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     LocalisationError,
@@ -532,12 +532,11 @@ def _order_lines(
     catalogue or is listed twice.
     """
     if sample_orders is not None:
-        sample_id: str = args.sample
-        for sample in sample_orders.orders:
-            if sample.id == sample_id:
-                return sample.lines, sample
-        known = ", ".join(sample.id for sample in sample_orders.orders)
-        order_parser.error(f"argument --sample: {sample_id}: unknown order; sample orders: {known}")
+        try:
+            sample = find_sample_order(sample_orders, args.sample)
+        except LocalisationError as exc:
+            order_parser.error(f"argument --sample: {exc}")
+        return sample.lines, sample
 
     items: list[OrderLine] = args.items
     in_catalogue = {product.sku for product in catalogue.products}
@@ -577,20 +576,16 @@ def _order(
     ordered_at = now() if args.ordered_at is None else in_market_time(args.ordered_at, market)
 
     try:
-        consolidated, parcel = (
-            quote_order(
-                lines,
-                catalogue,
-                config,
-                market.code,
-                ordered_at,
-                duty_adjustment_from_points(duty_points),  # to a fraction, at the boundary
-                shipping,
-            )
-            for shipping in SHIPPING_MODELS
+        both = quote_order_both_ways(
+            lines,
+            catalogue,
+            config,
+            market.code,
+            ordered_at,
+            duty_adjustment_from_points(duty_points),  # to a fraction, at the boundary
         )
-        rows = order_rows(consolidated, parcel)
-        note = parcel_note(market, parcel)
+        rows = order_rows(both.consolidated, both.parcel)
+        note = parcel_note(market, both.parcel)
     except LocalisationError as exc:
         return _fail(str(exc))
 
@@ -599,13 +594,13 @@ def _order(
     if sample is not None:
         _print(f"Order: {sample.name}")
     _print()
-    if consolidated.lines:
+    if both.consolidated.lines:
         _print("\n".join(_order_table(rows, market.currency.code)))
         _print()
         _print(note)
     else:
         _print(f"{market.code} sells nothing in this order.")
-    _print_not_sold(market, consolidated.not_sold)
+    _print_not_sold(market, both.consolidated.not_sold)
     return 0
 
 
