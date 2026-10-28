@@ -69,8 +69,9 @@ _FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
 # fullmatch, not $: in Python, $ also matches before a trailing newline. ASCII keeps \d to 0-9.
 _PLAIN_NUMBER = re.compile(r"-?\d+(\.\d+)?", re.ASCII)
 
-# An order's --item: a SKU, then optionally a colon and a quantity of one or two ASCII digits.
-_ORDER_ITEM = re.compile(r"([^:]+)(:(\d{1,2}))?", re.ASCII)
+# An order's --item: a SKU with no colon or whitespace (Unicode's too, such as a no-break space),
+# then optionally a colon and a quantity of one or two ASCII digits.
+_ORDER_ITEM = re.compile(r"([^:\s]+)(:([0-9]{1,2}))?")
 _MAX_QUANTITY = 99
 
 

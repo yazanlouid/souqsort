@@ -1649,6 +1649,14 @@ _BAD_ITEMS = (
     "ELEC-HP-001:-1",
     "ELEC-HP-001:٢",  # an Arabic-Indic digit two: not ASCII
     "",
+    # Whitespace, e.g. from copying and pasting, is a format error, not an unknown SKU.
+    "ELEC-HP-001 ",
+    " ELEC-HP-001",
+    "ELEC-HP-001 :2",
+    "ELEC-HP-001: 2",
+    "ELEC HP-001",
+    "ELEC-HP-001\t",
+    "ELEC-HP-001\u00a0",  # a no-break space
 )
 
 
