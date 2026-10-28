@@ -18,7 +18,7 @@ from souqsort.pipeline import (
     LocalisedProduct,
 )
 from souqsort.pricing.customs import parcel_fee_due
-from souqsort.pricing.money import format_money
+from souqsort.pricing.money import format_money, round_minor
 
 _NO_VALUE = "-"
 
@@ -339,14 +339,14 @@ def order_totals(consolidated: OrderQuote, parcel: OrderQuote) -> OrderTotals:
     def total(quote: OrderQuote) -> str:
         return f"{format_money(quote.total, quote.minor_units)} {quote.currency}"
 
-    change = _signed_percent(
+    change = _rounded_percent(
         f"{consolidated.market}: order price change", parcel.total / consolidated.total - 1
     )
     return OrderTotals(
         consolidated=total(consolidated),
         parcel=total(parcel),
-        change=change,
-        unchanged=Decimal(change.removesuffix("%")).is_zero(),
+        change=_signed_percent_text(change),
+        unchanged=change.is_zero(),
     )
 
 
@@ -405,15 +405,30 @@ def _average_percent(figure: str, fraction: Decimal) -> str:
         raise LocalisationError(f"{figure} is too large to display") from exc
 
 
-def _signed_percent(figure: str, fraction: Decimal) -> str:
-    """As ``_percent`` with a ``%`` sign, and ``+`` when it is positive after rounding, so
-    never ``"+0.0%"``.
+def _rounded_percent(figure: str, fraction: Decimal) -> Decimal:
+    """A fraction as a percentage with one decimal, rounded half up; never a signed zero.
 
     Raises ``LocalisationError`` naming ``figure`` if it is too large to display.
     """
-    percent = _average_percent(figure, fraction)
-    sign = "+" if Decimal(percent) > 0 else ""
-    return f"{sign}{percent}%"
+    try:
+        return round_minor(fraction * 100, 1)
+    except ArithmeticError as exc:
+        raise LocalisationError(f"{figure} is too large to display") from exc
+
+
+def _signed_percent_text(percent: Decimal) -> str:
+    """A rounded percentage with a ``%`` sign, and ``+`` when it is positive, so never
+    ``"+0.0%"``."""
+    sign = "+" if percent > 0 else ""
+    return f"{sign}{percent:f}%"
+
+
+def _signed_percent(figure: str, fraction: Decimal) -> str:
+    """As ``_percent`` with a ``%`` sign, and ``+`` when it is positive after rounding.
+
+    Raises ``LocalisationError`` naming ``figure`` if it is too large to display.
+    """
+    return _signed_percent_text(_rounded_percent(figure, fraction))
 
 
 def display_summary(summary: CatalogueSummary) -> DisplaySummary:
