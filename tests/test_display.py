@@ -1,16 +1,17 @@
 """M5: display rows shared by the CLI and the dashboard."""
 
-from dataclasses import FrozenInstanceError, fields, replace
+from dataclasses import FrozenInstanceError, astuple, fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, get_args
 
 import pytest
 
-from helpers import SAMPLE_PRODUCT_COUNT, decimal_places
+from helpers import REPORT_ORDERED_AT, SAMPLE_PRODUCT_COUNT, decimal_places
 from souqsort.compliance import ExcludedProduct
 from souqsort.display import (
     ATTRIBUTE_LABELS,
+    CHECKOUT_LABELS,
     SHIPPING_LABELS,
     DisplayRow,
     DisplaySummary,
@@ -21,14 +22,26 @@ from souqsort.display import (
     duty_text,
     excluded_grid_rows,
     grid_rows,
+    order_rows,
     parcel_fee_note,
+    parcel_note,
     search_products,
 )
-from souqsort.models import AttributeName, Catalogue, GccConfig, ParcelFee, ShippingModel
+from souqsort.models import (
+    SHIPPING_MODELS,
+    AttributeName,
+    Catalogue,
+    GccConfig,
+    OrderLine,
+    ParcelFee,
+    ShippingModel,
+)
+from souqsort.orders import CheckoutKind, OrderQuote, quote_order
 from souqsort.pipeline import (
     CatalogueSummary,
     LocalisationError,
     LocalisedProduct,
+    duty_adjustment_from_points,
     localise_catalogue,
     summarise_catalogue,
 )
@@ -207,6 +220,191 @@ def test_parcel_fee_note_shows_the_currency_s_minor_units(
     assert parcel_fee_note(market, "parcel") == (
         f"Each parcel order also pays a customs fee of {shown} KWD at checkout."
     )
+
+
+# --- orders (SPEC §10.5, M17) -------------------------------------------------------------
+
+
+def _both(
+    config: GccConfig, catalogue: Catalogue, code: str, *items: tuple[str, int], points: int = 0
+) -> tuple[OrderQuote, OrderQuote]:
+    """An order priced in a market as a consolidated import and as a direct parcel."""
+    lines = [OrderLine(sku=sku, quantity=quantity) for sku, quantity in items]
+    consolidated, parcel = (
+        quote_order(
+            lines,
+            catalogue,
+            config,
+            code,
+            REPORT_ORDERED_AT,
+            duty_adjustment_from_points(points),
+            shipping,
+        )
+        for shipping in SHIPPING_MODELS
+    )
+    return consolidated, parcel
+
+
+def _rows(consolidated: OrderQuote, parcel: OrderQuote) -> list[tuple[str, ...]]:
+    return [astuple(row) for row in order_rows(consolidated, parcel)]
+
+
+def test_order_rows_of_headphones_and_a_bag_in_ksa(config: GccConfig, catalogue: Catalogue) -> None:
+    quotes = _both(config, catalogue, "KSA", (HEADPHONES, 1), (BAG, 1))
+
+    assert _rows(*quotes) == [
+        (HEADPHONES, "Wireless Noise-Cancelling Headphones", "1", "686.95", "660.95"),
+        (BAG, "Leather Crossbody Bag", "1", "594.95", "546.95"),
+        ("Items", "", "", "1281.90", "1207.90"),
+        ("Customs fee", "", "", "-", "15.00"),
+        ("Duty and VAT", "", "", "-", "98.57"),
+        ("Total", "", "", "1281.90", "1321.47"),
+        ("Delivery", "", "", "2026-10-22", "2026-10-21"),
+    ]
+
+
+def test_order_rows_at_three_points(config: GccConfig, catalogue: Catalogue) -> None:
+    quotes = _both(config, catalogue, "KSA", (HEADPHONES, 1), (BAG, 1), points=3)
+    rows = {row[0]: row[3:] for row in _rows(*quotes)}
+
+    assert rows["Duty and VAT"] == ("-", "134.77")
+    assert rows["Total"] == ("1316.90", "1357.67")  # consolidated prices carry the duty
+
+
+def test_order_rows_in_the_uae_have_no_fee_row(config: GccConfig, catalogue: Catalogue) -> None:
+    rows = _rows(*_both(config, catalogue, "UAE", (HEADPHONES, 1), (BAG, 1)))
+
+    assert [row[0] for row in rows] == [
+        HEADPHONES,
+        BAG,
+        "Items",
+        "Duty and VAT",
+        "Total",
+        "Delivery",
+    ]
+    assert rows[3][3:] == ("-", "53.73")
+    assert rows[4][3:] == ("1109.98", "1129.71")
+
+
+def test_order_rows_in_kuwait_have_no_checkout_rows_and_three_decimals(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    rows = _rows(*_both(config, catalogue, "KWT", (SCARF, 1), (SERUM, 1)))
+
+    assert [row[0] for row in rows] == [SCARF, SERUM, "Items", "Total", "Delivery"]
+    assert rows[3][3:] == ("27.900", "28.900")
+
+
+def test_order_rows_of_two_lip_balms_in_ksa(config: GccConfig, catalogue: Catalogue) -> None:
+    rows = _rows(*_both(config, catalogue, "KSA", (LIP_BALM, 2)))
+
+    assert rows[0] == (LIP_BALM, "Lip Balm", "2", "33.90", "31.90")
+    assert [row[0] for row in rows] == [LIP_BALM, "Items", "Customs fee", "Total", "Delivery"]
+    assert rows[3][3:] == ("33.90", "46.90")
+
+
+def test_order_rows_leave_out_what_the_market_does_not_sell(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    rows = _rows(*_both(config, catalogue, "KSA", (VANILLA, 1), (TEA, 3)))
+
+    assert [row[0] for row in rows][:2] == [TEA, "Items"]
+    assert VANILLA not in [row[0] for row in rows]
+
+
+def test_order_rows_reject_quotes_of_different_orders(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    ksa, _ = _both(config, catalogue, "KSA", (LIP_BALM, 2))
+    _, uae = _both(config, catalogue, "UAE", (LIP_BALM, 2))
+    _, other = _both(config, catalogue, "KSA", (SERUM, 1))
+
+    with pytest.raises(ValueError, match="not the same order"):
+        order_rows(ksa, uae)
+    with pytest.raises(ValueError, match="not the same order"):
+        order_rows(ksa, other)
+
+
+def test_checkout_labels_cover_every_checkout_kind() -> None:
+    assert set(CHECKOUT_LABELS) == set(get_args(CheckoutKind))
+    assert list(CHECKOUT_LABELS.values()) == ["Customs fee", "Duty and VAT"]
+
+
+def test_order_row_is_frozen(config: GccConfig, catalogue: Catalogue) -> None:
+    row = order_rows(*_both(config, catalogue, "KSA", (LIP_BALM, 2)))[0]
+    with pytest.raises(FrozenInstanceError):
+        row.label = "x"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("code", "items", "note"),
+    [
+        (
+            "KSA",
+            ((HEADPHONES, 1), (BAG, 1)),
+            "Direct parcel: the order's CIF, 1049.26 SAR, is not below 1000.00 SAR, so the whole "
+            "order pays duty; the duty its shelf prices left out is added at checkout.",
+        ),
+        (
+            "KSA",
+            ((ESPRESSO, 1),),
+            "Direct parcel: the order's CIF, 3597.53 SAR, is not below 1000.00 SAR, so the whole "
+            "order pays duty; its shelf prices already include it.",
+        ),
+        (
+            "KSA",
+            ((LIP_BALM, 2), (LICENCE, 1)),
+            "Direct parcel: the order's CIF, 27.53 SAR, is below 1000.00 SAR, so de minimis "
+            "applies.",
+        ),
+        (
+            "UAE",
+            ((HEADPHONES, 1), (BAG, 1)),
+            "Direct parcel: the order's CIF, 1023.35 AED, is not at or below 1000.00 AED, so the "
+            "whole order pays duty; the duty its shelf prices left out is added at checkout.",
+        ),
+        (
+            "UAE",
+            ((LIP_BALM, 2),),
+            "Direct parcel: the order's CIF, 26.81 AED, is at or below 1000.00 AED, so de minimis "
+            "applies.",
+        ),
+        (
+            "KWT",
+            ((LIP_BALM, 2),),
+            "Direct parcel: KWT has no de minimis rule, so every line pays duty.",
+        ),
+        (
+            "KSA",
+            ((LICENCE, 1),),
+            "Direct parcel: nothing in the order travels, so no parcel is sent.",
+        ),
+    ],
+)
+def test_parcel_note(
+    config: GccConfig,
+    catalogue: Catalogue,
+    code: str,
+    items: tuple[tuple[str, int], ...],
+    note: str,
+) -> None:
+    _, parcel = _both(config, catalogue, code, *items)
+    assert parcel_note(config.markets[code], parcel) == note
+
+
+def test_parcel_note_shows_the_threshold_in_minor_units(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    ksa = config.markets["KSA"]
+    rule = ksa.customs.de_minimis
+    assert rule is not None
+    customs = ksa.customs.model_copy(
+        update={"de_minimis": rule.model_copy(update={"threshold": Decimal("1000")})}
+    )
+    market = ksa.model_copy(update={"customs": customs})
+    _, parcel = _both(config, catalogue, "KSA", (LIP_BALM, 2))
+
+    assert "is below 1000.00 SAR" in parcel_note(market, parcel)
 
 
 # --- duty (SPEC §7.1 and §9.1, M10) -------------------------------------------------------

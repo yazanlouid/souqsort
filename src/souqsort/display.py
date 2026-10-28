@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from souqsort.compliance import ExcludedProduct
-from souqsort.models import AttributeName, MarketConfig, ShippingModel
+from souqsort.models import AttributeName, DeMinimisApplies, MarketConfig, ShippingModel
+from souqsort.orders import CheckoutKind, OrderQuote
 from souqsort.pipeline import (
     MISSING_ARABIC_NAME,
     CatalogueSummary,
@@ -39,6 +40,15 @@ ATTRIBUTE_LABELS: dict[AttributeName, str] = {
     "contains_pork": "Contains pork",
     "contains_lithium_battery": "Contains lithium battery",
 }
+
+# What the order table calls each amount added at checkout, in the order the rows come.
+CHECKOUT_LABELS: dict[CheckoutKind, str] = {
+    "customs_fee": "Customs fee",
+    "duty": "Duty and VAT",
+}
+
+# How the parcel note words each de minimis test.
+_APPLIES: dict[DeMinimisApplies, str] = {"below": "below", "at_or_below": "at or below"}
 
 
 @dataclass(frozen=True)
@@ -106,6 +116,23 @@ class DisplaySummary:
     average_margin: str
     flagged_products: str
     average_price_change: str
+
+
+@dataclass(frozen=True)
+class OrderRow:
+    """One row of an order's table, for both shipping models.
+
+    ``label`` is the SKU, or Items, Customs fee, Duty and VAT, Total or Delivery; ``name`` is
+    the product's English name and ``quantity`` its quantity, both ``""`` on the other rows.
+    ``consolidated`` and ``parcel`` are money in the currency's minor units, an ISO date, or
+    ``"-"`` when that model has no such amount.
+    """
+
+    label: str
+    name: str
+    quantity: str
+    consolidated: str
+    parcel: str
 
 
 def _percent(fraction: Decimal) -> str:
@@ -199,6 +226,99 @@ def parcel_fee_note(market: MarketConfig, shipping: ShippingModel) -> str | None
     amount = format_money(fee, market.currency.minor_units)
     return (
         f"Each parcel order also pays a customs fee of {amount} {market.currency.code} at checkout."
+    )
+
+
+def _checkout_amount(quote: OrderQuote, kind: CheckoutKind) -> str:
+    for line in quote.checkout:
+        if line.kind == kind:
+            return format_money(line.amount, quote.minor_units)
+    return _NO_VALUE
+
+
+def order_rows(consolidated: OrderQuote, parcel: OrderQuote) -> list[OrderRow]:
+    """The rows of an order's table: one per line the market sells, then Items, each checkout
+    amount that either model adds, Total and Delivery.
+
+    The two quotes are the same order in the same market. Raises ``ValueError`` if they are
+    not.
+    """
+    if consolidated.market != parcel.market or [line.sku for line in consolidated.lines] != [
+        line.sku for line in parcel.lines
+    ]:
+        raise ValueError(
+            f"not the same order: {consolidated.market} and {parcel.market}, "
+            f"{[line.sku for line in consolidated.lines]} and {[line.sku for line in parcel.lines]}"
+        )
+
+    def money(quote: OrderQuote, amount: Decimal) -> str:
+        return format_money(amount, quote.minor_units)
+
+    rows = [
+        OrderRow(
+            label=line.sku,
+            name=line.name_en,
+            quantity=str(line.quantity),
+            consolidated=money(consolidated, line.line_total),
+            parcel=money(parcel, parcel_line.line_total),
+        )
+        for line, parcel_line in zip(consolidated.lines, parcel.lines, strict=True)
+    ]
+    rows.append(
+        OrderRow(
+            "Items",
+            "",
+            "",
+            money(consolidated, consolidated.items_total),
+            money(parcel, parcel.items_total),
+        )
+    )
+    for kind, label in CHECKOUT_LABELS.items():
+        amounts = (_checkout_amount(consolidated, kind), _checkout_amount(parcel, kind))
+        if amounts != (_NO_VALUE, _NO_VALUE):
+            rows.append(OrderRow(label, "", "", *amounts))
+    rows.append(
+        OrderRow(
+            "Total", "", "", money(consolidated, consolidated.total), money(parcel, parcel.total)
+        )
+    )
+    rows.append(
+        OrderRow(
+            "Delivery",
+            "",
+            "",
+            consolidated.delivery.delivery_date.isoformat(),
+            parcel.delivery.delivery_date.isoformat(),
+        )
+    )
+    return rows
+
+
+def parcel_note(market: MarketConfig, parcel: OrderQuote) -> str:
+    """One sentence on what de minimis made of an order sent as a direct parcel.
+
+    The CIF and the threshold have the currency's minor units, as prices do.
+    """
+    if parcel.parcel_value is None:
+        return "Direct parcel: nothing in the order travels, so no parcel is sent."
+    rule = market.customs.de_minimis
+    if rule is None:
+        return f"Direct parcel: {market.code} has no de minimis rule, so every line pays duty."
+
+    currency = market.currency
+    value = format_money(parcel.parcel_value, currency.minor_units)
+    threshold = format_money(rule.threshold, currency.minor_units)
+    test = _APPLIES[rule.applies]
+    cif = f"Direct parcel: the order's CIF, {value} {currency.code}"
+    if parcel.within_threshold:
+        return f"{cif}, is {test} {threshold} {currency.code}, so de minimis applies."
+    if any(line.kind == "duty" for line in parcel.checkout):
+        consequence = "the duty its shelf prices left out is added at checkout"
+    else:
+        consequence = "its shelf prices already include it"
+    return (
+        f"{cif}, is not {test} {threshold} {currency.code}, so the whole order pays duty; "
+        f"{consequence}."
     )
 
 
