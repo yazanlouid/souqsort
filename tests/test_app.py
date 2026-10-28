@@ -22,7 +22,7 @@ from streamlit.testing.v1.element_tree import Block, Metric
 
 from helpers import FOR_SALE_COUNTS, REPORT_ORDERED_AT, decimal_places
 from souqsort.display import display_summary, excluded_grid_rows, grid_rows
-from souqsort.loaders import load_gcc_config
+from souqsort.loaders import load_gcc_config, load_sample_orders
 from souqsort.models import Catalogue, GccConfig, SampleOrders
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
@@ -1087,8 +1087,13 @@ def _build_your_own(at: AppTest, *skus: str) -> AppTest:
 
 
 def _order_table(at: AppTest) -> dict[str, tuple[str, ...]]:
-    """The order's rows keyed by their first cell, each the rest of its cells."""
-    frame: pd.DataFrame = _order_tab(at).dataframe[0].value
+    """The order's rows keyed by their first cell, each the rest of its cells.
+
+    The order is a static table, so nothing in it sorts or scrolls.
+    """
+    tab = _order_tab(at)
+    assert len(tab.table) == 1
+    frame: pd.DataFrame = tab.table[0].value
     assert list(frame.columns)[:3] == ORDER_COLUMNS[:3]
     return {row[0]: tuple(row[1:]) for row in frame.itertuples(index=False, name=None)}
 
@@ -1175,7 +1180,7 @@ def test_headphones_and_a_bag_in_the_uae(noon: AppTest) -> None:
     rows = _order_table(at)
     assert "Customs fee" not in rows
     assert rows["Duty and VAT"] == ("", "", "-", "53.73")
-    frame: pd.DataFrame = _order_tab(at).dataframe[0].value
+    frame: pd.DataFrame = _order_tab(at).table[0].value
     assert list(frame.columns)[3:] == ["Consolidated (AED)", "Direct parcel (AED)"]
     assert "is not at or below 1000.00 AED" in _order_tab(at).caption[1].value
 
@@ -1194,7 +1199,7 @@ def test_build_your_own_with_nothing_picked(noon: AppTest) -> None:
 
     assert [info.value for info in tab.info] == ["Pick at least one product."]
     assert len(tab.metric) == 0
-    assert len(tab.dataframe) == 0
+    assert len(tab.dataframe) == len(tab.table) == 0
     assert [caption.value for caption in tab.caption] == [ORDER_SCOPE]
     assert len(tab.number_input) == 0
 
@@ -1225,6 +1230,22 @@ def test_build_your_own_asks_a_quantity_for_each_product(noon: AppTest) -> None:
     assert rows["Total"][-1] == "387.85"
 
 
+def test_a_long_order_shows_every_row(noon: AppTest, catalogue: Catalogue) -> None:
+    # A dataframe scrolls after about ten rows and would hide Total and Delivery.
+    skus = [p.sku for p in catalogue.products if p.sku not in (VANILLA, GUMMY_BEARS)][:8]
+
+    at = _build_your_own(noon, *skus)
+
+    assert list(_order_table(at)) == [
+        *skus,
+        "Items",
+        "Customs fee",
+        "Duty and VAT",
+        "Total",
+        "Delivery",
+    ]
+
+
 def test_build_your_own_licence_alone_sends_no_parcel(noon: AppTest) -> None:
     at = _build_your_own(noon, LICENCE)
 
@@ -1241,7 +1262,7 @@ def test_build_your_own_lists_what_the_market_does_not_sell(noon: AppTest) -> No
 
     assert VANILLA not in _order_table(at)
     assert [subheader.value for subheader in tab.subheader] == ["Not sold in KSA"]
-    not_sold: pd.DataFrame = tab.dataframe[1].value
+    not_sold: pd.DataFrame = tab.dataframe[0].value
     assert list(not_sold.columns) == list(NOT_SOLD_COLUMNS)
     assert list(not_sold.itertuples(index=False, name=None)) == [
         (VANILLA, "Pure Vanilla Extract", "Contains alcohol")
@@ -1257,6 +1278,7 @@ def test_an_order_the_market_sells_nothing_of(noon: AppTest) -> None:
     assert _delta(metrics[PARCEL_METRIC]) == ("", "GRAY", "NONE")
     assert [info.value for info in tab.info] == ["KSA sells nothing in this order."]
     assert len(tab.dataframe) == 1  # the not-sold table only
+    assert len(tab.table) == 0
     assert [subheader.value for subheader in tab.subheader] == ["Not sold in KSA"]
     assert [caption.value for caption in tab.caption] == [ORDER_SCOPE]
 
@@ -1299,7 +1321,20 @@ def test_a_sample_order_missing_from_the_catalogue_is_an_error_in_its_tab(
     assert len(_grid(at)) == KSA_FOR_SALE - 1  # "Products" keeps working
 
 
-def test_sample_orders_that_cannot_be_read_are_a_message(
+def _orders_file_problem(at: AppTest) -> str:
+    """The "Order" tab's one error, after checking that nothing else in the tab is drawn and
+    that "Products" and the report download keep working."""
+    tab = _order_tab(at)
+    (error,) = tab.error
+    assert len(tab.selectbox) == len(tab.metric) == len(tab.table) == len(tab.caption) == 0
+    assert len(_grid(at)) == KSA_FOR_SALE
+    assert _metrics(at)[AVERAGE_MARGIN] == "64.6%"
+    assert [button.label for button in at.sidebar.download_button] == [REPORT_LABEL]
+    value: str = error.value
+    return value
+
+
+def test_sample_orders_that_cannot_be_read_are_an_error_in_the_order_tab(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def missing(path: Path) -> Any:
@@ -1307,10 +1342,23 @@ def test_sample_orders_that_cannot_be_read_are_a_message(
 
     at = _run_with(monkeypatch, load_sample_orders=missing)
 
-    assert not at.exception, at.exception
-    (error,) = at.error
-    assert "sample_orders.json" in error.value
-    assert len(at.dataframe) == 0
+    message = _orders_file_problem(at)
+    assert message.startswith("Cannot read data file: ")
+    assert "sample_orders.json" in message
+
+
+def test_invalid_sample_orders_are_an_error_in_the_order_tab(
+    monkeypatch: pytest.MonkeyPatch, raw_orders: dict[str, Any], tmp_path: Path
+) -> None:
+    raw_orders["orders"][0]["lines"][0]["quantity"] = 0
+    bad = tmp_path / "bad_orders.json"
+    bad.write_text(json.dumps(raw_orders), encoding="utf-8")
+
+    at = _run_with(monkeypatch, load_sample_orders=lambda path: load_sample_orders(bad))
+
+    message = _orders_file_problem(at)
+    assert "bad_orders.json" in message
+    assert "invalid data file" in message
 
 
 # --- no business logic in the app ---------------------------------------------------------

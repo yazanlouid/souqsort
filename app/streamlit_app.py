@@ -25,7 +25,7 @@ from souqsort.loaders import (
     load_sample_orders,
 )
 from souqsort.logistics.calendar import in_market_time, to_market_time
-from souqsort.models import OrderLine
+from souqsort.models import OrderLine, SampleOrders
 from souqsort.orders import find_sample_order, quote_order_both_ways
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
@@ -47,13 +47,23 @@ st.set_page_config(page_title="SouqSort", layout="wide")
 try:
     config = load_gcc_config(DATA_DIR / "gcc_config.json")
     catalogue = load_catalogue(DATA_DIR / "global_products.json")
-    sample_orders = load_sample_orders(DATA_DIR / "sample_orders.json")
 except DataFileError as exc:
     st.error(str(exc))
     st.stop()
 except OSError as exc:
     st.error(f"Cannot read data file: {exc}")
     st.stop()
+
+# Only the "Order" tab uses the sample orders, so a problem with their file is shown there and
+# the rest of the page keeps working.
+sample_orders: SampleOrders | None = None
+orders_problem: str | None = None
+try:
+    sample_orders = load_sample_orders(DATA_DIR / "sample_orders.json")
+except DataFileError as exc:
+    orders_problem = str(exc)
+except OSError as exc:
+    orders_problem = f"Cannot read data file: {exc}"
 
 # The clock is read once per session: the pickers below start at the moment the dashboard
 # was opened, and a rerun must not move them.
@@ -181,71 +191,8 @@ def show_not_sold(code: str, rows: list[ExcludedGridRow]) -> None:
         )
 
 
-st.title("SouqSort")
-
-# Nothing that comes and goes is drawn above the tabs: the browser keeps the selected tab
-# across reruns only while the tabs stay in the same place.
-products_tab, order_tab = st.tabs(["Products", "Order"])
-
-with products_tab:
-    st.caption(
-        f"Market: {market.code} ({market.name}) | "
-        f"Ordered at: {ordered_at:%a %Y-%m-%d %H:%M} {timezone} | "
-        f"Duty adjustment: +{duty_points} pp | "
-        f"Shipping: {SHIPPING_LABELS[shipping]} | "
-        "All market data is illustrative"
-    )
-
-    margin_metric, flagged_metric, change_metric, not_sold_metric = st.columns(4)
-    margin_metric.metric("Average margin", headline.average_margin)
-    flagged_metric.metric("Flagged products", headline.flagged_products)
-    change_metric.metric("Average price change vs 0 pp", headline.average_price_change)
-    not_sold_metric.metric(f"Not sold in {market.code}", str(len(localised.excluded)))
-    st.caption(
-        f"All {summary.product_count} products for sale in {market.code}; "
-        "search filters the table only"
-    )
-
-    price_column = f"Shelf price ({market.currency.code})"
-    margin_column = "Margin %"
-
-    # Price and margin stay Decimal, so the grid sorts them by value and no float is made here.
-    st.dataframe(
-        pd.DataFrame(
-            {
-                "SKU": [row.sku for row in rows],
-                "Name": [row.name_en for row in rows],
-                price_column: [row.shelf_price for row in rows],
-                margin_column: [row.margin_percent for row in rows],
-                "Duty": [row.duty for row in rows],
-                "Delivery": [row.delivery_date for row in rows],
-                "Flags": [row.flags for row in rows],
-            }
-        ),
-        hide_index=True,
-        # As tall as its rows: the default height scrolls after about ten and hides the rest.
-        height="content",
-        column_config={
-            price_column: st.column_config.NumberColumn(format=f"%.{market.currency.minor_units}f"),
-            margin_column: st.column_config.NumberColumn(format="%.1f%%"),
-            # A fixed width, so a flag's label is not cut short when the column sizes itself.
-            "Flags": st.column_config.TextColumn(width="medium"),
-        },
-    )
-
-    if fee_note is not None:
-        st.caption(fee_note)
-
-    if summary.product_count == 0 and not localised.excluded:
-        st.info("The catalogue has no products.")
-    elif summary.product_count == 0:
-        st.info(f"No product in the catalogue can be sold in {market.code}.")
-    elif not rows:
-        st.info("No product matches the search.")
-
-    show_not_sold(market.code, not_sold)
-
-with order_tab:
+def show_order(sample_orders: SampleOrders) -> None:
+    """The "Order" tab: one order priced in both shipping models."""
     names = {order.id: order.name for order in sample_orders.orders}
     product_names = {product.sku: product.name.en for product in catalogue.products}
     order_id = st.selectbox(
@@ -314,7 +261,8 @@ with order_tab:
             )
             if both.consolidated.lines:
                 currency = market.currency.code
-                st.dataframe(
+                # A static table: it is as tall as its rows, and nothing in it sorts as text.
+                st.table(
                     pd.DataFrame(
                         {
                             "SKU": [row.label for row in order_table],
@@ -330,3 +278,74 @@ with order_tab:
             else:
                 st.info(f"{market.code} sells nothing in this order.")
             show_not_sold(market.code, order_not_sold)
+
+
+st.title("SouqSort")
+
+# Nothing that comes and goes is drawn above the tabs: the browser keeps the selected tab
+# across reruns only while the tabs stay in the same place.
+products_tab, order_tab = st.tabs(["Products", "Order"])
+
+with products_tab:
+    st.caption(
+        f"Market: {market.code} ({market.name}) | "
+        f"Ordered at: {ordered_at:%a %Y-%m-%d %H:%M} {timezone} | "
+        f"Duty adjustment: +{duty_points} pp | "
+        f"Shipping: {SHIPPING_LABELS[shipping]} | "
+        "All market data is illustrative"
+    )
+
+    margin_metric, flagged_metric, change_metric, not_sold_metric = st.columns(4)
+    margin_metric.metric("Average margin", headline.average_margin)
+    flagged_metric.metric("Flagged products", headline.flagged_products)
+    change_metric.metric("Average price change vs 0 pp", headline.average_price_change)
+    not_sold_metric.metric(f"Not sold in {market.code}", str(len(localised.excluded)))
+    st.caption(
+        f"All {summary.product_count} products for sale in {market.code}; "
+        "search filters the table only"
+    )
+
+    price_column = f"Shelf price ({market.currency.code})"
+    margin_column = "Margin %"
+
+    # Price and margin stay Decimal, so the grid sorts them by value and no float is made here.
+    st.dataframe(
+        pd.DataFrame(
+            {
+                "SKU": [row.sku for row in rows],
+                "Name": [row.name_en for row in rows],
+                price_column: [row.shelf_price for row in rows],
+                margin_column: [row.margin_percent for row in rows],
+                "Duty": [row.duty for row in rows],
+                "Delivery": [row.delivery_date for row in rows],
+                "Flags": [row.flags for row in rows],
+            }
+        ),
+        hide_index=True,
+        # As tall as its rows: the default height scrolls after about ten and hides the rest.
+        height="content",
+        column_config={
+            price_column: st.column_config.NumberColumn(format=f"%.{market.currency.minor_units}f"),
+            margin_column: st.column_config.NumberColumn(format="%.1f%%"),
+            # A fixed width, so a flag's label is not cut short when the column sizes itself.
+            "Flags": st.column_config.TextColumn(width="medium"),
+        },
+    )
+
+    if fee_note is not None:
+        st.caption(fee_note)
+
+    if summary.product_count == 0 and not localised.excluded:
+        st.info("The catalogue has no products.")
+    elif summary.product_count == 0:
+        st.info(f"No product in the catalogue can be sold in {market.code}.")
+    elif not rows:
+        st.info("No product matches the search.")
+
+    show_not_sold(market.code, not_sold)
+
+with order_tab:
+    if sample_orders is None:
+        st.error(orders_problem)
+    else:
+        show_order(sample_orders)
