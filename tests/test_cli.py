@@ -1578,6 +1578,17 @@ def test_order_lists_what_the_market_does_not_sell(run: Callable[..., Result]) -
     assert len(tail) == 3
 
 
+def test_order_that_passes_names_the_lines_the_rule_excludes(run: Callable[..., Result]) -> None:
+    result = run(*_order("--item", VANILLA, "--item", HEADPHONES, *NOON, market="UAE"))
+
+    assert result.code == 0, result.err
+    assert _order_rows(result.out)["Total"] == ["Total", "668.98", "647.98"]  # §7.10.2 M
+    assert _last_line(result.out) == (
+        "Direct parcel: the order's CIF, 613.23 AED, is at or below 1000.00 AED, so de minimis "
+        "applies, except to GROC-VAN-061, which it excludes."
+    )
+
+
 def test_order_in_which_nothing_travels(run: Callable[..., Result]) -> None:
     result = run(*_order("--item", LICENCE, *NOON))
 

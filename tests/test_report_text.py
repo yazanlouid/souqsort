@@ -18,6 +18,7 @@ from helpers import (
     without_products,
 )
 from souqsort.compliance import ExcludedProduct
+from souqsort.display import join_list
 from souqsort.logistics.calendar import DeliveryEstimate
 from souqsort.models import (
     AttributeName,
@@ -51,7 +52,6 @@ from souqsort.report.text import (
     date_text,
     de_minimis_sentence,
     join_clauses,
-    join_list,
     local_time_text,
     markets_sentences,
     money_text,

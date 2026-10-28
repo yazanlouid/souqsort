@@ -381,6 +381,24 @@ def test_order_row_is_frozen(config: GccConfig, catalogue: Catalogue) -> None:
             ((LICENCE, 1),),
             "Direct parcel: nothing in the order travels, so no parcel is sent.",
         ),
+        (  # §7.10.2 example M: the vanilla extract's duty is in its shelf price
+            "UAE",
+            ((VANILLA, 1), (HEADPHONES, 1)),
+            "Direct parcel: the order's CIF, 613.23 AED, is at or below 1000.00 AED, so de "
+            "minimis applies, except to GROC-VAN-061, which it excludes.",
+        ),
+        (
+            "UAE",
+            ((VANILLA, 1),),
+            "Direct parcel: the order's CIF, 52.11 AED, is at or below 1000.00 AED, so de "
+            "minimis applies, except to GROC-VAN-061, which it excludes.",
+        ),
+        (  # the licence pays duty too, but it never travels, so the rule never sees it
+            "UAE",
+            ((VANILLA, 1), (LICENCE, 1), (LIP_BALM, 2)),
+            "Direct parcel: the order's CIF, 78.92 AED, is at or below 1000.00 AED, so de "
+            "minimis applies, except to GROC-VAN-061, which it excludes.",
+        ),
     ],
 )
 def test_parcel_note(
@@ -392,6 +410,27 @@ def test_parcel_note(
 ) -> None:
     _, parcel = _both(config, catalogue, code, *items)
     assert parcel_note(config.markets[code], parcel) == note
+
+
+def test_parcel_note_names_every_excluded_line_in_line_order(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    uae = config.markets["UAE"]
+    rule = uae.customs.de_minimis
+    assert rule is not None
+    stricter = rule.model_copy(
+        update={"excluded_attributes": ("contains_alcohol", "contains_lithium_battery")}
+    )
+    customs = uae.customs.model_copy(update={"de_minimis": stricter})
+    markets = {**config.markets, "UAE": uae.model_copy(update={"customs": customs})}
+    strict_config = config.model_copy(update={"markets": markets})
+
+    _, parcel = _both(strict_config, catalogue, "UAE", (VANILLA, 1), (LIP_BALM, 2), (HEADPHONES, 1))
+
+    assert parcel_note(strict_config.markets["UAE"], parcel) == (
+        "Direct parcel: the order's CIF, 640.04 AED, is at or below 1000.00 AED, so de minimis "
+        "applies, except to GROC-VAN-061 and ELEC-HP-001, which it excludes."
+    )
 
 
 def test_parcel_note_shows_the_threshold_in_minor_units(

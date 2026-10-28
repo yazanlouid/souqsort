@@ -246,6 +246,18 @@ def parcel_fee_note(market: MarketConfig, shipping: ShippingModel) -> str | None
     )
 
 
+def join_list(items: Sequence[str], *, word: str = "and") -> str:
+    """``a``, ``a and b``, ``a, b and c``; ``word`` can be ``"or"``.
+
+    Raises ``ValueError`` if there is nothing to join.
+    """
+    if not items:
+        raise ValueError("nothing to join")
+    if len(items) == 1:
+        return items[0]
+    return f"{', '.join(items[:-1])} {word} {items[-1]}"
+
+
 def _checkout_amount(quote: OrderQuote, kind: CheckoutKind) -> str:
     for line in quote.checkout:
         if line.kind == kind:
@@ -355,7 +367,15 @@ def parcel_note(market: MarketConfig, parcel: OrderQuote) -> str:
     test = _APPLIES[rule.applies]
     cif = f"Direct parcel: the order's CIF, {value} {currency.code}"
     if parcel.within_threshold:
-        return f"{cif}, is {test} {threshold} {currency.code}, so de minimis applies."
+        passes = f"{cif}, is {test} {threshold} {currency.code}, so de minimis applies"
+        # In an order that passes, a line that travels and still pays duty can only be one the
+        # rule excludes: its own CIF cannot fail where the whole parcel's passes.
+        excluded = [
+            line.sku for line in parcel.lines if line.travels and not line.quote.duty_waived
+        ]
+        if excluded:
+            return f"{passes}, except to {join_list(excluded)}, which it excludes."
+        return f"{passes}."
     if any(line.kind == "duty" for line in parcel.checkout):
         consequence = "the duty its shelf prices left out is added at checkout"
     else:
