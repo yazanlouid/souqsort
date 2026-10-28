@@ -17,12 +17,14 @@ from souqsort.display import (
     DisplaySummary,
     ExcludedGridRow,
     GridRow,
+    OrderTotals,
     display_rows,
     display_summary,
     duty_text,
     excluded_grid_rows,
     grid_rows,
     order_rows,
+    order_totals,
     parcel_fee_note,
     parcel_note,
     search_products,
@@ -36,7 +38,7 @@ from souqsort.models import (
     ParcelFee,
     ShippingModel,
 )
-from souqsort.orders import CheckoutKind, OrderQuote, quote_order
+from souqsort.orders import CheckoutKind, CheckoutLine, OrderQuote, quote_order
 from souqsort.pipeline import (
     CatalogueSummary,
     LocalisationError,
@@ -405,6 +407,87 @@ def test_parcel_note_shows_the_threshold_in_minor_units(
     _, parcel = _both(config, catalogue, "KSA", (LIP_BALM, 2))
 
     assert "is below 1000.00 SAR" in parcel_note(market, parcel)
+
+
+# --- order totals: the dashboard's two metrics (SPEC §10.5, M17) --------------------------
+
+
+def test_order_totals_of_headphones_and_a_bag_in_ksa(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    totals = order_totals(*_both(config, catalogue, "KSA", (HEADPHONES, 1), (BAG, 1)))
+
+    assert totals == OrderTotals(
+        consolidated="1281.90 SAR", parcel="1321.47 SAR", change="+3.1%", unchanged=False
+    )
+
+
+def test_order_totals_of_a_cheaper_parcel(config: GccConfig, catalogue: Catalogue) -> None:
+    totals = order_totals(*_both(config, catalogue, "KSA", (HEADPHONES, 1)))
+
+    # 675.95 / 686.95 - 1 = -1.60...%
+    assert totals == OrderTotals(
+        consolidated="686.95 SAR", parcel="675.95 SAR", change="-1.6%", unchanged=False
+    )
+
+
+def test_order_totals_of_an_order_that_costs_the_same_both_ways(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    totals = order_totals(*_both(config, catalogue, "UAE", (LIP_BALM, 2)))
+
+    assert totals == OrderTotals(
+        consolidated="29.98 AED", parcel="29.98 AED", change="0.0%", unchanged=True
+    )
+
+
+def test_order_totals_sign_the_change_after_rounding(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    consolidated, parcel = _both(config, catalogue, "UAE", (LIP_BALM, 2))
+    a_fils_more = replace(parcel, checkout=(CheckoutLine("customs_fee", Decimal("0.01")),))
+
+    totals = order_totals(consolidated, a_fils_more)
+
+    # 29.99 / 29.98 - 1 = +0.03...%, which rounds to 0.0%: never "+0.0%"
+    assert totals == OrderTotals(
+        consolidated="29.98 AED", parcel="29.99 AED", change="0.0%", unchanged=True
+    )
+
+
+def test_order_totals_when_the_market_sells_nothing_of_the_order(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    totals = order_totals(*_both(config, catalogue, "KSA", (GUMMY_BEARS, 1)))
+
+    assert totals == OrderTotals(consolidated="-", parcel="-", change=None, unchanged=False)
+
+
+def test_order_totals_in_kuwait_have_three_decimals(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    totals = order_totals(*_both(config, catalogue, "KWT", (SCARF, 1), (SERUM, 1)))
+
+    # 28.900 / 27.900 - 1 = +3.58...%
+    assert totals == OrderTotals(
+        consolidated="27.900 KWD", parcel="28.900 KWD", change="+3.6%", unchanged=False
+    )
+
+
+def test_order_totals_reject_quotes_of_different_orders(
+    config: GccConfig, catalogue: Catalogue
+) -> None:
+    ksa, _ = _both(config, catalogue, "KSA", (LIP_BALM, 2))
+    _, uae = _both(config, catalogue, "UAE", (LIP_BALM, 2))
+
+    with pytest.raises(ValueError, match="not the same order"):
+        order_totals(ksa, uae)
+
+
+def test_order_totals_are_frozen(config: GccConfig, catalogue: Catalogue) -> None:
+    totals = order_totals(*_both(config, catalogue, "KSA", (LIP_BALM, 2)))
+    with pytest.raises(FrozenInstanceError):
+        totals.change = "x"  # type: ignore[misc]
 
 
 # --- duty (SPEC §7.1 and §9.1, M10) -------------------------------------------------------

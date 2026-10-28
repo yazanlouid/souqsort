@@ -8,14 +8,25 @@ import streamlit as st
 
 from souqsort.display import (
     SHIPPING_LABELS,
+    ExcludedGridRow,
     display_summary,
     excluded_grid_rows,
     grid_rows,
+    order_rows,
+    order_totals,
     parcel_fee_note,
+    parcel_note,
     search_products,
 )
-from souqsort.loaders import DataFileError, load_catalogue, load_gcc_config
+from souqsort.loaders import (
+    DataFileError,
+    load_catalogue,
+    load_gcc_config,
+    load_sample_orders,
+)
 from souqsort.logistics.calendar import in_market_time, to_market_time
+from souqsort.models import SHIPPING_MODELS, OrderLine
+from souqsort.orders import quote_order
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     LocalisationError,
@@ -28,11 +39,15 @@ from souqsort.report import build_report, render_report
 # Found from this file, so the app starts from any working directory.
 DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
 
+# The "Order" selectbox's last option. Order ids are lower case, so none can be this.
+BUILD_YOUR_OWN = "Build your own"
+
 st.set_page_config(page_title="SouqSort", layout="wide")
 
 try:
     config = load_gcc_config(DATA_DIR / "gcc_config.json")
     catalogue = load_catalogue(DATA_DIR / "global_products.json")
+    sample_orders = load_sample_orders(DATA_DIR / "sample_orders.json")
 except DataFileError as exc:
     st.error(str(exc))
     st.stop()
@@ -149,71 +164,173 @@ except LocalisationError as exc:
 
 # --- main area ----------------------------------------------------------------------------
 
+
+def show_not_sold(code: str, rows: list[ExcludedGridRow]) -> None:
+    """Products the market does not allow: reported with their reasons, never silently dropped."""
+    if rows:
+        st.subheader(f"Not sold in {code}")
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "SKU": [row.sku for row in rows],
+                    "Name": [row.name_en for row in rows],
+                    "Reason": [row.reasons for row in rows],
+                }
+            ),
+            hide_index=True,
+        )
+
+
 st.title("SouqSort")
-st.caption(
-    f"Market: {market.code} ({market.name}) | "
-    f"Ordered at: {ordered_at:%a %Y-%m-%d %H:%M} {timezone} | "
-    f"Duty adjustment: +{duty_points} pp | "
-    f"Shipping: {SHIPPING_LABELS[shipping]} | "
-    "All market data is illustrative"
-)
 
-margin_metric, flagged_metric, change_metric, not_sold_metric = st.columns(4)
-margin_metric.metric("Average margin", headline.average_margin)
-flagged_metric.metric("Flagged products", headline.flagged_products)
-change_metric.metric("Average price change vs 0 pp", headline.average_price_change)
-not_sold_metric.metric(f"Not sold in {market.code}", str(len(localised.excluded)))
-st.caption(
-    f"All {summary.product_count} products for sale in {market.code}; search filters the table only"
-)
+# Nothing that comes and goes is drawn above the tabs: the browser keeps the selected tab
+# across reruns only while the tabs stay in the same place.
+products_tab, order_tab = st.tabs(["Products", "Order"])
 
-price_column = f"Shelf price ({market.currency.code})"
-margin_column = "Margin %"
+with products_tab:
+    st.caption(
+        f"Market: {market.code} ({market.name}) | "
+        f"Ordered at: {ordered_at:%a %Y-%m-%d %H:%M} {timezone} | "
+        f"Duty adjustment: +{duty_points} pp | "
+        f"Shipping: {SHIPPING_LABELS[shipping]} | "
+        "All market data is illustrative"
+    )
 
-# Price and margin stay Decimal, so the grid sorts them by value and no float is made here.
-st.dataframe(
-    pd.DataFrame(
-        {
-            "SKU": [row.sku for row in rows],
-            "Name": [row.name_en for row in rows],
-            price_column: [row.shelf_price for row in rows],
-            margin_column: [row.margin_percent for row in rows],
-            "Duty": [row.duty for row in rows],
-            "Delivery": [row.delivery_date for row in rows],
-            "Flags": [row.flags for row in rows],
-        }
-    ),
-    hide_index=True,
-    # As tall as its rows: the default height scrolls after about ten and hides the rest.
-    height="content",
-    column_config={
-        price_column: st.column_config.NumberColumn(format=f"%.{market.currency.minor_units}f"),
-        margin_column: st.column_config.NumberColumn(format="%.1f%%"),
-        # A fixed width, so a flag's label is not cut short when the column sizes itself.
-        "Flags": st.column_config.TextColumn(width="medium"),
-    },
-)
+    margin_metric, flagged_metric, change_metric, not_sold_metric = st.columns(4)
+    margin_metric.metric("Average margin", headline.average_margin)
+    flagged_metric.metric("Flagged products", headline.flagged_products)
+    change_metric.metric("Average price change vs 0 pp", headline.average_price_change)
+    not_sold_metric.metric(f"Not sold in {market.code}", str(len(localised.excluded)))
+    st.caption(
+        f"All {summary.product_count} products for sale in {market.code}; "
+        "search filters the table only"
+    )
 
-if fee_note is not None:
-    st.caption(fee_note)
+    price_column = f"Shelf price ({market.currency.code})"
+    margin_column = "Margin %"
 
-if summary.product_count == 0 and not localised.excluded:
-    st.info("The catalogue has no products.")
-elif summary.product_count == 0:
-    st.info(f"No product in the catalogue can be sold in {market.code}.")
-elif not rows:
-    st.info("No product matches the search.")
-
-# Products the market does not allow: reported with their reasons, never silently dropped.
-if not_sold:
-    st.subheader(f"Not sold in {market.code}")
+    # Price and margin stay Decimal, so the grid sorts them by value and no float is made here.
     st.dataframe(
         pd.DataFrame(
             {
-                "SKU": [row.sku for row in not_sold],
-                "Name": [row.name_en for row in not_sold],
-                "Reason": [row.reasons for row in not_sold],
+                "SKU": [row.sku for row in rows],
+                "Name": [row.name_en for row in rows],
+                price_column: [row.shelf_price for row in rows],
+                margin_column: [row.margin_percent for row in rows],
+                "Duty": [row.duty for row in rows],
+                "Delivery": [row.delivery_date for row in rows],
+                "Flags": [row.flags for row in rows],
             }
         ),
         hide_index=True,
+        # As tall as its rows: the default height scrolls after about ten and hides the rest.
+        height="content",
+        column_config={
+            price_column: st.column_config.NumberColumn(format=f"%.{market.currency.minor_units}f"),
+            margin_column: st.column_config.NumberColumn(format="%.1f%%"),
+            # A fixed width, so a flag's label is not cut short when the column sizes itself.
+            "Flags": st.column_config.TextColumn(width="medium"),
+        },
     )
+
+    if fee_note is not None:
+        st.caption(fee_note)
+
+    if summary.product_count == 0 and not localised.excluded:
+        st.info("The catalogue has no products.")
+    elif summary.product_count == 0:
+        st.info(f"No product in the catalogue can be sold in {market.code}.")
+    elif not rows:
+        st.info("No product matches the search.")
+
+    show_not_sold(market.code, not_sold)
+
+with order_tab:
+    names = {order.id: order.name for order in sample_orders.orders}
+    product_names = {product.sku: product.name.en for product in catalogue.products}
+    order_id = st.selectbox(
+        "Order",
+        options=[*names, BUILD_YOUR_OWN],
+        format_func=lambda choice: names.get(choice, choice),
+        key="order",
+    )
+    st.caption(
+        "Both shipping models, with the market, duty adjustment and order time from the sidebar."
+    )
+
+    if order_id == BUILD_YOUR_OWN:
+        picked = st.multiselect(
+            "Products",
+            options=list(product_names),
+            format_func=lambda sku: f"{sku} - {product_names[sku]}",
+            key="order_products",
+        )
+        lines = [
+            OrderLine(
+                sku=sku,
+                quantity=st.number_input(
+                    f"Quantity of {sku}",
+                    min_value=1,
+                    max_value=99,
+                    value=1,
+                    step=1,
+                    key=f"quantity_{sku}",
+                ),
+            )
+            for sku in picked
+        ]
+    else:
+        lines = list(next(o for o in sample_orders.orders if o.id == order_id).lines)
+
+    if not lines:
+        st.info("Pick at least one product.")
+    else:
+        try:
+            consolidated, parcel = (
+                quote_order(
+                    lines,
+                    catalogue,
+                    config,
+                    market.code,
+                    ordered_at,
+                    duty_adjustment_from_points(duty_points),
+                    model,
+                )
+                for model in SHIPPING_MODELS
+            )
+            totals = order_totals(consolidated, parcel)
+            order_table = order_rows(consolidated, parcel)
+            note = parcel_note(market, parcel)
+            order_not_sold = excluded_grid_rows(consolidated.not_sold)
+        except LocalisationError as exc:
+            st.error(str(exc))
+        else:
+            consolidated_metric, parcel_metric = st.columns(2)
+            consolidated_metric.metric(SHIPPING_LABELS["consolidated"], totals.consolidated)
+            # Dearer is worse, so a rise is red. Streamlit draws every text delta but "0" as a
+            # rise, so no change is grey, with no arrow.
+            parcel_metric.metric(
+                SHIPPING_LABELS["parcel"],
+                totals.parcel,
+                delta=totals.change,
+                delta_color="off" if totals.unchanged else "inverse",
+                delta_arrow="off" if totals.unchanged else "auto",
+            )
+            if consolidated.lines:
+                currency = market.currency.code
+                st.dataframe(
+                    pd.DataFrame(
+                        {
+                            "SKU": [row.label for row in order_table],
+                            "Name": [row.name for row in order_table],
+                            "Qty": [row.quantity for row in order_table],
+                            f"Consolidated ({currency})": [row.consolidated for row in order_table],
+                            f"Direct parcel ({currency})": [row.parcel for row in order_table],
+                        }
+                    ),
+                    hide_index=True,
+                )
+                st.caption(note)
+            else:
+                st.info(f"{market.code} sells nothing in this order.")
+            show_not_sold(market.code, order_not_sold)

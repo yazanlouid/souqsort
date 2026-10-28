@@ -135,6 +135,23 @@ class OrderRow:
     parcel: str
 
 
+@dataclass(frozen=True)
+class OrderTotals:
+    """An order's totals as the dashboard's two metrics.
+
+    ``consolidated`` and ``parcel`` are totals with the currency code (``"1281.90 SAR"``), or
+    ``"-"`` when the market sells no line of the order. ``change`` is how much dearer the
+    parcel is, a signed percentage with one decimal (``"+3.1%"``), or ``None`` with no totals.
+    ``unchanged`` says the change rounds to ``"0.0%"``: Streamlit draws every text delta but
+    ``"0"`` as a rise, so the dashboard shows that one in grey with no arrow.
+    """
+
+    consolidated: str
+    parcel: str
+    change: str | None
+    unchanged: bool
+
+
 def _percent(fraction: Decimal) -> str:
     """A fraction as a percentage with one decimal, rounded half up (``0.5865`` -> ``58.7``)."""
     return format_money(fraction * 100, 1)
@@ -236,6 +253,15 @@ def _checkout_amount(quote: OrderQuote, kind: CheckoutKind) -> str:
     return _NO_VALUE
 
 
+def _require_same_order(consolidated: OrderQuote, parcel: OrderQuote) -> None:
+    skus = [line.sku for line in consolidated.lines]
+    parcel_skus = [line.sku for line in parcel.lines]
+    if consolidated.market != parcel.market or skus != parcel_skus:
+        raise ValueError(
+            f"not the same order: {consolidated.market} {skus} and {parcel.market} {parcel_skus}"
+        )
+
+
 def order_rows(consolidated: OrderQuote, parcel: OrderQuote) -> list[OrderRow]:
     """The rows of an order's table: one per line the market sells, then Items, each checkout
     amount that either model adds, Total and Delivery.
@@ -243,13 +269,7 @@ def order_rows(consolidated: OrderQuote, parcel: OrderQuote) -> list[OrderRow]:
     The two quotes are the same order in the same market. Raises ``ValueError`` if they are
     not.
     """
-    if consolidated.market != parcel.market or [line.sku for line in consolidated.lines] != [
-        line.sku for line in parcel.lines
-    ]:
-        raise ValueError(
-            f"not the same order: {consolidated.market} and {parcel.market}, "
-            f"{[line.sku for line in consolidated.lines]} and {[line.sku for line in parcel.lines]}"
-        )
+    _require_same_order(consolidated, parcel)
 
     def money(quote: OrderQuote, amount: Decimal) -> str:
         return format_money(amount, quote.minor_units)
@@ -292,6 +312,30 @@ def order_rows(consolidated: OrderQuote, parcel: OrderQuote) -> list[OrderRow]:
         )
     )
     return rows
+
+
+def order_totals(consolidated: OrderQuote, parcel: OrderQuote) -> OrderTotals:
+    """An order's totals in both shipping models, and how much dearer the parcel is.
+
+    The two quotes are the same order in the same market. Raises ``ValueError`` if they are
+    not, and ``LocalisationError`` naming the market if the change is too large to display.
+    """
+    _require_same_order(consolidated, parcel)
+    if not consolidated.lines:
+        return OrderTotals(consolidated=_NO_VALUE, parcel=_NO_VALUE, change=None, unchanged=False)
+
+    def total(quote: OrderQuote) -> str:
+        return f"{format_money(quote.total, quote.minor_units)} {quote.currency}"
+
+    change = _signed_percent(
+        f"{consolidated.market}: order price change", parcel.total / consolidated.total - 1
+    )
+    return OrderTotals(
+        consolidated=total(consolidated),
+        parcel=total(parcel),
+        change=change,
+        unchanged=Decimal(change.removesuffix("%")).is_zero(),
+    )
 
 
 def parcel_note(market: MarketConfig, parcel: OrderQuote) -> str:
@@ -341,6 +385,17 @@ def _average_percent(figure: str, fraction: Decimal) -> str:
         raise LocalisationError(f"{figure} is too large to display") from exc
 
 
+def _signed_percent(figure: str, fraction: Decimal) -> str:
+    """As ``_percent`` with a ``%`` sign, and ``+`` when it is positive after rounding, so
+    never ``"+0.0%"``.
+
+    Raises ``LocalisationError`` naming ``figure`` if it is too large to display.
+    """
+    percent = _average_percent(figure, fraction)
+    sign = "+" if Decimal(percent) > 0 else ""
+    return f"{sign}{percent}%"
+
+
 def display_summary(summary: CatalogueSummary) -> DisplaySummary:
     """A catalogue summary as the text of its headline figures.
 
@@ -353,12 +408,7 @@ def display_summary(summary: CatalogueSummary) -> DisplaySummary:
     average_margin = (
         _NO_VALUE if margin is None else f"{_average_percent('average margin', margin)}%"
     )
-    if change is None:
-        price_change = _NO_VALUE
-    else:
-        percent = _average_percent("average price change", change)
-        sign = "+" if Decimal(percent) > 0 else ""  # signed after rounding, so never "+0.0%"
-        price_change = f"{sign}{percent}%"
+    price_change = _NO_VALUE if change is None else _signed_percent("average price change", change)
 
     return DisplaySummary(
         average_margin=average_margin,

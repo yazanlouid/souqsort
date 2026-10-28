@@ -16,12 +16,14 @@ from typing import Any
 import pandas as pd
 import pytest
 import streamlit
+from streamlit.proto.Metric_pb2 import Metric as MetricProto
 from streamlit.testing.v1 import AppTest
+from streamlit.testing.v1.element_tree import Block, Metric
 
 from helpers import FOR_SALE_COUNTS, REPORT_ORDERED_AT, decimal_places
 from souqsort.display import display_summary, excluded_grid_rows, grid_rows
 from souqsort.loaders import load_gcc_config
-from souqsort.models import Catalogue, GccConfig
+from souqsort.models import Catalogue, GccConfig, SampleOrders
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     LocalisationError,
@@ -31,6 +33,7 @@ from souqsort.pipeline import (
 from souqsort.report import build_report, render_report
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py"
+TABS = ["Products", "Order"]
 SAMPLE_REPORT = Path(__file__).resolve().parents[1] / "docs" / "GCC_EXPANSION_REPORT.md"
 
 HEADPHONES = "ELEC-HP-001"
@@ -102,21 +105,33 @@ def app() -> AppTest:
     return at.run()
 
 
-def _grid(at: AppTest) -> pd.DataFrame:
-    """The data sent to the main grid: the first table on the page."""
+def _products(at: AppTest) -> Block:
+    """The "Products" tab: everything the page showed before it had tabs."""
     assert not at.exception, at.exception
-    assert not at.error, [error.value for error in at.error]
-    frame: pd.DataFrame = at.dataframe[0].value
+    assert [tab.label for tab in at.tabs] == TABS
+    return at.tabs[0]
+
+
+def _grid(at: AppTest) -> pd.DataFrame:
+    """The data sent to the main grid: the first table in the "Products" tab.
+
+    The page has no error, except perhaps one in the "Order" tab, which its own tests check.
+    """
+    errors = [error.value for error in at.error]
+    assert not at.exception, at.exception
+    assert len(at.tabs) == len(TABS), errors
+    assert errors == [error.value for error in at.tabs[1].error], errors
+    frame: pd.DataFrame = _products(at).dataframe[0].value
     return frame
 
 
 def _not_sold(at: AppTest) -> pd.DataFrame | None:
     """The table of products the market does not sell, or None when it is not shown."""
-    assert not at.exception, at.exception
-    assert len(at.dataframe) <= 2
-    if len(at.dataframe) < 2:
+    tables = _products(at).dataframe
+    assert len(tables) <= 2
+    if len(tables) < 2:
         return None
-    frame: pd.DataFrame = at.dataframe[1].value
+    frame: pd.DataFrame = tables[1].value
     return frame
 
 
@@ -127,11 +142,13 @@ def _column(at: AppTest, column: str) -> dict[str, Any]:
 
 
 def _metrics(at: AppTest) -> dict[str, str]:
-    return {metric.label: metric.value for metric in at.metric}
+    """The "Products" tab's metrics, by label."""
+    return {metric.label: metric.value for metric in _products(at).metric}
 
 
 def _captions(at: AppTest) -> str:
-    return "\n".join(caption.value for caption in at.caption)
+    """The "Products" tab's captions, one per line."""
+    return "\n".join(caption.value for caption in _products(at).caption)
 
 
 def _order(at: AppTest, day: date, clock: time) -> AppTest:
@@ -463,7 +480,7 @@ def test_price_column_sorts_by_value_not_as_text(app: AppTest) -> None:
 
 def test_price_and_margin_columns_have_a_fixed_number_of_decimals(app: AppTest) -> None:
     # The column settings travel to the browser as JSON next to the data.
-    grid = app.dataframe[0]
+    grid = _products(app).dataframe[0]
     settings = grid.proto.columns
 
     assert "%.2f" in settings  # shelf price: the currency's minor units
@@ -483,7 +500,7 @@ def test_flags_are_shown_as_labels(app: AppTest) -> None:
 def test_flags_column_has_a_fixed_width(app: AppTest) -> None:
     # Left to size itself, a column can end up narrower than its text. AppTest cannot measure
     # pixels, so this checks only that a fixed width was asked for.
-    grid = app.dataframe[0]
+    grid = _products(app).dataframe[0]
     settings = json.loads(grid.proto.columns)
 
     assert settings[FLAGS]["width"] in {"medium", "large"}  # 200 px or 400 px
@@ -541,7 +558,7 @@ def test_search_with_no_match_shows_an_empty_grid_not_an_error(app: AppTest) -> 
     frame = _grid(app)
     assert len(frame) == 0
     assert list(frame.columns) == list(COLUMNS)
-    assert [info.value for info in app.info] == ["No product matches the search."]
+    assert [info.value for info in _products(app).info] == ["No product matches the search."]
 
 
 def test_search_and_slider_work_together(app: AppTest) -> None:
@@ -732,7 +749,7 @@ def test_switching_markets_changes_the_currency_header_and_prices(
     assert list(frame.columns) == [SKU, NAME, price_column, MARGIN, DUTY, DELIVERY, FLAGS]
     assert _column(app, price_column)[HEADPHONES] == headphones
     assert all(decimal_places(price) == places for price in frame[price_column])
-    grid = app.dataframe[0]
+    grid = _products(app).dataframe[0]
     assert f"%.{places}f" in grid.proto.columns
     assert f"All {FOR_SALE_COUNTS[market]} products for sale in {market}" in _captions(app)
 
@@ -749,7 +766,7 @@ def test_products_ksa_does_not_sell_are_listed_under_the_grid(app: AppTest) -> N
         (VANILLA, "Pure Vanilla Extract", "Contains alcohol"),
         (GUMMY_BEARS, "Gummy Bears (pork gelatine)", "Contains pork"),
     ]
-    assert "Not sold in KSA" in [subheader.value for subheader in app.subheader]
+    assert "Not sold in KSA" in [subheader.value for subheader in _products(app).subheader]
 
 
 def test_not_sold_table_shows_what_the_engine_returns(
@@ -770,7 +787,7 @@ def test_switching_to_the_uae_shows_one_product_not_sold(app: AppTest) -> None:
     table = _not_sold(app)
     assert table is not None
     assert list(table[SKU]) == [GUMMY_BEARS]
-    assert "Not sold in UAE" in [subheader.value for subheader in app.subheader]
+    assert "Not sold in UAE" in [subheader.value for subheader in _products(app).subheader]
 
 
 def test_search_filters_the_grid_but_not_the_not_sold_table(app: AppTest) -> None:
@@ -792,7 +809,9 @@ def test_a_catalogue_of_only_banned_products_says_none_can_be_sold(
     at = _run_with(monkeypatch, load_catalogue=lambda path: only_banned)
 
     assert len(_grid(at)) == 0
-    assert [info.value for info in at.info] == ["No product in the catalogue can be sold in KSA."]
+    assert [info.value for info in _products(at).info] == [
+        "No product in the catalogue can be sold in KSA."
+    ]
     assert _metrics(at)[NOT_SOLD] == "2"
     table = _not_sold(at)
     assert table is not None
@@ -807,7 +826,7 @@ def test_a_market_that_bans_nothing_shows_no_not_sold_table(
     assert len(_grid(at)) == 13  # every sample product
     assert _metrics(at)["Not sold in TEST-KWD"] == "0"
     assert _not_sold(at) is None
-    assert not [s.value for s in at.subheader if s.value.startswith("Not sold")]
+    assert not [s.value for s in _products(at).subheader if s.value.startswith("Not sold")]
 
 
 # --- the expansion report (SPEC §9.6, M14) ------------------------------------------------
@@ -960,9 +979,9 @@ def test_a_report_that_cannot_be_built_is_an_error_where_the_button_would_be(
     assert len(at.sidebar.download_button) == 0
     # The rest of the page keeps working.
     assert len(at.main.error) == 0
-    assert len(at.dataframe[0].value) == KSA_FOR_SALE
+    assert len(_products(at).dataframe[0].value) == KSA_FOR_SALE
     assert _metrics(at)[AVERAGE_MARGIN] == "64.6%"
-    assert len(at.dataframe) == 2  # the not-sold table too
+    assert len(_products(at).dataframe) == 2  # the not-sold table too
 
 
 # --- problems are shown as a message, not a traceback -------------------------------------
@@ -989,7 +1008,7 @@ def test_empty_catalogue_says_so_instead_of_blaming_the_search(
     at = _run_with(monkeypatch, load_catalogue=lambda path: empty)
 
     assert len(_grid(at)) == 0
-    assert [info.value for info in at.info] == ["The catalogue has no products."]
+    assert [info.value for info in _products(at).info] == ["The catalogue has no products."]
     assert _metrics(at) == {AVERAGE_MARGIN: "-", FLAGGED: "0", PRICE_CHANGE: "-", NOT_SOLD: "0"}
     assert "All 0 products for sale in KSA" in _captions(at)
     assert _not_sold(at) is None
@@ -1031,6 +1050,267 @@ def test_margin_too_large_to_display_is_a_message(
         "Cannot build the expansion report: KSA: average margin is too large to display"
     )
     assert len(at.sidebar.download_button) == 0
+
+
+# --- the "Order" tab (SPEC §10.5, M17) ----------------------------------------------------
+
+ORDER_SCOPE = (
+    "Both shipping models, with the market, duty adjustment and order time from the sidebar."
+)
+BUILD_YOUR_OWN = "Build your own"
+CONSOLIDATED_METRIC = "Consolidated import"
+PARCEL_METRIC = "Direct parcel"
+ORDER_COLUMNS = ["SKU", "Name", "Qty", "Consolidated (SAR)", "Direct parcel (SAR)"]
+THU_NOON = (date(2026, 10, 15), time(12, 0))  # the sample report's order in Riyadh
+
+
+def _order_tab(at: AppTest) -> Block:
+    assert not at.exception, at.exception
+    assert [tab.label for tab in at.tabs] == TABS
+    return at.tabs[1]
+
+
+@pytest.fixture
+def noon(app: AppTest) -> AppTest:
+    """The dashboard with an order at Thu 2026-10-15 12:00, market time."""
+    return _order(app, *THU_NOON)
+
+
+def _pick_order(at: AppTest, order_id: str) -> AppTest:
+    return at.selectbox(key="order").select(order_id).run()
+
+
+def _build_your_own(at: AppTest, *skus: str) -> AppTest:
+    picker = at.selectbox(key="order")
+    picker.select_index(len(picker.options) - 1).run()
+    return at.multiselect(key="order_products").set_value(list(skus)).run()
+
+
+def _order_table(at: AppTest) -> dict[str, tuple[str, ...]]:
+    """The order's rows keyed by their first cell, each the rest of its cells."""
+    frame: pd.DataFrame = _order_tab(at).dataframe[0].value
+    assert list(frame.columns)[:3] == ORDER_COLUMNS[:3]
+    return {row[0]: tuple(row[1:]) for row in frame.itertuples(index=False, name=None)}
+
+
+def _order_metrics(at: AppTest) -> dict[str, Metric]:
+    return {metric.label: metric for metric in _order_tab(at).metric}
+
+
+def _delta(metric: Metric) -> tuple[str, str, str]:
+    """A metric's delta, with its colour and arrow as Streamlit draws them."""
+    proto = metric.proto
+    return (
+        proto.delta,
+        MetricProto.MetricColor.Name(proto.color),
+        MetricProto.MetricDirection.Name(proto.direction),
+    )
+
+
+def _layout(at: AppTest) -> list[str]:
+    """The kinds of the main area's top-level elements, in order."""
+    return [getattr(node, "type", type(node).__name__) for node in at.main.children.values()]
+
+
+def test_the_main_area_has_two_tabs(app: AppTest) -> None:
+    assert [tab.label for tab in app.tabs] == TABS
+    assert app.title[0].value == "SouqSort"
+
+
+def test_order_tab_starts_with_the_sample_orders_then_build_your_own(
+    app: AppTest, sample_orders: SampleOrders
+) -> None:
+    picker = _order_tab(app).selectbox[0]
+
+    assert picker.label == "Order"
+    assert picker.options == [order.name for order in sample_orders.orders] + [BUILD_YOUR_OWN]
+    assert picker.value == sample_orders.orders[0].id
+    assert _order_tab(app).caption[0].value == ORDER_SCOPE
+
+
+def test_two_lip_balms_at_noon_in_ksa(noon: AppTest) -> None:
+    metrics = _order_metrics(noon)
+
+    assert metrics[CONSOLIDATED_METRIC].value == "33.90 SAR"
+    assert metrics[PARCEL_METRIC].value == "46.90 SAR"
+    assert _delta(metrics[PARCEL_METRIC]) == ("+38.3%", "RED", "UP")  # 46.90 / 33.90 - 1
+    assert _delta(metrics[CONSOLIDATED_METRIC]) == ("", "GRAY", "NONE")
+    rows = _order_table(noon)
+    assert rows[LIP_BALM] == ("Lip Balm", "2", "33.90", "31.90")
+    assert rows["Customs fee"] == ("", "", "-", "15.00")
+    assert "Duty and VAT" not in rows
+    assert rows["Total"] == ("", "", "33.90", "46.90")
+    assert rows["Delivery"] == ("", "", "2026-10-22", "2026-10-21")
+    assert _order_tab(noon).caption[1].value == (
+        "Direct parcel: the order's CIF, 27.53 SAR, is below 1000.00 SAR, so de minimis applies."
+    )
+
+
+def test_headphones_and_a_bag_at_noon_in_ksa(noon: AppTest) -> None:
+    at = _pick_order(noon, "headphones-and-bag")
+
+    metrics = _order_metrics(at)
+    assert metrics[CONSOLIDATED_METRIC].value == "1281.90 SAR"
+    assert metrics[PARCEL_METRIC].value == "1321.47 SAR"
+    assert _delta(metrics[PARCEL_METRIC]) == ("+3.1%", "RED", "UP")  # dearer is worse
+    rows = _order_table(at)
+    assert rows["Duty and VAT"] == ("", "", "-", "98.57")
+    assert rows["Customs fee"] == ("", "", "-", "15.00")
+    assert rows["Total"] == ("", "", "1281.90", "1321.47")
+
+
+def test_headphones_and_a_bag_at_three_points(noon: AppTest) -> None:
+    at = _pick_order(noon, "headphones-and-bag")
+    at.slider(key="duty_points").set_value(3).run()
+
+    rows = _order_table(at)
+    assert rows["Duty and VAT"][-1] == "134.77"
+    assert rows["Total"][-1] == "1357.67"
+    assert _order_metrics(at)[PARCEL_METRIC].value == "1357.67 SAR"
+
+
+def test_headphones_and_a_bag_in_the_uae(noon: AppTest) -> None:
+    at = _select_market(_pick_order(noon, "headphones-and-bag"), "UAE")
+
+    rows = _order_table(at)
+    assert "Customs fee" not in rows
+    assert rows["Duty and VAT"] == ("", "", "-", "53.73")
+    frame: pd.DataFrame = _order_tab(at).dataframe[0].value
+    assert list(frame.columns)[3:] == ["Consolidated (AED)", "Direct parcel (AED)"]
+    assert "is not at or below 1000.00 AED" in _order_tab(at).caption[1].value
+
+
+def test_an_order_that_costs_the_same_both_ways_shows_no_change(noon: AppTest) -> None:
+    at = _select_market(noon, "UAE")  # two lip balms: 29.98 AED either way
+
+    metrics = _order_metrics(at)
+    assert metrics[CONSOLIDATED_METRIC].value == metrics[PARCEL_METRIC].value == "29.98 AED"
+    assert _delta(metrics[PARCEL_METRIC]) == ("0.0%", "GRAY", "NONE")
+
+
+def test_build_your_own_with_nothing_picked(noon: AppTest) -> None:
+    at = _build_your_own(noon)
+    tab = _order_tab(at)
+
+    assert [info.value for info in tab.info] == ["Pick at least one product."]
+    assert len(tab.metric) == 0
+    assert len(tab.dataframe) == 0
+    assert [caption.value for caption in tab.caption] == [ORDER_SCOPE]
+    assert len(tab.number_input) == 0
+
+
+def test_build_your_own_offers_every_product(noon: AppTest, catalogue: Catalogue) -> None:
+    at = _build_your_own(noon)
+    products = at.multiselect(key="order_products")
+
+    assert products.label == "Products"
+    assert products.options == [f"{p.sku} - {p.name.en}" for p in catalogue.products]
+
+
+def test_build_your_own_asks_a_quantity_for_each_product(noon: AppTest) -> None:
+    at = _build_your_own(noon, LIP_BALM, LICENCE)
+    quantities = _order_tab(at).number_input
+
+    assert [box.label for box in quantities] == [
+        f"Quantity of {LIP_BALM}",
+        f"Quantity of {LICENCE}",
+    ]
+    assert [box.value for box in quantities] == [1, 1]
+    assert [(box.proto.min, box.proto.max) for box in quantities] == [(1, 99), (1, 99)]
+
+    quantities[0].set_value(2).run()
+
+    rows = _order_table(at)
+    assert rows[LIP_BALM][:2] == ("Lip Balm", "2")
+    assert rows["Total"][-1] == "387.85"
+
+
+def test_build_your_own_licence_alone_sends_no_parcel(noon: AppTest) -> None:
+    at = _build_your_own(noon, LICENCE)
+
+    assert "Customs fee" not in _order_table(at)
+    assert _order_tab(at).caption[1].value == (
+        "Direct parcel: nothing in the order travels, so no parcel is sent."
+    )
+    assert _delta(_order_metrics(at)[PARCEL_METRIC]) == ("0.0%", "GRAY", "NONE")
+
+
+def test_build_your_own_lists_what_the_market_does_not_sell(noon: AppTest) -> None:
+    at = _build_your_own(noon, VANILLA, TEA)
+    tab = _order_tab(at)
+
+    assert VANILLA not in _order_table(at)
+    assert [subheader.value for subheader in tab.subheader] == ["Not sold in KSA"]
+    not_sold: pd.DataFrame = tab.dataframe[1].value
+    assert list(not_sold.columns) == list(NOT_SOLD_COLUMNS)
+    assert list(not_sold.itertuples(index=False, name=None)) == [
+        (VANILLA, "Pure Vanilla Extract", "Contains alcohol")
+    ]
+
+
+def test_an_order_the_market_sells_nothing_of(noon: AppTest) -> None:
+    at = _build_your_own(noon, GUMMY_BEARS)
+    tab = _order_tab(at)
+
+    metrics = _order_metrics(at)
+    assert metrics[CONSOLIDATED_METRIC].value == metrics[PARCEL_METRIC].value == "-"
+    assert _delta(metrics[PARCEL_METRIC]) == ("", "GRAY", "NONE")
+    assert [info.value for info in tab.info] == ["KSA sells nothing in this order."]
+    assert len(tab.dataframe) == 1  # the not-sold table only
+    assert [subheader.value for subheader in tab.subheader] == ["Not sold in KSA"]
+    assert [caption.value for caption in tab.caption] == [ORDER_SCOPE]
+
+
+def test_the_order_tab_ignores_the_radio_and_the_search(noon: AppTest) -> None:
+    at = _pick_order(noon, "headphones-and-bag")
+    layout, rows = _layout(at), _order_table(at)
+
+    _ship(at, "parcel")
+    assert _layout(at) == layout
+    assert [tab.label for tab in at.tabs] == TABS
+    assert _order_table(at) == rows
+
+    _search(at, "no such product")
+    assert _layout(at) == layout
+    assert [tab.label for tab in at.tabs] == TABS
+    assert _order_table(at) == rows
+    assert at.selectbox(key="order").value == "headphones-and-bag"
+
+
+def test_the_tabs_come_right_after_the_title(app: AppTest) -> None:
+    # The browser keeps the selected tab across reruns as long as the tabs stay in the same
+    # place, so nothing that comes and goes may be drawn above them.
+    assert _layout(app)[:2] == ["title", "tab_container"]
+    assert _layout(_ship(app, "parcel")) == _layout(app)
+    assert _layout(_search(app, "zzz")) == _layout(app)
+
+
+def test_a_sample_order_missing_from_the_catalogue_is_an_error_in_its_tab(
+    monkeypatch: pytest.MonkeyPatch, catalogue: Catalogue
+) -> None:
+    no_lip_balm = catalogue.model_copy(
+        update={"products": [p for p in catalogue.products if p.sku != LIP_BALM]}
+    )
+
+    at = _run_with(monkeypatch, load_catalogue=lambda path: no_lip_balm)
+
+    assert [error.value for error in _order_tab(at).error] == [f"{LIP_BALM}: not in the catalogue"]
+    assert len(_order_tab(at).metric) == 0
+    assert len(_grid(at)) == KSA_FOR_SALE - 1  # "Products" keeps working
+
+
+def test_sample_orders_that_cannot_be_read_are_a_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(path: Path) -> Any:
+        raise FileNotFoundError(2, "No such file or directory", str(path))
+
+    at = _run_with(monkeypatch, load_sample_orders=missing)
+
+    assert not at.exception, at.exception
+    (error,) = at.error
+    assert "sample_orders.json" in error.value
+    assert len(at.dataframe) == 0
 
 
 # --- no business logic in the app ---------------------------------------------------------
