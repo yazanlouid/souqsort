@@ -8,15 +8,24 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, Inexact, localcontext
 from typing import Literal
 
 from souqsort.compliance import ExcludedProduct, screen_products
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
-from souqsort.models import Catalogue, GccConfig, OrderLine, ShippingModel, require_shipping
+from souqsort.models import (
+    Catalogue,
+    GccConfig,
+    MarketConfig,
+    OrderLine,
+    Product,
+    ShippingModel,
+    require_shipping,
+)
 from souqsort.pipeline import (
     LocalisationError,
     find_market,
+    localisation_error,
     localise_catalogue,
     require_duty_adjustment,
 )
@@ -31,6 +40,11 @@ from souqsort.pricing.landed_cost import PriceQuote
 from souqsort.pricing.money import round_minor
 
 CheckoutKind = Literal["customs_fee", "duty"]
+
+# Digits for an order's products and sums, so that they never round: a line's cif has at most
+# the default context's 28 digits and its quantity two, and every figure is far below 10**26.
+# Inexact is trapped, so a figure that does not fit raises rather than rounding.
+_EXACT_PRECISION = 100
 
 
 @dataclass(frozen=True)
@@ -97,6 +111,50 @@ def _require_lines(lines: Sequence[OrderLine]) -> None:
         raise ValueError(f"duplicate sku: {', '.join(duplicates)}")
 
 
+@dataclass(frozen=True)
+class _ParcelFigures:
+    value: Decimal | None
+    within_threshold: bool | None
+    duty: Decimal | None  # with its VAT, before rounding; None when none is added
+
+
+def _parcel_figures(
+    quoted: Sequence[QuotedLine],
+    products: dict[str, Product],
+    market: MarketConfig,
+    duty_adjustment: Decimal,
+    sent: bool,
+) -> _ParcelFigures:
+    """The parcel's value, its de minimis test and the duty it adds, all exact.
+
+    Each line's ``cif`` is the stored value that decided its waiver; only the products and
+    sums over the lines run with ``_EXACT_PRECISION``. Rounded under the default context, a
+    sum's last digit would depend on the order of the lines.
+    """
+    if not sent:
+        return _ParcelFigures(value=None, within_threshold=None, duty=None)
+    rule = market.customs.de_minimis
+    waived = [line for line in quoted if line.quote.duty_waived]
+    with localcontext() as context:
+        context.prec = _EXACT_PRECISION
+        context.traps[Inexact] = True
+        value = sum((line.quantity * line.quote.cif for line in quoted if line.travels), Decimal(0))
+        passes = None if rule is None else within_threshold(value, rule)
+        duty = None
+        if passes is False and waived:
+            lost = sum(
+                (
+                    line.quantity
+                    * line.quote.cif
+                    * duty_rate(products[line.sku], market, duty_adjustment)
+                    for line in waived
+                ),
+                Decimal(0),
+            )
+            duty = lost * (1 + market.tax.vat_rate)
+    return _ParcelFigures(value=value, within_threshold=passes, duty=duty)
+
+
 def quote_order(
     lines: Sequence[OrderLine],
     catalogue: Catalogue,
@@ -116,8 +174,9 @@ def quote_order(
 
     Checks ``duty_adjustment`` and ``shipping`` first, as ``localise_catalogue`` does. Then
     raises ``ValueError`` for no lines or a SKU listed twice. Then ``LocalisationError`` for an
-    unknown market, for a SKU that is not in the catalogue, or as ``localise_catalogue`` raises
-    it (a naive ``ordered_at``, or a line that cannot be priced).
+    unknown market, for a SKU that is not in the catalogue, as ``localise_catalogue`` raises it
+    (a naive ``ordered_at``, or a line that cannot be priced), or naming the market when the
+    delivery date or the order's own figures cannot be worked out.
     """
     require_duty_adjustment(duty_adjustment)
     require_shipping(shipping)
@@ -134,9 +193,6 @@ def quote_order(
     localised = localise_catalogue(
         screen.sellable, config, market.code, ordered_at, duty_adjustment, shipping
     )
-    # localise_catalogue has already made this estimate for the same order time, market and
-    # model, even with nothing to price, so it cannot fail here.
-    delivery = estimate_delivery(ordered_at, market, shipping)
 
     quoted = tuple(
         QuotedLine(
@@ -151,33 +207,19 @@ def quote_order(
     )
 
     anything_travels = any(line.travels for line in quoted)
-    parcel_value: Decimal | None = None
-    passes: bool | None = None
-    if sends_parcel(shipping, anything_travels):
-        parcel_value = sum(
-            (line.quantity * line.quote.cif for line in quoted if line.travels), Decimal(0)
-        )
-        rule = market.customs.de_minimis
-        passes = None if rule is None else within_threshold(parcel_value, rule)
-
+    sent = sends_parcel(shipping, anything_travels)
     minor_units = market.currency.minor_units
-    checkout: list[CheckoutLine] = []
-    fee = parcel_fee_due(market, shipping, anything_travels)
-    if fee is not None:
-        checkout.append(CheckoutLine("customs_fee", round_minor(fee, minor_units)))
-    waived = [line for line in quoted if line.quote.duty_waived]
-    if passes is False and waived:
-        duty = sum(
-            (
-                line.quantity
-                * line.quote.cif
-                * duty_rate(products[line.sku], market, duty_adjustment)
-                for line in waived
-            ),
-            Decimal(0),
-        )
-        with_vat = duty * (1 + market.tax.vat_rate)
-        checkout.append(CheckoutLine("duty", round_minor(with_vat, minor_units)))
+    try:
+        delivery = estimate_delivery(ordered_at, market, shipping)
+        parcel = _parcel_figures(quoted, products, market, duty_adjustment, sent)
+        checkout: list[CheckoutLine] = []
+        fee = parcel_fee_due(market, shipping, anything_travels)
+        if fee is not None:
+            checkout.append(CheckoutLine("customs_fee", round_minor(fee, minor_units)))
+        if parcel.duty is not None:
+            checkout.append(CheckoutLine("duty", round_minor(parcel.duty, minor_units)))
+    except (ValueError, ArithmeticError) as exc:
+        raise localisation_error(market.code, exc) from exc
 
     return OrderQuote(
         market=market.code,
@@ -186,8 +228,8 @@ def quote_order(
         shipping=shipping,
         lines=quoted,
         not_sold=screen.excluded,
-        parcel_value=parcel_value,
-        within_threshold=passes,
+        parcel_value=parcel.value,
+        within_threshold=parcel.within_threshold,
         checkout=tuple(checkout),
         delivery=delivery,
     )

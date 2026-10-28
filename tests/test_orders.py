@@ -1,7 +1,8 @@
 """M16: orders of several items in one market (SPEC §7.10, worked examples I to P)."""
 
 from dataclasses import FrozenInstanceError
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, Decimal, Inexact, localcontext
+from itertools import permutations
 from typing import Any
 
 import pytest
@@ -16,6 +17,7 @@ from helpers import (
     VANILLA,
     decimal_places,
 )
+from souqsort import orders as order_engine
 from souqsort.logistics.calendar import estimate_delivery
 from souqsort.models import (
     SHIPPING_MODELS,
@@ -36,6 +38,7 @@ from souqsort.report import build_report
 HEADPHONES = "ELEC-HP-001"
 CHARGER = "ELEC-CHG-002"
 BAG = "FASH-BAG-014"
+ESPRESSO = "HOME-ESP-031"
 SCARF = "FASH-SCF-015"
 LIP_BALM = "BEAU-LIP-040"
 SERUM = "BEAU-SRM-041"
@@ -426,6 +429,46 @@ def test_every_amount_is_a_decimal(catalogue: Catalogue, config: GccConfig) -> N
     assert all(type(amount) is Decimal for amount in amounts)
 
 
+def test_the_parcel_value_is_exact_whatever_the_line_order(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    # Summed under the default 28 digits, two orders of these lines differed in the last digit.
+    orders = [
+        _quote(catalogue, config, "KSA", "parcel", *((sku, 7) for sku in skus))
+        for skus in permutations((BAG, SCARF, ESPRESSO))
+    ]
+    with localcontext() as context:  # the products and their sum, with no rounding at all
+        context.prec = 100
+        context.traps[Inexact] = True
+        expected = sum((7 * line.quote.cif for line in orders[0].lines), Decimal(0))
+
+    assert {order.parcel_value for order in orders} == {expected}
+    assert {order.checkout for order in orders} == {orders[0].checkout}
+    assert [line.kind for line in orders[0].checkout] == ["customs_fee", "duty"]
+
+
+def test_a_zero_rate_parcel_over_the_threshold_still_gets_a_duty_line(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    # The order really owes duty at 0%: the line says so, and shows a rise in the rate.
+    ksa = config.markets["KSA"]
+    overrides = {**ksa.customs.category_overrides, "electronics": Decimal("0.00")}
+    customs = ksa.customs.model_copy(update={"category_overrides": overrides})
+    markets = {**config.markets, "KSA": ksa.model_copy(update={"customs": customs})}
+    edited = config.model_copy(update={"markets": markets})
+
+    at_0 = _quote(catalogue, edited, "KSA", "parcel", (HEADPHONES, 2))
+    at_5 = _quote(
+        catalogue, edited, "KSA", "parcel", (HEADPHONES, 2), duty_adjustment=Decimal("0.05")
+    )
+
+    assert at_0.parcel_value == Decimal("1148.55")
+    assert at_0.within_threshold is False
+    assert at_0.checkout == _checkout(("customs_fee", "15.00"), ("duty", "0.00"))
+    # 1,148.55 x 5% x 1.15 = 66.041625
+    assert at_5.checkout == _checkout(("customs_fee", "15.00"), ("duty", "66.04"))
+
+
 # --- errors ---------------------------------------------------------------------------------
 
 
@@ -484,6 +527,27 @@ def test_a_naive_order_time_rejected(
     assert str(excinfo.value).startswith("KSA: ")
 
 
+def test_an_order_sum_that_cannot_be_held_exactly_names_the_market(
+    catalogue: Catalogue, config: GccConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(order_engine, "_EXACT_PRECISION", 5)
+    with pytest.raises(LocalisationError) as excinfo:
+        _quote(catalogue, config, "KSA", "parcel", (HEADPHONES, 1), (BAG, 1))
+    assert str(excinfo.value) == "KSA: a value is out of range for decimal arithmetic (Inexact)"
+    assert isinstance(excinfo.value.__cause__, Inexact)
+
+
+def test_a_failing_delivery_estimate_names_the_market(
+    catalogue: Catalogue, config: GccConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*args: Any) -> None:
+        raise ValueError("no business day found")
+
+    monkeypatch.setattr(order_engine, "estimate_delivery", fail)
+    with pytest.raises(LocalisationError, match=r"^KSA: no business day found$"):
+        _quote(catalogue, config, "KSA", "parcel", (HEADPHONES, 1))
+
+
 # --- properties (Hypothesis over the sample data) -------------------------------------------
 
 Scenario = tuple[list[OrderLine], str, ShippingModel, Decimal]
@@ -540,6 +604,8 @@ def test_the_order_of_the_lines_changes_nothing_that_is_charged(
 
     assert other.total == order.total
     assert other.checkout == order.checkout
+    assert other.parcel_value == order.parcel_value
+    assert other.within_threshold is order.within_threshold
 
 
 @given(data=st.data())

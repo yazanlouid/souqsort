@@ -47,7 +47,7 @@ class LocalisedProduct:
     flags: tuple[str, ...]
 
 
-def _about(subject: str, exc: Exception) -> LocalisationError:
+def localisation_error(subject: str, exc: Exception) -> LocalisationError:
     """The error to raise in place of ``exc``, with a message starting with ``subject``."""
     if isinstance(exc, DecimalException):
         # str() of a decimal signal is only a list of signal classes.
@@ -116,7 +116,7 @@ def _quote(
     try:
         return price_product(product, market, fx, duty_adjustment, shipping)
     except (ValueError, ArithmeticError) as exc:
-        raise _about(product.sku, exc) from exc
+        raise localisation_error(product.sku, exc) from exc
 
 
 def localise_catalogue(
@@ -152,7 +152,7 @@ def localise_catalogue(
     try:
         delivery = estimate_delivery(ordered_at, market, shipping)
     except (ValueError, ArithmeticError) as exc:
-        raise _about(market.code, exc) from exc
+        raise localisation_error(market.code, exc) from exc
 
     return [
         LocalisedProduct(
