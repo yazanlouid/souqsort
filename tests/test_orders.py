@@ -29,6 +29,7 @@ from souqsort.models import (
 )
 from souqsort.orders import CheckoutKind, CheckoutLine, OrderQuote, quote_order
 from souqsort.pipeline import LocalisationError, duty_adjustment_from_points
+from souqsort.pricing.customs import sends_parcel
 from souqsort.pricing.landed_cost import price_product
 from souqsort.report import build_report
 
@@ -581,6 +582,11 @@ def test_a_duty_line_appears_only_when_the_parcel_fails_the_test(
 
     if any(line.kind == "duty" for line in order.checkout):
         assert order.within_threshold is False
+    # The fee and the parcel value follow the same decision.
+    sent = sends_parcel(shipping, any(line.travels for line in order.lines))
+    assert (order.parcel_value is not None) is sent
+    if any(line.kind == "customs_fee" for line in order.checkout):
+        assert sent
     assert [line.kind for line in order.checkout] in (
         [],
         ["customs_fee"],

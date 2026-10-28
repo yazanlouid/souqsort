@@ -75,24 +75,35 @@ def duty_rate(product: Product, market: MarketConfig, duty_adjustment: Decimal) 
     return category_rate + duty_adjustment
 
 
+def sends_parcel(shipping: ShippingModel, anything_travels: bool) -> bool:
+    """Whether an order is sent as a parcel: a direct parcel in which something travels.
+
+    A consolidated import sends none, and neither does a direct parcel order in which nothing
+    travels. Raises ``ValueError`` for an unknown ``shipping``.
+    """
+    require_shipping(shipping)
+    # A match, not a comparison: mypy fails here if ShippingModel gains a value with no case.
+    match shipping:
+        case "consolidated":
+            return False
+        case "parcel":
+            return anything_travels
+        case unknown:
+            assert_never(unknown)
+
+
 def parcel_fee_due(
     market: MarketConfig, shipping: ShippingModel, anything_travels: bool
 ) -> Decimal | None:
     """The customs fee an order pays at checkout, as the config writes it, or ``None``.
 
-    Only a direct parcel pays it, and only when something in the order travels: otherwise no
-    parcel is sent. A market without a fee charges none. No VAT is charged on it. Raises
-    ``ValueError`` for an unknown ``shipping``.
+    Only an order that ``sends_parcel`` pays it. A market without a fee charges none. No VAT
+    is charged on it. Raises ``ValueError`` for an unknown ``shipping``.
     """
-    require_shipping(shipping)
-    match shipping:
-        case "consolidated":
-            return None
-        case "parcel":
-            fee = market.customs.parcel_fee
-            return fee.amount if anything_travels and fee is not None else None
-        case unknown:
-            assert_never(unknown)
+    fee = market.customs.parcel_fee
+    if fee is None or not sends_parcel(shipping, anything_travels):
+        return None
+    return fee.amount
 
 
 def assess_duty(

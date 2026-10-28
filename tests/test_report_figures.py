@@ -697,6 +697,7 @@ def _quote(gross: str, shelf_price: str) -> PriceQuote:
         currency="XXX",
         goods=Decimal(gross),
         freight=Decimal(0),
+        cif=Decimal(gross),
         duty=Decimal(0),
         vat=Decimal(0),
         gross=Decimal(gross),

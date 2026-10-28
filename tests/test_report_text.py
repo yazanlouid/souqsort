@@ -1101,6 +1101,7 @@ def _quote(
         currency="XXX",
         goods=parts[0],
         freight=parts[1],
+        cif=parts[0] + parts[1],
         duty=parts[2],
         vat=parts[3],
         gross=sum(parts, Decimal(0)),

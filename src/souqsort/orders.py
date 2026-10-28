@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal, assert_never
+from typing import Literal
 
 from souqsort.compliance import ExcludedProduct, screen_products
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
@@ -20,7 +20,13 @@ from souqsort.pipeline import (
     localise_catalogue,
     require_duty_adjustment,
 )
-from souqsort.pricing.customs import duty_rate, parcel_fee_due, travels, within_threshold
+from souqsort.pricing.customs import (
+    duty_rate,
+    parcel_fee_due,
+    sends_parcel,
+    travels,
+    within_threshold,
+)
 from souqsort.pricing.landed_cost import PriceQuote
 from souqsort.pricing.money import round_minor
 
@@ -91,17 +97,6 @@ def _require_lines(lines: Sequence[OrderLine]) -> None:
         raise ValueError(f"duplicate sku: {', '.join(duplicates)}")
 
 
-def _sends_a_parcel(shipping: ShippingModel, anything_travels: bool) -> bool:
-    # A match, not a comparison: mypy fails here if ShippingModel gains a value with no case.
-    match shipping:
-        case "consolidated":
-            return False
-        case "parcel":
-            return anything_travels
-        case unknown:
-            assert_never(unknown)
-
-
 def quote_order(
     lines: Sequence[OrderLine],
     catalogue: Catalogue,
@@ -158,14 +153,9 @@ def quote_order(
     anything_travels = any(line.travels for line in quoted)
     parcel_value: Decimal | None = None
     passes: bool | None = None
-    if _sends_a_parcel(shipping, anything_travels):
+    if sends_parcel(shipping, anything_travels):
         parcel_value = sum(
-            (
-                line.quantity * (line.quote.goods + line.quote.freight)
-                for line in quoted
-                if line.travels
-            ),
-            Decimal(0),
+            (line.quantity * line.quote.cif for line in quoted if line.travels), Decimal(0)
         )
         rule = market.customs.de_minimis
         passes = None if rule is None else within_threshold(parcel_value, rule)
@@ -180,7 +170,7 @@ def quote_order(
         duty = sum(
             (
                 line.quantity
-                * (line.quote.goods + line.quote.freight)
+                * line.quote.cif
                 * duty_rate(products[line.sku], market, duty_adjustment)
                 for line in waived
             ),

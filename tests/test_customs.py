@@ -26,6 +26,7 @@ from souqsort.pricing.customs import (
     de_minimis_applies,
     duty_rate,
     parcel_fee_due,
+    sends_parcel,
     travels,
     within_threshold,
 )
@@ -299,6 +300,41 @@ def test_price_product_rejects_an_unknown_shipping_model(
         price_product(products[HEADPHONES], ksa, fx, Decimal("0"), shipping)
 
 
+# --- sends_parcel (SPEC §7.10.1 rule 3) -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("shipping", "anything_travels", "expected"),
+    [
+        ("parcel", True, True),
+        ("parcel", False, False),  # nothing travels, so no parcel is sent
+        ("consolidated", True, False),
+        ("consolidated", False, False),
+    ],
+)
+def test_sends_parcel(shipping: Any, anything_travels: bool, expected: bool) -> None:
+    assert sends_parcel(shipping, anything_travels) is expected
+
+
+@pytest.mark.parametrize("shipping", BAD_SHIPPING)
+def test_sends_parcel_rejects_an_unknown_shipping_model(shipping: Any) -> None:
+    with pytest.raises(ValueError, match="one of consolidated, parcel"):
+        sends_parcel(shipping, True)
+
+
+@pytest.mark.parametrize("code", ["KSA", "UAE", "KWT"])
+@pytest.mark.parametrize("shipping", ["consolidated", "parcel"])
+@pytest.mark.parametrize("anything_travels", [True, False])
+def test_a_fee_is_due_only_when_a_parcel_is_sent(
+    config: GccConfig, code: str, shipping: Any, anything_travels: bool
+) -> None:
+    market = config.markets[code]
+    fee = parcel_fee_due(market, shipping, anything_travels)
+    expected = market.customs.parcel_fee
+    sent = sends_parcel(shipping, anything_travels)
+    assert fee == (expected.amount if sent and expected is not None else None)
+
+
 # --- parcel_fee_due (SPEC §7.10.1 rule 6, M15) ---------------------------------------------
 
 
@@ -400,6 +436,7 @@ def test_worked_example_e_headphones_in_ksa_by_parcel(
     assert quote.goods == Decimal("562.4625")
     assert quote.freight == Decimal("11.8125")  # 0.35 kg x 9.00 USD
     assert quote.goods + quote.freight == Decimal("574.275")  # cif, below 1,000.00
+    assert quote.cif == Decimal("574.275")
     assert quote.duty == 0
     assert (quote.duty_rate, quote.duty_waived) == (Decimal("0"), True)
     assert quote.vat == Decimal("86.14125")
