@@ -246,11 +246,18 @@ The full rules, with worked examples, are in [SPEC.md](SPEC.md).
 
 ## Status
 
-**v0.3.0: the expansion report.** `GCC_EXPANSION_REPORT.md` compares every market and both shipping
+**v0.4.0: real orders.** An order of several items ships as one parcel, and the de minimis threshold
+applies to its whole value. Shelf prices never change with the basket: what an order adds is charged
+at checkout, a customs fee in KSA and, when the parcel fails the threshold, the duty its shelf prices
+left out, with the VAT on it. Direct parcels get a linehaul of their own. Orders are priced both ways
+side by side in the `order` CLI command, the dashboard's Order tab and the report's Orders section,
+and the report compares products as one-item orders, so the fee counts.
+
+**v0.3.0:** the expansion report: `GCC_EXPANSION_REPORT.md` compares every market and both shipping
 models for one order: prices, margins and delivery side by side, consolidated imports against direct
-parcels, tariff exposure, how a price is built, pricing risks and what is not sold. Each section
-opens with sentences computed from its figures. It comes from the `report` CLI command or the
-dashboard's download button, and the same inputs give the same bytes on every OS.
+parcels, tariff exposure, how a price is built, pricing risks and what is not sold. It comes from the
+`report` CLI command or the dashboard's download button, and the same inputs give the same bytes on
+every OS.
 
 **v0.2.0:** three markets, compliance and de minimis: KSA, the UAE and Kuwait; banned product
 attributes reported as not sold; a consolidated-import or direct-parcel shipping model, with de
@@ -261,5 +268,7 @@ delivery estimates, the CLI and the dashboard.
 
 Roadmap:
 
-- **Later:** pricing refinements (per-parcel fees, orders of several items, a finer price ladder for
-  KWD), calculation traces, and a data pipeline. See [SPEC.md](SPEC.md) §2.
+- **v0.5:** pricing decisions: a finer price ladder for KWD, a tariff pass-through slider with
+  breakeven analysis, and calculation traces with a price waterfall in the dashboard.
+- **Later:** pricing refinements (minimum parcel charges, split parcels, Saudi Arabia's percentage
+  import fee), and a data pipeline. See [SPEC.md](SPEC.md) §2.

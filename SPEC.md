@@ -2,7 +2,7 @@
 
 > The single source of truth for building SouqSort with Claude Code.
 > Work one milestone at a time (M0 → M18). Each milestone lists its acceptance tests.
-> v0.1 (M0–M6) is done and tagged `v0.1.0`. v0.2 (**M7 → Fix #2 → M8 → M9 → M10 → Release**) is done and tagged `v0.2.0`. v0.3 (**M11 → M12 → M13 → M14 → Release**) is done and tagged `v0.3.0`. v0.4 runs **M15 → M16 → M17 → M18 → Release**. Each step has its own branch and reaches `main` through a pull request with green CI.
+> v0.1 (M0–M6) is done and tagged `v0.1.0`. v0.2 (**M7 → Fix #2 → M8 → M9 → M10 → Release**) is done and tagged `v0.2.0`. v0.3 (**M11 → M12 → M13 → M14 → Release**) is done and tagged `v0.3.0`. v0.4 (**M15 → M16 → M17 → M18 → Release**) is done and tagged `v0.4.0`. Each step has its own branch and reaches `main` through a pull request with green CI.
 
 ## 1. What SouqSort is
 
@@ -32,7 +32,7 @@ SouqSort is a localisation and pricing engine for a UK-based retailer launching 
 - **Reproducible:** the same catalogue, config and order time give the same bytes on every OS. A sample for a fixed order lives in `docs/`, and a test keeps it current.
 - **Claude Code:** a `/release` skill that turns the release steps into one command, used to ship v0.3.0.
 
-### v0.4: real orders
+### v0.4: real orders (done, tag `v0.4.0`)
 - **Orders of several items** (§7.10): an order ships as one parcel, and the de minimis threshold applies to its whole CIF. Shelf prices never change with the basket. What an order adds is charged at checkout: a customs fee and, when the parcel fails the threshold, the duty its shelf prices left out, with the VAT on it.
 - **Parcel costs** (§6.2, §7.7, §8.3): a flat customs fee per parcel in KSA (SAR 15) and a linehaul of their own for direct parcels. A product that weighs nothing, such as a download, never travels in a parcel.
 - **Everywhere:** an `order` CLI command and an Order tab in the dashboard, both showing the two shipping models side by side, and an Orders section in the report for three sample orders (§6.3). The report compares products as one-item orders, so the fee counts: in KSA, parcels are cheaper for 3 of 11 products, not 6.
