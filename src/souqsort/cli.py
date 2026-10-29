@@ -260,8 +260,8 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
         "report",
         help="write the GCC expansion report",
         description=(
-            "Write the expansion report: every market in the config for one order, "
-            "side by side, as Markdown."
+            "Write the expansion report: every market in the config and the sample orders for "
+            "one order time, side by side, as Markdown."
         ),
     )
     report.add_argument(

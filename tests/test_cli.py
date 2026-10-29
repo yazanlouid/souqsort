@@ -1452,6 +1452,17 @@ def test_report_help_lists_every_option(run: Callable[..., Result]) -> None:
     assert "data/raw/sample_orders.json" in result.out
 
 
+def test_report_help_says_it_prices_the_sample_orders(run: Callable[..., Result]) -> None:
+    result = run("report", "--help")
+
+    # argparse wraps the description, so compare it with its whitespace collapsed.
+    assert result.code == 0
+    assert (
+        "Write the expansion report: every market in the config and the sample orders for one "
+        "order time, side by side, as Markdown."
+    ) in " ".join(result.out.split())
+
+
 # --- the report's sample orders (SPEC §9.6, M18) ------------------------------------------
 
 
