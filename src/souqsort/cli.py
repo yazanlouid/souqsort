@@ -151,6 +151,17 @@ def _add_data_file_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_orders_option(parser: argparse.ArgumentParser, help_text: str) -> None:
+    """``--orders PATH``, with ``help_text`` followed by its default."""
+    parser.add_argument(
+        "--orders",
+        type=Path,
+        default=DEFAULT_ORDERS,
+        metavar="PATH",
+        help=f"{help_text} (default: {DEFAULT_ORDERS.as_posix()})",
+    )
+
+
 def _add_market_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--market", required=True, metavar="CODE", help="market code from the config, e.g. KSA"
@@ -248,13 +259,7 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     _add_duty_adjust_option(order)
     _add_local_ordered_at_option(order)
     _add_data_file_options(order)
-    order.add_argument(
-        "--orders",
-        type=Path,
-        default=DEFAULT_ORDERS,
-        metavar="PATH",
-        help=f"sample orders JSON file, read for --sample (default: {DEFAULT_ORDERS.as_posix()})",
-    )
+    _add_orders_option(order, "sample orders JSON file, read for --sample")
 
     report = commands.add_parser(
         "report",
@@ -277,13 +282,7 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
         help=f"Markdown file to write, creating its folder if needed (default: {DEFAULT_REPORT})",
     )
     _add_data_file_options(report)
-    report.add_argument(
-        "--orders",
-        type=Path,
-        default=DEFAULT_ORDERS,
-        metavar="PATH",
-        help=f"sample orders JSON file (default: {DEFAULT_ORDERS.as_posix()})",
-    )
+    _add_orders_option(report, "sample orders JSON file")
     return parser, {"price": price, "order": order, "report": report}
 
 
