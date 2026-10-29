@@ -268,11 +268,7 @@ class MarketOrders:
     @property
     def duty_added(self) -> int:
         """How many priced parcel orders pay duty at checkout."""
-        return sum(
-            1
-            for o in self._priced_orders()
-            if any(line.kind == "duty" for line in o.parcel.checkout)
-        )
+        return sum(1 for o in self._priced_orders() if o.parcel.checkout_amount("duty") is not None)
 
 
 @dataclass(frozen=True)

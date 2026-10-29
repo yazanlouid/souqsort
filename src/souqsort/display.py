@@ -258,13 +258,6 @@ def join_list(items: Sequence[str], *, word: str = "and") -> str:
     return f"{', '.join(items[:-1])} {word} {items[-1]}"
 
 
-def _checkout_amount(quote: OrderQuote, kind: CheckoutKind) -> str:
-    for line in quote.checkout:
-        if line.kind == kind:
-            return format_money(line.amount, quote.minor_units)
-    return _NO_VALUE
-
-
 def _require_same_order(consolidated: OrderQuote, parcel: OrderQuote) -> None:
     skus = [line.sku for line in consolidated.lines]
     parcel_skus = [line.sku for line in parcel.lines]
@@ -286,6 +279,10 @@ def order_rows(consolidated: OrderQuote, parcel: OrderQuote) -> list[OrderRow]:
     def money(quote: OrderQuote, amount: Decimal) -> str:
         return format_money(amount, quote.minor_units)
 
+    def checkout(quote: OrderQuote, kind: CheckoutKind) -> str:
+        amount = quote.checkout_amount(kind)
+        return _NO_VALUE if amount is None else money(quote, amount)
+
     rows = [
         OrderRow(
             label=line.sku,
@@ -306,7 +303,7 @@ def order_rows(consolidated: OrderQuote, parcel: OrderQuote) -> list[OrderRow]:
         )
     )
     for kind, label in CHECKOUT_LABELS.items():
-        amounts = (_checkout_amount(consolidated, kind), _checkout_amount(parcel, kind))
+        amounts = (checkout(consolidated, kind), checkout(parcel, kind))
         if amounts != (_NO_VALUE, _NO_VALUE):
             rows.append(OrderRow(label, "", "", *amounts))
     rows.append(
@@ -376,7 +373,7 @@ def parcel_note(market: MarketConfig, parcel: OrderQuote) -> str:
         if excluded:
             return f"{passes}, except to {join_list(excluded)}, which it excludes."
         return f"{passes}."
-    if any(line.kind == "duty" for line in parcel.checkout):
+    if parcel.checkout_amount("duty") is not None:
         consequence = "the duty its shelf prices left out is added at checkout"
     else:
         consequence = "its shelf prices already include it"

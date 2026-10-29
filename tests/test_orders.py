@@ -3,7 +3,7 @@
 from dataclasses import FrozenInstanceError
 from decimal import ROUND_DOWN, Decimal, Inexact, localcontext
 from itertools import permutations
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from hypothesis import given
@@ -331,6 +331,41 @@ def test_example_p_kuwait_has_no_rule_and_no_fee(catalogue: Catalogue, config: G
 
     consolidated = _quote(catalogue, config, "KWT", "consolidated", (SCARF, 1), (SERUM, 1))
     assert consolidated.total == Decimal("27.900")
+
+
+# --- checkout amounts -----------------------------------------------------------------------
+
+
+def test_checkout_amount_finds_each_kind(catalogue: Catalogue, config: GccConfig) -> None:
+    order = _quote(catalogue, config, "KSA", "parcel", (HEADPHONES, 1), (BAG, 1))
+
+    assert order.checkout_amount("customs_fee") == Decimal("15.00")
+    assert order.checkout_amount("duty") == Decimal("98.57")
+
+
+def test_checkout_amount_is_none_for_a_kind_the_order_does_not_add(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    consolidated = _quote(catalogue, config, "KSA", "consolidated", (HEADPHONES, 1), (BAG, 1))
+    uae = _quote(catalogue, config, "UAE", "parcel", (HEADPHONES, 1), (BAG, 1))
+    lip_balms = _quote(catalogue, config, "KSA", "parcel", (LIP_BALM, 2))
+
+    assert consolidated.checkout_amount("customs_fee") is None
+    assert consolidated.checkout_amount("duty") is None
+    assert uae.checkout_amount("customs_fee") is None  # the UAE charges no fee
+    assert uae.checkout_amount("duty") == Decimal("53.73")
+    assert lip_balms.checkout_amount("duty") is None  # within the threshold
+
+
+@pytest.mark.parametrize("kind", get_args(CheckoutKind))
+def test_checkout_amount_agrees_with_the_checkout_lines(
+    catalogue: Catalogue, config: GccConfig, kind: CheckoutKind
+) -> None:
+    for market in config.markets:
+        for model in SHIPPING_MODELS:
+            order = _quote(catalogue, config, market, model, (HEADPHONES, 1), (BAG, 1))
+            amounts = [line.amount for line in order.checkout if line.kind == kind]
+            assert order.checkout_amount(kind) == (amounts[0] if amounts else None)
 
 
 # --- lines, consolidated imports and delivery -----------------------------------------------

@@ -20,7 +20,6 @@ from souqsort.models import (
     SampleOrder,
     ShippingModel,
 )
-from souqsort.orders import CheckoutKind, OrderQuote
 from souqsort.pipeline import LocalisationError
 from souqsort.pricing.landed_cost import PriceQuote
 from souqsort.pricing.money import round_minor
@@ -504,10 +503,6 @@ def _order_items_row(order: SampleOrder) -> dict[str, str]:
     return {"name": table_cell(order.name), "lines": table_cell(order_items_text(order.lines))}
 
 
-def _checkout_amount(quote: OrderQuote, kind: CheckoutKind) -> Decimal | None:
-    return next((line.amount for line in quote.checkout if line.kind == kind), None)
-
-
 def _order_row(market: MarketOrders, order: OrderComparison) -> dict[str, str]:
     """One order in a market. An order the market sells nothing of shows ``-`` throughout."""
     name = table_cell(order.name)
@@ -529,8 +524,8 @@ def _order_row(market: MarketOrders, order: OrderComparison) -> dict[str, str]:
         "parcel": money(parcel.total, "parcel total"),
         "change": signed_percent_text(change, figure=f"{figure} parcel change"),
         "cif": money(parcel.parcel_value, "parcel CIF"),
-        "fee": money(_checkout_amount(parcel, "customs_fee"), "customs fee"),
-        "duty": money(_checkout_amount(parcel, "duty"), "duty and VAT"),
+        "fee": money(parcel.checkout_amount("customs_fee"), "customs fee"),
+        "duty": money(parcel.checkout_amount("duty"), "duty and VAT"),
     }
 
 

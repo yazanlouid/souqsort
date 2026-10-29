@@ -103,6 +103,13 @@ class OrderQuote:
         """The line totals plus the checkout lines, exact."""
         return self.items_total + sum((line.amount for line in self.checkout), Decimal(0))
 
+    def checkout_amount(self, kind: CheckoutKind) -> Decimal | None:
+        """What the order adds at checkout as ``kind``, or ``None`` when it adds no such line.
+
+        An order has at most one checkout line of each kind.
+        """
+        return next((line.amount for line in self.checkout if line.kind == kind), None)
+
 
 def _require_lines(lines: Sequence[OrderLine]) -> None:
     if not lines:
