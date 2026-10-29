@@ -15,7 +15,7 @@ sold, with the reason.
 > costs, holidays, compliance rules and the product catalogue are sample values written for this
 > demo. Do not use them to quote real prices or delivery dates.
 
-![SouqSort dashboard: UAE direct-parcel prices with a +3 pp duty adjustment, duty waived for most products, the gummy bears listed as not sold, and the expansion report's download button in the sidebar](docs/dashboard.png)
+![SouqSort dashboard: the Products tab, next to the Order tab, with UAE direct-parcel prices at a +3 pp duty adjustment, duty waived for most products and the licence at 3.0%, the gummy bears listed as not sold, and the expansion report's download button in the sidebar](docs/dashboard.png)
 
 ## Sample run
 
@@ -108,10 +108,12 @@ you build.
 
 The dashboard answers one market at a time. The expansion report puts them side by side: for one
 order, it prices the catalogue in every market in the config, under both shipping models, at today's
-duty rates and with tariff rises of 5, 10 and 20 percentage points as stress tests. It shows how one
-price is built in each market, flags prices whose ending adds more than 10%, and lists what each
-market cannot sell, with the reasons. Its only inputs are the data files and the order time, so the
-same order always gives the same file, byte for byte.
+duty rates and with tariff rises of 5, 10 and 20 percentage points as stress tests. Its Orders
+section prices each sample order in every market, as one parcel and as a consolidated import, with
+the customs fee and any duty added at checkout. It shows how one price is built in each market,
+flags prices whose ending adds more than 10%, and lists what each market cannot sell, with the
+reasons. Its only inputs are the data files, the sample orders and the order time, so the same
+order always gives the same file, byte for byte.
 
 ```sh
 uv run python -m souqsort report --ordered-at 2026-10-15T09:00Z
@@ -120,10 +122,10 @@ uv run python -m souqsort report --ordered-at 2026-10-15T09:00Z
 This writes `outputs/GCC_EXPANSION_REPORT.md`. `--ordered-at` needs a UTC offset because the report
 covers every market, and defaults to now. In the dashboard, **Download expansion report** in the
 sidebar gives the same report for the order date and time picked there; the duty slider, shipping
-model and search don't change it.
+model, search and Order tab don't change it.
 
 [`docs/GCC_EXPANSION_REPORT.md`](docs/GCC_EXPANSION_REPORT.md) is the report for the sample data,
-for an order on Thursday 15 October 2026 at 09:00 UTC. Three of its findings:
+for an order on Thursday 15 October 2026 at 09:00 UTC. Four of its findings:
 
 - **Parcels in KSA.** Direct parcels pay no duty on 9 of the 11 products KSA sells, but dearer
   parcel freight and a 15.00 SAR customs fee per parcel mean they are cheaper than consolidated
@@ -131,6 +133,9 @@ for an order on Thursday 15 October 2026 at 09:00 UTC. Three of its findings:
 - **A 10 pp tariff rise.** In KSA it lifts average prices by 9.0% for consolidated imports but only
   1.8% for direct parcels, because de minimis waives the duty on most parcels whatever the rate.
 - **Kuwait's lip balm.** The 0.950 price ending takes it from 1.157 to 1.950 KWD, adding 68.5%.
+- **Headphones and a bag.** Each is cheaper alone as a parcel in KSA, but together they cross
+  SAR 1,000 as one parcel, so the whole order pays duty at checkout: 1,321.47 SAR against 1,281.90
+  as a consolidated import.
 
 ## What makes it tricky
 
