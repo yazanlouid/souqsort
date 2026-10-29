@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, getcontext
 from typing import Any, get_args
 
 import pytest
@@ -307,6 +307,26 @@ def test_signed_percent(fraction: str, expected: str) -> None:
 )
 def test_rates_and_margins_have_no_sign(fraction: str, expected: str) -> None:
     assert percent_text(Decimal(fraction), figure="rate") == expected
+
+
+# Longer than the default context's 28 digits, as an order's parcel value can be: rounded
+# there first, each would round up to the half and then up again.
+LONG_AMOUNT = "1049.264999999999999999999999995"
+LONG_FRACTION = "0.00049999999999999999999999999995"
+
+
+def test_long_figures_have_more_digits_than_the_default_context() -> None:
+    for figure in (LONG_AMOUNT, LONG_FRACTION):
+        assert len(Decimal(figure).as_tuple().digits) > getcontext().prec
+
+
+def test_a_long_amount_is_rounded_once() -> None:
+    assert money_text(Decimal(LONG_AMOUNT), 2, figure="KSA: parcel CIF") == "1,049.26"
+
+
+def test_a_long_fraction_is_rounded_once() -> None:
+    assert percent_text(Decimal(LONG_FRACTION), figure="rate") == "0.0%"
+    assert signed_percent_text(Decimal(LONG_FRACTION), figure="change") == "0.0%"
 
 
 @pytest.mark.parametrize(

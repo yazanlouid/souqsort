@@ -7,7 +7,7 @@ places them (§9.4.1).
 import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, time
-from decimal import Decimal
+from decimal import Decimal, Inexact, localcontext
 from functools import cache
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
@@ -87,12 +87,22 @@ _TIMES = "\u00d7"
 def _rounded(figure: str, amount: Decimal, places: int, scale: Decimal = Decimal(1)) -> Decimal:
     """``amount * scale``, rounded half up to ``places`` decimals for display.
 
-    Every number the report shows is rounded here. A figure too large for decimal arithmetic
-    raises ``LocalisationError`` naming ``figure`` (``"KSA: average margin"``), as the CLI and
-    the dashboard do, so the report command fails with a message rather than a traceback.
+    Every number the report shows is rounded here, once. The product is formed exactly: an
+    amount can have more digits than the default context (an order's parcel value does), and
+    rounding it there first would round twice. A product has at most as many digits as both
+    factors together, so with that precision it never rounds; ``Inexact`` is trapped to prove
+    it.
+
+    A figure too large for decimal arithmetic raises ``LocalisationError`` naming ``figure``
+    (``"KSA: average margin"``), as the CLI and the dashboard do, so the report command fails
+    with a message rather than a traceback.
     """
     try:
-        return round_minor(amount * scale, places)
+        with localcontext() as context:
+            context.traps[Inexact] = True
+            context.prec = len(amount.as_tuple().digits) + len(scale.as_tuple().digits)
+            scaled = amount * scale
+        return round_minor(scaled, places)
     except ArithmeticError as exc:
         raise LocalisationError(f"{figure} is too large to display") from exc
 
