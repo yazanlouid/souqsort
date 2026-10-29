@@ -798,7 +798,7 @@ Worked examples I, J, K and P (§7.10.2) are four of these cells. The parcel val
 - **Markets:** the code in sentences and in most tables (`KSA`); code and name in per-market headings and in the first column of the markets table (`KSA (Saudi Arabia)`); code and currency in the build-up headings (`KSA (SAR)`).
 - **Lists in a sentence** join with commas and a final "and": "3 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT". Clauses that already contain "and" join with semicolons and a final "; and".
 - **Counts:** "1 product", otherwise "products"; the same for "order" and "sample order".
-- **Order items (M18):** a line of one unit is its SKU, more units read `2 × BEAU-LIP-040`; lines join with commas, in the order's order. The sign is U+00D7, written `×` in the source, so ruff's check for ambiguous characters stays quiet.
+- **Order items (M18):** a line of one unit is its SKU, more units read `2 × BEAU-LIP-040`; lines join with commas, in the order's order. The sign is U+00D7, written `\u00d7` in the source, so ruff's check for ambiguous characters stays quiet.
 - **No value:** `-` in a table cell with nothing to show: an average for a market that sells nothing, the consolidated import's fee row, a parcel with no value, an order that adds no fee or no duty, an order the market sells nothing of.
 - **Table cells** that come from the data escape `|` as `\|` and turn line breaks into spaces.
 - **Shipping models** in tables use the dashboard labels: "Consolidated import", "Direct parcel".

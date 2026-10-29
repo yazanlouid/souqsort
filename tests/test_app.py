@@ -33,6 +33,7 @@ from souqsort.pipeline import (
 from souqsort.report import build_report, render_report
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py"
+ORDERS_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "sample_orders.json"
 TABS = ["Products", "Order"]
 SAMPLE_REPORT = Path(__file__).resolve().parents[1] / "docs" / "GCC_EXPANSION_REPORT.md"
 
@@ -80,8 +81,9 @@ KSA_FEE_NOTE = "Each parcel order also pays a customs fee of 15.00 SAR at checko
 # The report download button in the sidebar (SPEC §9.6).
 REPORT_LABEL = "Download expansion report"
 REPORT_HELP = (
-    "Every market and both shipping models for the order date and time above, at today's duty "
-    "rates. The duty slider, shipping model and search don't change it."
+    "Every market, both shipping models and the sample orders, for the order date and time "
+    "above, at today's duty rates. The duty slider, shipping model, search and Order tab don't "
+    "change it."
 )
 
 # The moment the dashboard is opened: Sun 10:00 in Riyadh, before the cutoff (SPEC §8.1 row 1).
@@ -115,12 +117,15 @@ def _products(at: AppTest) -> Block:
 def _grid(at: AppTest) -> pd.DataFrame:
     """The data sent to the main grid: the first table in the "Products" tab.
 
-    The page has no error, except perhaps one in the "Order" tab, which its own tests check.
+    The page has no error, except perhaps one in the "Order" tab and one in the sidebar in
+    place of the report download, which needs the sample orders too; their own tests check
+    them.
     """
     errors = [error.value for error in at.error]
     assert not at.exception, at.exception
     assert len(at.tabs) == len(TABS), errors
-    assert errors == [error.value for error in at.tabs[1].error], errors
+    expected = [error.value for error in (*at.sidebar.error, *at.tabs[1].error)]
+    assert sorted(errors) == sorted(expected), errors
     frame: pd.DataFrame = _products(at).dataframe[0].value
     return frame
 
@@ -865,7 +870,9 @@ def _offered(offers: list[dict[str, Any]]) -> bytes:
 
 
 def _report_bytes(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) -> bytes:
-    return render_report(build_report(catalogue, config, ordered_at)).encode("utf-8")
+    """The report for the sample orders, as the app encodes it."""
+    sample_orders = load_sample_orders(ORDERS_PATH)
+    return render_report(build_report(catalogue, config, sample_orders, ordered_at)).encode("utf-8")
 
 
 def test_sidebar_has_the_report_download_button(
@@ -1347,18 +1354,42 @@ def test_a_sample_order_missing_from_the_catalogue_is_an_error_in_its_tab(
     assert [error.value for error in _order_tab(at).error] == [f"{LIP_BALM}: not in the catalogue"]
     assert len(_order_tab(at).metric) == 0
     assert len(_grid(at)) == KSA_FOR_SALE - 1  # "Products" keeps working
+    # The report prices the sample orders too, so the sidebar says why it cannot (SPEC §9.1).
+    assert [error.value for error in at.sidebar.error] == [
+        f"Cannot build the expansion report: two-lip-balms: {LIP_BALM} is not in the catalogue"
+    ]
+    assert len(at.sidebar.download_button) == 0
+
+
+def test_building_a_basket_does_not_change_the_report(
+    report_app: AppTest, offers: list[dict[str, Any]]
+) -> None:
+    _order(report_app, *THU_NOON)
+    assert _offered(offers) == SAMPLE_REPORT.read_bytes()
+
+    _pick_order(report_app, "headphones-and-bag")
+    assert _offered(offers) == SAMPLE_REPORT.read_bytes()
+
+    _build_your_own(report_app, LIP_BALM, LICENCE)
+    report_app.number_input(key=f"quantity_{LIP_BALM}").set_value(5).run()
+    assert len(_order_tab(report_app).metric) == 2
+    assert _offered(offers) == SAMPLE_REPORT.read_bytes()
 
 
 def _orders_file_problem(at: AppTest) -> str:
-    """The "Order" tab's one error, after checking that nothing else in the tab is drawn and
-    that "Products" and the report download keep working."""
+    """The "Order" tab's one error, after checking that nothing else in the tab is drawn, that
+    "Products" keeps working, and that the sidebar shows the same error in place of the report
+    download, which needs the sample orders (SPEC §9.6)."""
     tab = _order_tab(at)
     (error,) = tab.error
     assert len(tab.selectbox) == len(tab.metric) == len(tab.dataframe) == len(tab.caption) == 0
     assert len(_grid(at)) == KSA_FOR_SALE
     assert _metrics(at)[AVERAGE_MARGIN] == "64.6%"
-    assert [button.label for button in at.sidebar.download_button] == [REPORT_LABEL]
     value: str = error.value
+    assert [error.value for error in at.sidebar.error] == [
+        f"Cannot build the expansion report: {value}"
+    ]
+    assert len(at.sidebar.download_button) == 0
     return value
 
 

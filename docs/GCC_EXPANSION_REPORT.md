@@ -1,6 +1,6 @@
 # GCC expansion report
 
-An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-11-01, FX rates as of 2026-10-01 and catalogue 2026-10-01.
+An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the config with both shipping models. Built from market config 2026-11-01, FX rates as of 2026-10-01, catalogue 2026-10-01 and sample orders 2026-11-01.
 
 > All market data is illustrative. Do not use it to quote real prices or delivery dates.
 
@@ -10,6 +10,7 @@ An order placed on Thu 2026-10-15 at 09:00 UTC, priced in every market in the co
 - For this order, delivery is on Thu 2026-10-22 in KSA, Wed 2026-10-21 in UAE and Thu 2026-10-22 in KWT.
 - Direct parcels are cheaper than consolidated imports for 3 of 11 products in KSA, 5 of 12 in UAE and 0 of 11 in KWT.
 - For this order, direct parcels arrive on Wed 2026-10-21 in KSA, Tue 2026-10-20 in UAE and Wed 2026-10-21 in KWT.
+- Direct parcels are cheaper than consolidated imports for 1 of 3 sample orders in KSA, 1 of 3 in UAE and 0 of 3 in KWT.
 - A 10 pp tariff rise lifts average prices by 9.0% for consolidated imports and 1.8% for direct parcels in KSA; 9.3% and 2.4% in UAE; and 7.6% and 9.4% in KWT.
 - Wireless Noise-Cancelling Headphones (ELEC-HP-001) is the first product every market sells. Ordered on its own as a direct parcel instead of a consolidated import, its total changes by -1.6% in KSA, -3.8% in UAE and +2.0% in KWT.
 - The price ending adds more than 10.0% to 2 products: BEAU-LIP-040 in KWT (+68.5%) and GROC-TEA-060 in KWT (+20.0%).
@@ -83,6 +84,46 @@ No de minimis rule, so every parcel pays duty. Parcels are cheaper for 0 of 11 p
 | BEAU-SRM-041 | Vitamin C Serum 30 ml | 7.950 | 8.950 | +12.6% | 5.0% |
 | DIGI-LIC-050 | Photo Editor Pro Licence (digital download) | 24.950 | 24.950 | 0.0% | 0.0% |
 | GROC-TEA-060 | English Breakfast Tea, 80 bags | 2.950 | 2.950 | 0.0% | 5.0% |
+
+## Orders
+
+Direct parcels are cheaper than consolidated imports for 1 of 3 sample orders in KSA, 1 of 3 in UAE and 0 of 3 in KWT.
+
+| Order | Items |
+|---|---|
+| Two lip balms | 2 × BEAU-LIP-040 |
+| A silk scarf and a serum | FASH-SCF-015, BEAU-SRM-041 |
+| Headphones and a bag | ELEC-HP-001, FASH-BAG-014 |
+
+### KSA (Saudi Arabia)
+
+Parcels are cheaper for 1 of 3 orders, dearer for 2 and unchanged for 0. Duty is added at checkout to 1 of them.
+
+| Order | Consolidated (SAR) | Direct parcel (SAR) | Change | Parcel CIF (SAR) | Customs fee (SAR) | Duty and VAT (SAR) |
+|---|---:|---:|---:|---:|---:|---:|
+| Two lip balms | 33.90 | 46.90 | +38.3% | 27.53 | 15.00 | - |
+| A silk scarf and a serum | 405.90 | 388.90 | -4.2% | 323.94 | 15.00 | - |
+| Headphones and a bag | 1,281.90 | 1,321.47 | +3.1% | 1,049.26 | 15.00 | 98.57 |
+
+### UAE (United Arab Emirates)
+
+Parcels are cheaper for 1 of 3 orders, dearer for 1 and unchanged for 1. Duty is added at checkout to 1 of them.
+
+| Order | Consolidated (AED) | Direct parcel (AED) | Change | Parcel CIF (AED) | Customs fee (AED) | Duty and VAT (AED) |
+|---|---:|---:|---:|---:|---:|---:|
+| Two lip balms | 29.98 | 29.98 | 0.0% | 26.81 | - | - |
+| A silk scarf and a serum | 346.98 | 333.98 | -3.7% | 316.43 | - | - |
+| Headphones and a bag | 1,109.98 | 1,129.71 | +1.8% | 1,023.35 | - | 53.73 |
+
+### KWT (Kuwait)
+
+Parcels are cheaper for 0 of 3 orders, dearer for 2 and unchanged for 1.
+
+| Order | Consolidated (KWD) | Direct parcel (KWD) | Change | Parcel CIF (KWD) | Customs fee (KWD) | Duty and VAT (KWD) |
+|---|---:|---:|---:|---:|---:|---:|
+| Two lip balms | 3.900 | 3.900 | 0.0% | 2.266 | - | - |
+| A silk scarf and a serum | 27.900 | 28.900 | +3.6% | 26.587 | - | - |
+| Headphones and a bag | 88.900 | 91.900 | +3.4% | 86.253 | - | - |
 
 ## Tariff exposure
 
@@ -161,6 +202,7 @@ Out of 13 products, KSA cannot sell 2, UAE 1 and KWT 2.
 
 - Products are compared as one-item orders, and every cost is passed on to the customer.
 - A direct parcel pays the market's customs fee at checkout, and parcel prices include it. A product that weighs nothing, such as a download, never travels in a parcel, so it pays no fee and de minimis never applies to it.
+- Each sample order ships as one parcel, and its CIF decides de minimis for the whole order. When it is not within the threshold, the duty that its shelf prices left out is added at checkout, with the VAT on it. Direct parcel is the total at checkout.
 - Prices use today's duty rates. A tariff rise adds percentage points to every duty rate. Tariff exposure compares shelf prices, without the customs fee.
 - Above catalogue price compares the shelf price with the catalogue price converted at the config's FX rates, so it includes freight, duty, VAT and the price ending.
 - Averages are unweighted means over the products a market sells.

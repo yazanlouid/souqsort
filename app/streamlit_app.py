@@ -54,8 +54,8 @@ except OSError as exc:
     st.error(f"Cannot read data file: {exc}")
     st.stop()
 
-# Only the "Order" tab uses the sample orders, so a problem with their file is shown there and
-# the rest of the page keeps working.
+# Only the "Order" tab and the report download use the sample orders, so a problem with their
+# file is shown in those two places and the rest of the page keeps working.
 sample_orders: SampleOrders | None = None
 orders_problem: str | None = None
 try:
@@ -132,12 +132,19 @@ with st.sidebar:
     # The pickers give a date and a time with no offset: the same case as the CLI's --ordered-at.
     ordered_at = in_market_time(datetime.combine(order_date, order_time), market)
 
-    # The report covers every market and both shipping models at today's duty rates, for the
-    # order picked above, so the slider, the shipping model and the search never change it.
-    try:
-        report = render_report(build_report(catalogue, config, ordered_at))
-    except LocalisationError as exc:
-        st.error(f"Cannot build the expansion report: {exc}")
+    # The report covers every market, both shipping models and the sample orders at today's
+    # duty rates, for the order picked above, so the slider, the shipping model, the search and
+    # the "Order" tab never change it. It needs the sample orders, so a problem with their file
+    # takes the button's place.
+    report = ""
+    report_problem = orders_problem
+    if sample_orders is not None:
+        try:
+            report = render_report(build_report(catalogue, config, sample_orders, ordered_at))
+        except LocalisationError as exc:
+            report_problem = str(exc)
+    if report_problem is not None:
+        st.error(f"Cannot build the expansion report: {report_problem}")
     else:
         st.download_button(
             "Download expansion report",
@@ -145,8 +152,9 @@ with st.sidebar:
             file_name="GCC_EXPANSION_REPORT.md",
             mime="text/markdown",
             help=(
-                "Every market and both shipping models for the order date and time above, at "
-                "today's duty rates. The duty slider, shipping model and search don't change it."
+                "Every market, both shipping models and the sample orders, for the order date "
+                "and time above, at today's duty rates. The duty slider, shipping model, search "
+                "and Order tab don't change it."
             ),
             on_click="ignore",  # downloading changes nothing on the page, so no rerun
             key="report_download",

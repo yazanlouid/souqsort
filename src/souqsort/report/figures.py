@@ -14,9 +14,13 @@ from souqsort.models import (
     GccConfig,
     MarketConfig,
     Product,
+    SampleOrder,
+    SampleOrders,
     ShippingModel,
 )
+from souqsort.orders import OrderQuote, quote_order_both_ways
 from souqsort.pipeline import (
+    LocalisationError,
     LocalisedCatalogue,
     duty_adjustment_from_points,
     localise_and_summarise,
@@ -199,6 +203,75 @@ class PricingRisk:
 
 
 @dataclass(frozen=True)
+class OrderComparison:
+    """A sample order in one market, as a consolidated import and as a direct parcel.
+
+    Both quotes are ``quote_order``'s at today's duty rates. The order is priced when the
+    market sells at least one of its lines; compliance does not depend on the shipping model,
+    so both quotes hold the same lines.
+    """
+
+    order_id: str
+    name: str
+    consolidated: OrderQuote
+    parcel: OrderQuote
+
+    @property
+    def priced(self) -> bool:
+        return bool(self.consolidated.lines)
+
+    @property
+    def change_pct(self) -> Decimal | None:
+        """The full-precision ``parcel total / consolidated total - 1``, or ``None`` when the
+        order is not priced. Shelf prices are above zero, so a priced total never is zero.
+        """
+        if not self.priced:
+            return None
+        return self.parcel.total / self.consolidated.total - 1
+
+
+@dataclass(frozen=True)
+class MarketOrders:
+    """One market's sample orders, in file order.
+
+    An order is cheaper, dearer or unchanged as a parcel by comparing the two totals
+    themselves, never the rounded change. An order the market sells nothing of is left out of
+    every count.
+    """
+
+    code: str
+    name: str
+    currency: str
+    minor_units: int
+    de_minimis: DeMinimisRule | None
+    orders: tuple[OrderComparison, ...]
+
+    def _priced_orders(self) -> list[OrderComparison]:
+        return [order for order in self.orders if order.priced]
+
+    @property
+    def priced(self) -> int:
+        return len(self._priced_orders())
+
+    @property
+    def cheaper(self) -> int:
+        return sum(1 for o in self._priced_orders() if o.parcel.total < o.consolidated.total)
+
+    @property
+    def dearer(self) -> int:
+        return sum(1 for o in self._priced_orders() if o.parcel.total > o.consolidated.total)
+
+    @property
+    def unchanged(self) -> int:
+        return sum(1 for o in self._priced_orders() if o.parcel.total == o.consolidated.total)
+
+    @property
+    def duty_added(self) -> int:
+        """How many priced parcel orders pay duty at checkout."""
+        return sum(1 for o in self._priced_orders() if o.parcel.checkout_amount("duty") is not None)
+
+
+@dataclass(frozen=True)
 class ExpansionReport:
     """Every market in the config for one order, in config order.
 
@@ -210,13 +283,16 @@ class ExpansionReport:
     config_version: str
     fx_as_of: date
     catalogue_version: str
+    orders_version: str
     product_count: int
+    sample_orders: tuple[SampleOrder, ...]  # file order
     markets: tuple[MarketOverview, ...]
     shipping: tuple[ShippingComparison, ...]
     tariffs: tuple[TariffExposure, ...]  # by market, then shipping model
     sample_product: SampleProduct | None  # None when no product is sold in every market
     build_ups: tuple[PriceBuildUp, ...]  # config order; empty without a sample product
     pricing_risks: tuple[PricingRisk, ...]  # by market, then catalogue order
+    orders: tuple[MarketOrders, ...]  # config order
 
 
 @dataclass(frozen=True)
@@ -428,17 +504,63 @@ def _pricing_risks(view: _MarketViews) -> list[PricingRisk]:
     return risks
 
 
-def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) -> ExpansionReport:
-    """The report's figures for an order placed at ``ordered_at``.
+def _require_known_skus(catalogue: Catalogue, orders: SampleOrders) -> None:
+    """Raise ``LocalisationError`` naming the first sample order and SKU, in file order, that
+    is not in the catalogue."""
+    known = {product.sku for product in catalogue.products}
+    for order in orders.orders:
+        for line in order.lines:
+            if line.sku not in known:
+                raise LocalisationError(f"{order.id}: {line.sku} is not in the catalogue")
 
-    Every market comes from ``localise_and_summarise``, so the report agrees with the CLI and
-    the dashboard, and a product a market does not allow is never priced.
 
-    Raises ``ValueError`` if ``ordered_at`` is naive, before anything is priced, and
-    ``LocalisationError`` as ``localise_and_summarise`` raises it.
+def _market_orders(
+    catalogue: Catalogue,
+    config: GccConfig,
+    market: MarketConfig,
+    orders: SampleOrders,
+    ordered_at: datetime,
+) -> MarketOrders:
+    """One market's sample orders at today's duty rates, each from ``quote_order_both_ways``,
+    as the CLI and the dashboard price them."""
+    comparisons = []
+    for order in orders.orders:
+        both = quote_order_both_ways(order.lines, catalogue, config, market.code, ordered_at)
+        comparisons.append(
+            OrderComparison(
+                order_id=order.id,
+                name=order.name,
+                consolidated=both.consolidated,
+                parcel=both.parcel,
+            )
+        )
+    return MarketOrders(
+        code=market.code,
+        name=market.name,
+        currency=market.currency.code,
+        minor_units=market.currency.minor_units,
+        de_minimis=market.customs.de_minimis,
+        orders=tuple(comparisons),
+    )
+
+
+def build_report(
+    catalogue: Catalogue, config: GccConfig, orders: SampleOrders, ordered_at: datetime
+) -> ExpansionReport:
+    """The report's figures for an order placed at ``ordered_at``, with the sample orders.
+
+    Every market comes from ``localise_and_summarise`` and every sample order from
+    ``quote_order_both_ways``, so the report agrees with the CLI and the dashboard, and a
+    product a market does not allow is never priced.
+
+    Raises ``ValueError`` if ``ordered_at`` is naive, then ``LocalisationError`` naming the
+    order and the SKU if a sample order's SKU is not in the catalogue, both before anything is
+    priced; then ``LocalisationError`` as ``localise_and_summarise`` and ``quote_order`` raise
+    it.
     """
     if ordered_at.utcoffset() is None:
         raise ValueError("ordered_at must be timezone-aware, got a naive datetime")
+    _require_known_skus(catalogue, orders)
     views = [
         _localise(catalogue.products, config, market, ordered_at)
         for market in config.markets.values()
@@ -450,7 +572,9 @@ def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) 
         config_version=config.config_version,
         fx_as_of=config.fx.as_of,
         catalogue_version=catalogue.catalogue_version,
+        orders_version=orders.orders_version,
         product_count=len(catalogue.products),
+        sample_orders=orders.orders,
         markets=tuple(_overview(view.market, view.consolidated, ordered_at) for view in views),
         shipping=tuple(
             _shipping(view.market, view.consolidated, view.parcel, by_sku, ordered_at)
@@ -466,4 +590,8 @@ def build_report(catalogue: Catalogue, config: GccConfig, ordered_at: datetime) 
             () if sample is None else tuple(_build_up(view, by_sku[sample.sku]) for view in views)
         ),
         pricing_risks=tuple(risk for view in views for risk in _pricing_risks(view)),
+        orders=tuple(
+            _market_orders(catalogue, config, market, orders, ordered_at)
+            for market in config.markets.values()
+        ),
     )

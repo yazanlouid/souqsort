@@ -10,13 +10,23 @@ from hypothesis import strategies as st
 from helpers import (
     FOR_SALE_COUNTS,
     GUMMY_BEARS,
+    NO_ORDERS,
     REPORT_ORDERED_AT,
     SAMPLE_PRODUCT_COUNT,
     VANILLA,
+    add_order,
     only_products,
 )
 from souqsort.logistics.calendar import DeliveryEstimate, estimate_delivery
-from souqsort.models import SHIPPING_MODELS, Catalogue, GccConfig, ShippingModel
+from souqsort.models import (
+    SHIPPING_MODELS,
+    Catalogue,
+    GccConfig,
+    OrderLine,
+    SampleOrders,
+    ShippingModel,
+)
+from souqsort.orders import quote_order_both_ways
 from souqsort.pipeline import (
     MAX_DUTY_ADJUST_POINTS,
     LocalisationError,
@@ -31,6 +41,7 @@ from souqsort.report.figures import (
     PRICE_ENDING_ALERT,
     TARIFF_RISES_POINTS,
     ExpansionReport,
+    MarketOrders,
     MarketOverview,
     ProductComparison,
     SampleProduct,
@@ -45,8 +56,8 @@ def _percent(fraction: Decimal | None) -> Decimal | None:
 
 
 @pytest.fixture(scope="module")
-def report(catalogue: Catalogue, config: GccConfig) -> ExpansionReport:
-    return build_report(catalogue, config, REPORT_ORDERED_AT)
+def report(catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders) -> ExpansionReport:
+    return build_report(catalogue, config, sample_orders, REPORT_ORDERED_AT)
 
 
 def _market(report: ExpansionReport, code: str) -> MarketOverview:
@@ -156,7 +167,9 @@ def test_report_names_its_data_and_order(report: ExpansionReport) -> None:
 def test_a_market_that_sells_nothing_has_no_averages_but_a_delivery_date(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    report = build_report(
+        only_products(catalogue, VANILLA, GUMMY_BEARS), config, NO_ORDERS, REPORT_ORDERED_AT
+    )
     ksa = _market(report, "KSA")
 
     assert ksa.for_sale == 0
@@ -169,22 +182,24 @@ def test_a_market_that_sells_nothing_has_no_averages_but_a_delivery_date(
 def test_an_empty_catalogue_gives_every_market_with_nothing_for_sale(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    report = build_report(only_products(catalogue), config, REPORT_ORDERED_AT)
+    report = build_report(only_products(catalogue), config, NO_ORDERS, REPORT_ORDERED_AT)
 
     assert report.product_count == 0
     assert [(m.for_sale, m.not_sold) for m in report.markets] == [(0, ())] * len(config.markets)
 
 
-def test_a_naive_order_time_is_rejected(catalogue: Catalogue, config: GccConfig) -> None:
+def test_a_naive_order_time_is_rejected(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
+) -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
-        build_report(catalogue, config, REPORT_ORDERED_AT.replace(tzinfo=None))
+        build_report(catalogue, config, sample_orders, REPORT_ORDERED_AT.replace(tzinfo=None))
 
 
 def test_an_order_time_beyond_the_calendar_raises_localisation_error(
-    catalogue: Catalogue, config: GccConfig
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
 ) -> None:
     with pytest.raises(LocalisationError, match=r"^KSA:"):
-        build_report(catalogue, config, datetime(9999, 12, 31, 23, 0, tzinfo=UTC))
+        build_report(catalogue, config, sample_orders, datetime(9999, 12, 31, 23, 0, tzinfo=UTC))
 
 
 LICENCE = "DIGI-LIC-050"
@@ -339,7 +354,9 @@ def test_ksa_parcel_orders_cost_the_price_list_plus_15(report: ExpansionReport) 
 def test_a_market_that_sells_nothing_still_has_its_fee(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    report = build_report(
+        only_products(catalogue, VANILLA, GUMMY_BEARS), config, NO_ORDERS, REPORT_ORDERED_AT
+    )
     ksa = _shipping(report, "KSA")
 
     assert ksa.products == ()
@@ -419,7 +436,9 @@ def test_counts_compare_one_item_orders_not_the_rounded_change() -> None:
 def test_a_market_that_sells_nothing_compares_nothing(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    report = build_report(
+        only_products(catalogue, VANILLA, GUMMY_BEARS), config, NO_ORDERS, REPORT_ORDERED_AT
+    )
     ksa, uae = _shipping(report, "KSA"), _shipping(report, "UAE")
 
     assert ksa.products == ()
@@ -498,7 +517,9 @@ def test_tariffs_come_from_localise_and_summarise(
 def test_a_market_that_sells_nothing_has_no_tariff_figures(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    report = build_report(only_products(catalogue, VANILLA, GUMMY_BEARS), config, REPORT_ORDERED_AT)
+    report = build_report(
+        only_products(catalogue, VANILLA, GUMMY_BEARS), config, NO_ORDERS, REPORT_ORDERED_AT
+    )
     by_market = {(t.code, t.shipping): t.average_change_pct for t in report.tariffs}
 
     assert by_market["KSA", "consolidated"] == by_market["KSA", "parcel"] == (None, None, None)
@@ -511,7 +532,7 @@ def test_a_bigger_tariff_rise_never_lowers_the_average_change(
     catalogue: Catalogue, config: GccConfig, data: st.DataObject
 ) -> None:
     skus = data.draw(st.sets(st.sampled_from([p.sku for p in catalogue.products])), label="skus")
-    report = build_report(only_products(catalogue, *skus), config, REPORT_ORDERED_AT)
+    report = build_report(only_products(catalogue, *skus), config, NO_ORDERS, REPORT_ORDERED_AT)
     selling = {market.code: market.for_sale > 0 for market in report.markets}
 
     for exposure in report.tariffs:
@@ -538,11 +559,12 @@ def test_the_headline_rise_must_be_one_of_the_rises() -> None:
 def test_figures_do_not_depend_on_the_order_shipping_models_are_declared(
     catalogue: Catalogue,
     config: GccConfig,
+    sample_orders: SampleOrders,
     report: ExpansionReport,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(figures, "SHIPPING_MODELS", ("parcel", "consolidated"))
-    reordered = build_report(catalogue, config, REPORT_ORDERED_AT)
+    reordered = build_report(catalogue, config, sample_orders, REPORT_ORDERED_AT)
 
     assert reordered.markets == report.markets
     assert reordered.shipping == report.shipping
@@ -578,7 +600,7 @@ def test_the_sample_product_skips_products_a_market_does_not_sell(
     by_sku = {product.sku: product for product in catalogue.products}
     products = [by_sku[VANILLA], by_sku[GUMMY_BEARS], by_sku[KETTLE], by_sku[HEADPHONES]]
     report = build_report(
-        catalogue.model_copy(update={"products": products}), config, REPORT_ORDERED_AT
+        catalogue.model_copy(update={"products": products}), config, NO_ORDERS, REPORT_ORDERED_AT
     )
 
     assert report.sample_product is not None
@@ -627,7 +649,7 @@ def test_only_ksa_s_build_up_pays_a_fee(report: ExpansionReport) -> None:
 def test_a_sample_product_that_does_not_travel_pays_no_fee(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    report = build_report(only_products(catalogue, LICENCE), config, REPORT_ORDERED_AT)
+    report = build_report(only_products(catalogue, LICENCE), config, NO_ORDERS, REPORT_ORDERED_AT)
 
     assert [(b.consolidated.sku, b.parcel_fee) for b in report.build_ups] == [(LICENCE, None)] * 3
     assert [b.parcel_order for b in report.build_ups] == [
@@ -664,7 +686,7 @@ def test_build_ups_come_from_localise_and_summarise(
 def test_no_product_sold_everywhere_gives_no_build_up(
     catalogue: Catalogue, config: GccConfig, skus: tuple[str, ...]
 ) -> None:
-    report = build_report(only_products(catalogue, *skus), config, REPORT_ORDERED_AT)
+    report = build_report(only_products(catalogue, *skus), config, NO_ORDERS, REPORT_ORDERED_AT)
 
     assert report.sample_product is None
     assert report.build_ups == ()
@@ -673,11 +695,12 @@ def test_no_product_sold_everywhere_gives_no_build_up(
 def test_build_ups_are_the_same_whatever_order_shipping_models_are_declared(
     catalogue: Catalogue,
     config: GccConfig,
+    sample_orders: SampleOrders,
     report: ExpansionReport,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(figures, "SHIPPING_MODELS", ("parcel", "consolidated"))
-    reordered = build_report(catalogue, config, REPORT_ORDERED_AT)
+    reordered = build_report(catalogue, config, sample_orders, REPORT_ORDERED_AT)
 
     assert reordered.sample_product == report.sample_product
     assert reordered.build_ups == report.build_ups
@@ -830,10 +853,13 @@ def test_pricing_risks_come_from_consolidated_quotes(
 
 
 def test_pricing_risks_are_in_market_then_catalogue_order(
-    catalogue: Catalogue, config: GccConfig, monkeypatch: pytest.MonkeyPatch
+    catalogue: Catalogue,
+    config: GccConfig,
+    sample_orders: SampleOrders,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(figures, "PRICE_ENDING_ALERT", Decimal("0.04"))
-    risks = build_report(catalogue, config, REPORT_ORDERED_AT).pricing_risks
+    risks = build_report(catalogue, config, sample_orders, REPORT_ORDERED_AT).pricing_risks
     markets = list(config.markets)
     skus = [product.sku for product in catalogue.products]
 
@@ -853,7 +879,9 @@ def test_pricing_risks_are_in_market_then_catalogue_order(
 def test_no_risks_without_a_price_ending_that_adds_more_than_the_alert(
     catalogue: Catalogue, config: GccConfig
 ) -> None:
-    report = build_report(only_products(catalogue, HEADPHONES), config, REPORT_ORDERED_AT)
+    report = build_report(
+        only_products(catalogue, HEADPHONES), config, NO_ORDERS, REPORT_ORDERED_AT
+    )
 
     assert report.pricing_risks == ()
 
@@ -879,3 +907,198 @@ def test_a_build_up_names_a_view_missing_the_sample_product(
 
     with pytest.raises(ValueError, match=r"^KSA: the parcel view has no ELEC-HP-001$"):
         figures._build_up(views, next(p for p in catalogue.products if p.sku == HEADPHONES))
+
+
+# --- orders (§9.2.7) ----------------------------------------------------------------------
+
+# Each sample order's two totals, in file order (SPEC §9.2.7).
+ORDER_TOTALS = {
+    "KSA": [("33.90", "46.90"), ("405.90", "388.90"), ("1281.90", "1321.47")],
+    "UAE": [("29.98", "29.98"), ("346.98", "333.98"), ("1109.98", "1129.71")],
+    "KWT": [("3.900", "3.900"), ("27.900", "28.900"), ("88.900", "91.900")],
+}
+
+# The parcel values, in file order, as §9.2.7 gives them: exact, or the leading digits.
+PARCEL_VALUES = {
+    "KSA": ["27.525", "323.93506711", "1049.26157718"],
+    "UAE": ["26.80925", "316.43245906", "1023.35346291"],
+    "KWT": ["2.26566", "26.58702416", "86.25259778"],
+}
+
+
+def _orders(report: ExpansionReport, code: str) -> MarketOrders:
+    return next(market for market in report.orders if market.code == code)
+
+
+def test_orders_are_in_config_order_then_file_order(
+    report: ExpansionReport, config: GccConfig, sample_orders: SampleOrders
+) -> None:
+    ids = [order.id for order in sample_orders.orders]
+
+    assert [market.code for market in report.orders] == list(config.markets)
+    for market in report.orders:
+        assert [order.order_id for order in market.orders] == ids
+        assert [order.name for order in market.orders] == [o.name for o in sample_orders.orders]
+    assert report.sample_orders == sample_orders.orders
+    assert report.orders_version == "2026-11-01"
+
+
+def test_order_totals_are_section_9_2_7(report: ExpansionReport) -> None:
+    totals = {
+        market.code: [(order.consolidated.total, order.parcel.total) for order in market.orders]
+        for market in report.orders
+    }
+
+    assert totals == {
+        code: [(Decimal(a), Decimal(b)) for a, b in cells] for code, cells in ORDER_TOTALS.items()
+    }
+
+
+def test_parcel_values_are_section_9_2_7(report: ExpansionReport) -> None:
+    for market in report.orders:
+        for order, expected in zip(market.orders, PARCEL_VALUES[market.code], strict=True):
+            value = order.parcel.parcel_value
+            assert value is not None, (market.code, order.order_id)
+            assert str(value).startswith(expected), (market.code, order.order_id, value)
+            assert order.consolidated.parcel_value is None
+
+
+def test_checkout_lines_are_section_9_2_7(report: ExpansionReport) -> None:
+    checkout = {
+        market.code: [
+            [(line.kind, line.amount) for line in order.parcel.checkout] for order in market.orders
+        ]
+        for market in report.orders
+    }
+    fee = ("customs_fee", Decimal("15.00"))
+
+    assert checkout == {
+        "KSA": [[fee], [fee], [fee, ("duty", Decimal("98.57"))]],
+        "UAE": [[], [], [("duty", Decimal("53.73"))]],
+        "KWT": [[], [], []],
+    }
+    for market in report.orders:
+        assert all(order.consolidated.checkout == () for order in market.orders)
+
+
+def test_order_counts_and_duty_added(report: ExpansionReport) -> None:
+    counts = {
+        m.code: (m.priced, m.cheaper, m.dearer, m.unchanged, m.duty_added) for m in report.orders
+    }
+
+    assert counts == {"KSA": (3, 1, 2, 0, 1), "UAE": (3, 1, 1, 1, 1), "KWT": (3, 0, 2, 1, 0)}
+
+
+def test_order_change_is_parcel_total_over_consolidated_total(report: ExpansionReport) -> None:
+    lip_balms = _orders(report, "KSA").orders[0]
+
+    assert lip_balms.priced
+    assert lip_balms.change_pct == Decimal("46.90") / Decimal("33.90") - 1
+    assert _percent(lip_balms.change_pct) == Decimal("38.3")
+
+
+def test_order_markets_carry_their_rule_and_currency(
+    report: ExpansionReport, config: GccConfig
+) -> None:
+    for market in report.orders:
+        source = config.markets[market.code]
+        assert market.name == source.name
+        assert market.currency == source.currency.code
+        assert market.minor_units == source.currency.minor_units
+        assert market.de_minimis == source.customs.de_minimis
+
+
+def test_each_order_comes_from_quote_order_both_ways(
+    report: ExpansionReport,
+    catalogue: Catalogue,
+    config: GccConfig,
+    sample_orders: SampleOrders,
+) -> None:
+    for market in report.orders:
+        for order, sample in zip(market.orders, sample_orders.orders, strict=True):
+            both = quote_order_both_ways(
+                sample.lines, catalogue, config, market.code, REPORT_ORDERED_AT
+            )
+            assert (order.consolidated, order.parcel) == (both.consolidated, both.parcel)
+
+
+def test_an_order_a_market_sells_nothing_of_is_left_out_of_the_counts(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
+) -> None:
+    orders = add_order(sample_orders, "gummy-bears", "Gummy bears", (GUMMY_BEARS, 1))
+    report = build_report(catalogue, config, orders, REPORT_ORDERED_AT)
+    ksa = _orders(report, "KSA")
+    gummy = ksa.orders[-1]
+
+    assert gummy.order_id == "gummy-bears"
+    assert not gummy.priced
+    assert gummy.change_pct is None
+    assert gummy.consolidated.lines == gummy.parcel.lines == ()
+    assert [item.sku for item in gummy.consolidated.not_sold] == [GUMMY_BEARS]
+    assert (ksa.priced, ksa.cheaper, ksa.dearer, ksa.unchanged, ksa.duty_added) == (3, 1, 2, 0, 1)
+
+
+def test_a_market_that_sells_nothing_in_the_orders_counts_none(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    orders = add_order(NO_ORDERS, "gummy-bears", "Gummy bears", (GUMMY_BEARS, 2))
+    report = build_report(catalogue, config, orders, REPORT_ORDERED_AT)
+
+    for market in report.orders:
+        assert len(market.orders) == 1
+        assert (market.priced, market.cheaper, market.dearer, market.unchanged) == (0, 0, 0, 0)
+        assert market.duty_added == 0
+
+
+def test_no_sample_orders_gives_every_market_no_orders(
+    catalogue: Catalogue, config: GccConfig
+) -> None:
+    report = build_report(catalogue, config, NO_ORDERS, REPORT_ORDERED_AT)
+
+    assert report.orders_version == "none"
+    assert report.sample_orders == ()
+    assert [(market.code, market.orders) for market in report.orders] == [
+        (code, ()) for code in config.markets
+    ]
+    assert all(market.priced == 0 for market in report.orders)
+
+
+def test_a_sample_order_sku_not_in_the_catalogue_fails_before_anything_is_priced(
+    catalogue: Catalogue,
+    config: GccConfig,
+    sample_orders: SampleOrders,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def priced(*args: object, **kwargs: object) -> None:
+        raise AssertionError("priced before the sample orders were checked")
+
+    monkeypatch.setattr(figures, "localise_and_summarise", priced)
+    monkeypatch.setattr(figures, "quote_order_both_ways", priced)
+    headphones_and_bag = sample_orders.orders[2]
+    unknown = headphones_and_bag.model_copy(
+        update={"lines": (OrderLine(sku="ELEC-HP-999", quantity=1), *headphones_and_bag.lines[1:])}
+    )
+    orders = sample_orders.model_copy(update={"orders": (*sample_orders.orders[:2], unknown)})
+
+    with pytest.raises(
+        LocalisationError, match=r"^headphones-and-bag: ELEC-HP-999 is not in the catalogue$"
+    ):
+        build_report(catalogue, config, orders, REPORT_ORDERED_AT)
+
+
+def test_sample_orders_need_every_sku_in_the_catalogue(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
+) -> None:
+    with pytest.raises(
+        LocalisationError, match=r"^two-lip-balms: BEAU-LIP-040 is not in the catalogue$"
+    ):
+        build_report(only_products(catalogue, HEADPHONES), config, sample_orders, REPORT_ORDERED_AT)
+
+
+def test_a_naive_order_time_is_rejected_before_the_sample_orders_are_checked(
+    catalogue: Catalogue, config: GccConfig, sample_orders: SampleOrders
+) -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        build_report(
+            only_products(catalogue), config, sample_orders, REPORT_ORDERED_AT.replace(tzinfo=None)
+        )
